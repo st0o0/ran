@@ -32,16 +32,6 @@ func (f *fakeTrap) Start(ctx context.Context) error {
 
 func (f *fakeTrap) Stop(_ context.Context) error { return nil }
 
-func freePort(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-	return addr
-}
 
 func testSetup(t *testing.T, trapNames []string, factories map[string]trap.Factory) (*config.Config, *slog.Logger, *metrics.Metrics, *bytes.Buffer) {
 	t.Helper()

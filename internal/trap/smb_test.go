@@ -203,7 +203,9 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 
 	// Send negotiate first
 	negReq := buildSMB2NegotiateRequest()
-	smbWriteMessage(conn, negReq)
+	if err := smbWriteMessage(conn, negReq); err != nil {
+		t.Fatal(err)
+	}
 	_, err = smbReadMessage(conn)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +213,9 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 
 	// Send session setup with NTLMSSP auth
 	setupReq := buildSMB2SessionSetupWithNTLMSSP("WORKGROUP", "administrator", "DESKTOP-TEST")
-	smbWriteMessage(conn, setupReq)
+	if err := smbWriteMessage(conn, setupReq); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, err := smbReadMessage(conn)
 	if err != nil {
@@ -274,7 +278,9 @@ func TestSMB1Negotiate(t *testing.T) {
 	body = append(body, dialects...)
 
 	msg := append(header, body...)
-	smbWriteMessage(conn, msg)
+	if err := smbWriteMessage(conn, msg); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, err := smbReadMessage(conn)
 	if err != nil {

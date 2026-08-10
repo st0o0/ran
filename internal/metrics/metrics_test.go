@@ -26,8 +26,7 @@ func TestNew(t *testing.T) {
 		t.Error("CrowdSecAlerts is nil")
 	}
 
-	families, err := reg.Gather()
-	if err != nil {
+	if _, err := reg.Gather(); err != nil {
 		t.Fatalf("gather error: %v", err)
 	}
 

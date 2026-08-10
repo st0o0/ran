@@ -63,7 +63,7 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	metricsSrv.Shutdown(shutdownCtx)
+	_ = metricsSrv.Shutdown(shutdownCtx)
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
