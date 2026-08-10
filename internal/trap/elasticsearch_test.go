@@ -46,7 +46,7 @@ func startES(t *testing.T) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 	return addr
 }

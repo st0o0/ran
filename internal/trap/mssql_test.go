@@ -128,7 +128,7 @@ func TestMSSQLTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.Addrs["mssql"], 2*time.Second)
@@ -136,7 +136,7 @@ func TestMSSQLTrapConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Send TDS prelogin
 	preloginPayload := []byte{
@@ -144,7 +144,7 @@ func TestMSSQLTrapConnection(t *testing.T) {
 		0xFF,                         // TERMINATOR
 		0x0F, 0x00, 0x07, 0xD0, 0x00, 0x00, // VERSION data
 	}
-	conn.Write(buildTDSPacket(0x12, 0x01, preloginPayload))
+	_, _ = conn.Write(buildTDSPacket(0x12, 0x01, preloginPayload))
 
 	// Read prelogin response
 	header := make([]byte, 8)
@@ -181,7 +181,7 @@ func TestMSSQLTrapConnection(t *testing.T) {
 	binary.LittleEndian.PutUint16(body[62:64], uint16(len(encodedPass)/2))
 	body = append(body, userUTF16...)
 	body = append(body, encodedPass...)
-	conn.Write(buildTDSPacket(0x10, 0x01, body))
+	_, _ = conn.Write(buildTDSPacket(0x10, 0x01, body))
 
 	// Read TDS error response
 	if _, err := io.ReadFull(conn, header); err != nil {
@@ -200,5 +200,5 @@ func TestMSSQLTrapConnection(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

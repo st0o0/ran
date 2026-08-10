@@ -39,7 +39,7 @@ func TestSIPTrap(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	request := "REGISTER sip:example.com SIP/2.0\r\n" +
@@ -61,7 +61,7 @@ func TestSIPTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	udpConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = udpConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 4096)
 	n, err := udpConn.Read(buf)
 	if err != nil {
@@ -84,5 +84,5 @@ func TestSIPTrap(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

@@ -35,7 +35,7 @@ func buildSMB2NegotiateRequest() []byte {
 	binary.LittleEndian.PutUint16(body[0:2], 36) // StructureSize
 	binary.LittleEndian.PutUint16(body[2:4], 1)  // DialectCount
 	binary.LittleEndian.PutUint16(body[4:6], 0x0001) // SecurityMode
-	binary.LittleEndian.PutUint16(body[36-36:], 0x0210) // actually put dialect at end
+	binary.LittleEndian.PutUint16(body[0:], 0x0210) // actually put dialect at end
 
 	// Simplified: just need a valid negotiate message
 	negotiate := append(header, body...)
@@ -145,7 +145,7 @@ func TestSMBTrapNegotiate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -153,10 +153,10 @@ func TestSMBTrapNegotiate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	negReq := buildSMB2NegotiateRequest()
-	smbWriteMessage(conn, negReq)
+	_ = smbWriteMessage(conn, negReq)
 
 	resp, err := smbReadMessage(conn)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestSMBTrapNegotiate(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSMBTrapSessionSetup(t *testing.T) {
@@ -191,7 +191,7 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -199,7 +199,7 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Send negotiate first
 	negReq := buildSMB2NegotiateRequest()
@@ -228,7 +228,7 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSMB1Negotiate(t *testing.T) {
@@ -248,7 +248,7 @@ func TestSMB1Negotiate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -256,7 +256,7 @@ func TestSMB1Negotiate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// SMB1 negotiate
 	header := make([]byte, 32)
@@ -286,5 +286,5 @@ func TestSMB1Negotiate(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

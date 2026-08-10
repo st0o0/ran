@@ -90,7 +90,7 @@ func (t *SMBTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	for {
 		payload, err := smbReadMessage(conn)
@@ -146,7 +146,7 @@ func (t *SMBTrap) handleSMB1Negotiate(conn net.Conn) {
 
 	resp := append(header, params...)
 	resp = append(resp, data...)
-	smbWriteMessage(conn, resp)
+	_ = smbWriteMessage(conn, resp)
 }
 
 func (t *SMBTrap) handleSMB2Negotiate(conn net.Conn, _ []byte) error {
@@ -239,7 +239,7 @@ func (t *SMBTrap) sendSessionSetupFailure(conn net.Conn, req []byte) {
 	body := resp[64:]
 	binary.LittleEndian.PutUint16(body[0:2], 9) // StructureSize
 
-	smbWriteMessage(conn, resp)
+	_ = smbWriteMessage(conn, resp)
 }
 
 func smbReadMessage(r io.Reader) ([]byte, error) {

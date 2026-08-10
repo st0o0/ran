@@ -45,7 +45,7 @@ func startProxy(t *testing.T) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 	return addr
 }
@@ -84,7 +84,7 @@ func TestHTTPProxyAbsoluteURL(t *testing.T) {
 	}
 	defer conn.Close()
 
-	conn.Write([]byte("GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"))
+	_, _ = conn.Write([]byte("GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"))
 
 	buf := make([]byte, 4096)
 	n, _ := conn.Read(buf)
@@ -106,7 +106,7 @@ func TestHTTPProxyWithAuth(t *testing.T) {
 	}
 	defer conn.Close()
 
-	conn.Write([]byte("GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nProxy-Authorization: Basic " + creds + "\r\n\r\n"))
+	_, _ = conn.Write([]byte("GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nProxy-Authorization: Basic " + creds + "\r\n\r\n"))
 
 	buf := make([]byte, 4096)
 	n, _ := conn.Read(buf)
@@ -125,7 +125,7 @@ func TestHTTPProxyNonProxyRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	_, _ = io.ReadAll(resp.Body)
 
 	if resp.StatusCode != 400 {
 		t.Errorf("status = %d, want 400", resp.StatusCode)

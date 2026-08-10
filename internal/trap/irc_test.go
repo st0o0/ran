@@ -41,7 +41,7 @@ func TestIRCTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -49,7 +49,7 @@ func TestIRCTrapConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	reader := bufio.NewReader(conn)
 
@@ -84,5 +84,5 @@ func TestIRCTrapConnection(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

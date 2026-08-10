@@ -40,7 +40,7 @@ func dialSMTP(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	return conn, bufio.NewReader(conn)
 }
 
@@ -63,7 +63,7 @@ func TestSMTPBanner(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
@@ -75,7 +75,7 @@ func TestSMTPBanner(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSMTPEHLO(t *testing.T) {
@@ -88,7 +88,7 @@ func TestSMTPEHLO(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
@@ -112,7 +112,7 @@ func TestSMTPEHLO(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSMTPAuthLogin(t *testing.T) {
@@ -125,7 +125,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
@@ -163,7 +163,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSMTPAuthPlain(t *testing.T) {
@@ -176,7 +176,7 @@ func TestSMTPAuthPlain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
@@ -198,7 +198,7 @@ func TestSMTPAuthPlain(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSMTPMailFromWithoutAuth(t *testing.T) {
@@ -211,7 +211,7 @@ func TestSMTPMailFromWithoutAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
@@ -226,5 +226,5 @@ func TestSMTPMailFromWithoutAuth(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

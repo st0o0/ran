@@ -89,7 +89,7 @@ func (t *MQTTTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	packetType, payload, err := readMQTTPacket(conn)
 	if err != nil {
@@ -113,7 +113,7 @@ func (t *MQTTTrap) handle(ctx context.Context, conn net.Conn) {
 	sess.RecordCredentials(t.metrics)
 	t.alerter.Alert(ctx, host, "mqtt")
 
-	conn.Write(buildMQTTConnack(protocolLevel))
+	_, _ = conn.Write(buildMQTTConnack(protocolLevel))
 }
 
 func readMQTTPacket(r io.Reader) (packetType byte, payload []byte, err error) {
@@ -142,7 +142,7 @@ func readMQTTPacket(r io.Reader) (packetType byte, payload []byte, err error) {
 
 func readMQTTVarInt(r io.Reader) (int, error) {
 	var value int
-	var multiplier int = 1
+	var multiplier = 1
 	var b [1]byte
 	for i := 0; i < 4; i++ {
 		if _, err := io.ReadFull(r, b[:]); err != nil {
@@ -242,7 +242,7 @@ func readMQTTString(data []byte, pos int) (string, int, error) {
 
 func decodeMQTTVarIntFromBytes(data []byte) (int, int, error) {
 	var value int
-	var multiplier int = 1
+	var multiplier = 1
 	for i := 0; i < 4 && i < len(data); i++ {
 		value += int(data[i]&0x7F) * multiplier
 		if data[i]&0x80 == 0 {

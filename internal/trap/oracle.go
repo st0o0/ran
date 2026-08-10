@@ -90,7 +90,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	pktType, payload, err := readTNSPacket(conn)
 	if err != nil {
@@ -126,7 +126,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 	refuseData[1] = 0
 	binary.BigEndian.PutUint16(refuseData[2:4], uint16(len(refuseMsg)))
 	copy(refuseData[4:], refuseMsg)
-	conn.Write(buildTNSPacket(4, refuseData))
+	_, _ = conn.Write(buildTNSPacket(4, refuseData))
 }
 
 func readTNSPacket(r io.Reader) (pktType byte, payload []byte, err error) {

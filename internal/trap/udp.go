@@ -77,7 +77,7 @@ func (t *UDPTrap) Start(ctx context.Context) error {
 		copy(data, buf[:n])
 
 		respond := func(resp []byte) {
-			conn.WriteTo(resp, addr)
+			_, _ = conn.WriteTo(resp, addr)
 		}
 
 		t.wg.Add(1)

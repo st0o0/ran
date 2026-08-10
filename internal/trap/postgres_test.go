@@ -33,13 +33,8 @@ func postgresTestConfig(t *testing.T) *config.Config {
 }
 
 func TestPgStartupParamsParsing(t *testing.T) {
-	var data []byte
-	// Protocol version 3.0
-	binary.BigEndian.AppendUint16(data, 3)
-	data = binary.BigEndian.AppendUint16(data, 0)
-	data = binary.BigEndian.AppendUint16(data, 0)
 	// version 3.0 = int32
-	data = make([]byte, 4)
+	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data, 196608) // 3<<16
 	data = append(data, "user\x00admin\x00database\x00testdb\x00\x00"...)
 
@@ -88,7 +83,7 @@ func TestPostgresTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.Addrs["postgres"], 2*time.Second)
@@ -96,13 +91,13 @@ func TestPostgresTrapConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Send SSLRequest
 	var sslReq [8]byte
 	binary.BigEndian.PutUint32(sslReq[0:4], 8)
 	binary.BigEndian.PutUint32(sslReq[4:8], 80877103)
-	conn.Write(sslReq[:])
+	_, _ = conn.Write(sslReq[:])
 
 	// Read SSL rejection
 	var sslResp [1]byte
@@ -121,7 +116,7 @@ func TestPostgresTrapConnection(t *testing.T) {
 	startup = append(startup, "user\x00attacker\x00database\x00postgres\x00\x00"...)
 	length := make([]byte, 4)
 	binary.BigEndian.PutUint32(length, uint32(4+len(startup)))
-	conn.Write(append(length, startup...))
+	_, _ = conn.Write(append(length, startup...))
 
 	// Read AuthenticationCleartextPassword
 	auth := make([]byte, 9)
@@ -145,7 +140,7 @@ func TestPostgresTrapConnection(t *testing.T) {
 	pwMsg = append(pwMsg, pwLen...)
 	pwMsg = append(pwMsg, password...)
 	pwMsg = append(pwMsg, 0)
-	conn.Write(pwMsg)
+	_, _ = conn.Write(pwMsg)
 
 	// Read ErrorResponse
 	var errTag [1]byte
@@ -157,7 +152,7 @@ func TestPostgresTrapConnection(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestPostgresTrapConnectionNoSSL(t *testing.T) {
@@ -170,7 +165,7 @@ func TestPostgresTrapConnectionNoSSL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.Addrs["postgres"], 2*time.Second)
@@ -178,7 +173,7 @@ func TestPostgresTrapConnectionNoSSL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Send StartupMessage directly (no SSL)
 	var startup []byte
@@ -188,7 +183,7 @@ func TestPostgresTrapConnectionNoSSL(t *testing.T) {
 	startup = append(startup, "user\x00root\x00\x00"...)
 	length := make([]byte, 4)
 	binary.BigEndian.PutUint32(length, uint32(4+len(startup)))
-	conn.Write(append(length, startup...))
+	_, _ = conn.Write(append(length, startup...))
 
 	// Read AuthenticationCleartextPassword
 	auth := make([]byte, 9)
@@ -207,7 +202,7 @@ func TestPostgresTrapConnectionNoSSL(t *testing.T) {
 	pwMsg = append(pwMsg, pwLen...)
 	pwMsg = append(pwMsg, "pass"...)
 	pwMsg = append(pwMsg, 0)
-	conn.Write(pwMsg)
+	_, _ = conn.Write(pwMsg)
 
 	// Read ErrorResponse
 	var errTag [1]byte
@@ -219,5 +214,5 @@ func TestPostgresTrapConnectionNoSSL(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

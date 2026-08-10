@@ -82,7 +82,7 @@ func TestOracleTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.Addrs["oracle"], 2*time.Second)
@@ -90,11 +90,11 @@ func TestOracleTrapConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Send TNS Connect packet
 	connectData := "(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=ORCL)(CID=(PROGRAM=sqlplus)))(ADDRESS=(PROTOCOL=TCP)(HOST=10.0.0.1)(PORT=1521))(USER=scott))"
-	conn.Write(buildTNSPacket(1, []byte(connectData)))
+	_, _ = conn.Write(buildTNSPacket(1, []byte(connectData)))
 
 	// Read TNS Accept
 	header := make([]byte, 8)
@@ -131,5 +131,5 @@ func TestOracleTrapConnection(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

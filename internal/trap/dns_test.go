@@ -39,7 +39,7 @@ func TestDNSTrap(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go tr.Start(ctx)
+	go func() { _ = tr.Start(ctx) }()
 	time.Sleep(50 * time.Millisecond)
 
 	// Build DNS query for "example.com" type A
@@ -71,7 +71,7 @@ func TestDNSTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	resp := make([]byte, 512)
 	n, err := c.Read(resp)
 	if err != nil {
@@ -111,5 +111,5 @@ func TestDNSTrap(t *testing.T) {
 	}
 
 	cancel()
-	tr.Stop(context.Background())
+	_ = tr.Stop(context.Background())
 }

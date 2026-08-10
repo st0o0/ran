@@ -67,7 +67,7 @@ func TestRDPTrapWithCookie(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("rdp"), 2*time.Second)
@@ -76,7 +76,7 @@ func TestRDPTrapWithCookie(t *testing.T) {
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 
 	// Send RDP Connection Request with cookie
 	req := buildRDPConnectionRequest("administrator")
@@ -120,7 +120,7 @@ func TestRDPTrapWithCookie(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestRDPTrapNoCookie(t *testing.T) {
@@ -133,7 +133,7 @@ func TestRDPTrapNoCookie(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("rdp"), 2*time.Second)
@@ -142,7 +142,7 @@ func TestRDPTrapNoCookie(t *testing.T) {
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 
 	req := buildRDPConnectionRequest("")
 	if _, err := conn.Write(req); err != nil {
@@ -158,5 +158,5 @@ func TestRDPTrapNoCookie(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

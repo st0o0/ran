@@ -53,7 +53,7 @@ func TestModbusTrapReadCoils(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -61,7 +61,7 @@ func TestModbusTrapReadCoils(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// FC 1: Read Coils, starting address 0x0000, quantity 10
 	data := make([]byte, 4)
@@ -100,7 +100,7 @@ func TestModbusTrapReadCoils(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestModbusTrapWriteSingleRegister(t *testing.T) {
@@ -120,7 +120,7 @@ func TestModbusTrapWriteSingleRegister(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -128,7 +128,7 @@ func TestModbusTrapWriteSingleRegister(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// FC 6: Write Single Register, address 0x0010, value 0x00FF
 	data := make([]byte, 4)
@@ -156,7 +156,7 @@ func TestModbusTrapWriteSingleRegister(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestModbusTrapInvalidProtocolID(t *testing.T) {
@@ -176,7 +176,7 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -184,7 +184,7 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 
 	// Invalid protocol ID (should be 0)
 	pkt := make([]byte, 12)
@@ -195,7 +195,7 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 	pkt[7] = 1                                   // FC
 	binary.BigEndian.PutUint16(pkt[8:10], 0)     // address
 	binary.BigEndian.PutUint16(pkt[10:12], 10)   // quantity
-	conn.Write(pkt)
+	_, _ = conn.Write(pkt)
 
 	buf := make([]byte, 1)
 	_, err = conn.Read(buf)
@@ -204,7 +204,7 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
@@ -224,7 +224,7 @@ func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -232,7 +232,7 @@ func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// FC 16: Write Multiple Registers, address 0x0000, quantity 2, byte count 4, values
 	data := make([]byte, 9)
@@ -256,7 +256,7 @@ func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestBuildModbusException(t *testing.T) {

@@ -38,7 +38,7 @@ func TestNTPTrap(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go tr.Start(ctx)
+	go func() { _ = tr.Start(ctx) }()
 	time.Sleep(50 * time.Millisecond)
 
 	// Build NTP client request
@@ -64,7 +64,7 @@ func TestNTPTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	resp := make([]byte, 512)
 	n, err := c.Read(resp)
 	if err != nil {
@@ -104,12 +104,12 @@ func TestNTPTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	_, err = c.Read(resp)
 	if err == nil {
 		t.Error("expected no response for mode 7 (monlist), but got one")
 	}
 
 	cancel()
-	tr.Stop(context.Background())
+	_ = tr.Stop(context.Background())
 }

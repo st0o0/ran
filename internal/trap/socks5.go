@@ -89,7 +89,7 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	// Read greeting
 	var ver [1]byte
@@ -123,15 +123,15 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 
 	if hasUserPass {
 		// Select username/password auth
-		conn.Write([]byte{0x05, 0x02})
+		_, _ = conn.Write([]byte{0x05, 0x02})
 		t.handleUserPassAuth(ctx, conn, host, sess)
 	} else if hasNoAuth {
 		// Select no auth
-		conn.Write([]byte{0x05, 0x00})
+		_, _ = conn.Write([]byte{0x05, 0x00})
 		t.handleNoAuth(ctx, conn, host, sess)
 	} else {
 		// No acceptable methods
-		conn.Write([]byte{0x05, 0xFF})
+		_, _ = conn.Write([]byte{0x05, 0xFF})
 	}
 }
 
@@ -167,7 +167,7 @@ func (t *SOCKS5Trap) handleUserPassAuth(ctx context.Context, conn net.Conn, host
 	t.alerter.Alert(ctx, host, "socks5")
 
 	// Auth failure
-	conn.Write([]byte{0x01, 0x01})
+	_, _ = conn.Write([]byte{0x01, 0x01})
 }
 
 func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host string, sess *Session) {
@@ -220,5 +220,5 @@ func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host strin
 
 	// General failure reply
 	resp := []byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
-	conn.Write(resp)
+	_, _ = conn.Write(resp)
 }

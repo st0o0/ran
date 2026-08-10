@@ -110,7 +110,7 @@ func TestMQTTTrapConnect31(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -118,7 +118,7 @@ func TestMQTTTrapConnect31(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	pkt := buildMQTTConnectPacket("MQTT", 4, "test-client", "admin", "secret")
 	if _, err := conn.Write(pkt); err != nil {
@@ -144,7 +144,7 @@ func TestMQTTTrapConnect31(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestMQTTTrapConnectV5(t *testing.T) {
@@ -164,7 +164,7 @@ func TestMQTTTrapConnectV5(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -172,7 +172,7 @@ func TestMQTTTrapConnectV5(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	pkt := buildMQTTConnectPacket("MQTT", 5, "v5-client", "user5", "pass5")
 	if _, err := conn.Write(pkt); err != nil {
@@ -195,7 +195,7 @@ func TestMQTTTrapConnectV5(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestMQTTTrapNonConnect(t *testing.T) {
@@ -215,7 +215,7 @@ func TestMQTTTrapNonConnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -223,10 +223,10 @@ func TestMQTTTrapNonConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 
 	// PUBLISH packet (type 3)
-	conn.Write([]byte{0x30, 0x05, 0x00, 0x01, 'a', 'h', 'i'})
+	_, _ = conn.Write([]byte{0x30, 0x05, 0x00, 0x01, 'a', 'h', 'i'})
 
 	buf := make([]byte, 1)
 	_, err = conn.Read(buf)
@@ -235,7 +235,7 @@ func TestMQTTTrapNonConnect(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestMQTTTrapMQIsdpProtocol(t *testing.T) {
@@ -255,7 +255,7 @@ func TestMQTTTrapMQIsdpProtocol(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -263,7 +263,7 @@ func TestMQTTTrapMQIsdpProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	pkt := buildMQTTConnectPacket("MQIsdp", 3, "old-client", "legacyuser", "legacypass")
 	if _, err := conn.Write(pkt); err != nil {
@@ -283,7 +283,7 @@ func TestMQTTTrapMQIsdpProtocol(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestParseMQTTConnect(t *testing.T) {

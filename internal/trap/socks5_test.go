@@ -39,7 +39,7 @@ func TestSOCKS5TrapUserPassAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -47,10 +47,10 @@ func TestSOCKS5TrapUserPassAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Greeting: version 5, 2 methods (no auth + user/pass)
-	conn.Write([]byte{0x05, 0x02, 0x00, 0x02})
+	_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x02})
 
 	resp := make([]byte, 2)
 	if _, err := conn.Read(resp); err != nil {
@@ -67,7 +67,7 @@ func TestSOCKS5TrapUserPassAuth(t *testing.T) {
 	auth = append(auth, []byte(username)...)
 	auth = append(auth, byte(len(password)))
 	auth = append(auth, []byte(password)...)
-	conn.Write(auth)
+	_, _ = conn.Write(auth)
 
 	authResp := make([]byte, 2)
 	if _, err := conn.Read(authResp); err != nil {
@@ -78,7 +78,7 @@ func TestSOCKS5TrapUserPassAuth(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSOCKS5TrapNoAuth(t *testing.T) {
@@ -98,7 +98,7 @@ func TestSOCKS5TrapNoAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -106,10 +106,10 @@ func TestSOCKS5TrapNoAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Greeting: version 5, 1 method (no auth only)
-	conn.Write([]byte{0x05, 0x01, 0x00})
+	_, _ = conn.Write([]byte{0x05, 0x01, 0x00})
 
 	resp := make([]byte, 2)
 	if _, err := conn.Read(resp); err != nil {
@@ -125,7 +125,7 @@ func TestSOCKS5TrapNoAuth(t *testing.T) {
 		93, 184, 216, 34, // IP address
 		0x00, 0x50, // port 80
 	}
-	conn.Write(req)
+	_, _ = conn.Write(req)
 
 	connResp := make([]byte, 10)
 	if _, err := conn.Read(connResp); err != nil {
@@ -136,7 +136,7 @@ func TestSOCKS5TrapNoAuth(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSOCKS5TrapDomainConnect(t *testing.T) {
@@ -156,7 +156,7 @@ func TestSOCKS5TrapDomainConnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -164,10 +164,10 @@ func TestSOCKS5TrapDomainConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Greeting: no auth only
-	conn.Write([]byte{0x05, 0x01, 0x00})
+	_, _ = conn.Write([]byte{0x05, 0x01, 0x00})
 
 	resp := make([]byte, 2)
 	if _, err := conn.Read(resp); err != nil {
@@ -183,7 +183,7 @@ func TestSOCKS5TrapDomainConnect(t *testing.T) {
 	req = append(req, []byte(domain)...)
 	req = append(req, 0x01, 0xBB) // port 443
 
-	conn.Write(req)
+	_, _ = conn.Write(req)
 
 	connResp := make([]byte, 10)
 	if _, err := conn.Read(connResp); err != nil {
@@ -194,7 +194,7 @@ func TestSOCKS5TrapDomainConnect(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSOCKS5TrapPrefersUserPass(t *testing.T) {
@@ -214,7 +214,7 @@ func TestSOCKS5TrapPrefersUserPass(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -222,10 +222,10 @@ func TestSOCKS5TrapPrefersUserPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Offer both methods
-	conn.Write([]byte{0x05, 0x02, 0x00, 0x02})
+	_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x02})
 
 	resp := make([]byte, 2)
 	if _, err := conn.Read(resp); err != nil {
@@ -237,5 +237,5 @@ func TestSOCKS5TrapPrefersUserPass(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

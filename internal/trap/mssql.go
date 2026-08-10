@@ -90,7 +90,7 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(conn, header); err != nil {
@@ -136,7 +136,7 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 	sess.RecordCredentials(t.metrics)
 	t.alerter.Alert(ctx, host, "mssql")
 
-	conn.Write(buildTDSErrorResponse())
+	_, _ = conn.Write(buildTDSErrorResponse())
 }
 
 func buildTDSPreloginResponse() []byte {

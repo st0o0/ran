@@ -89,7 +89,7 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	startup, err := readPgStartupMessage(conn)
 	if err != nil {
@@ -97,7 +97,7 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 
 	if len(startup) == 4 && binary.BigEndian.Uint32(startup) == 80877103 {
-		conn.Write([]byte{'N'})
+		_, _ = conn.Write([]byte{'N'})
 		startup, err = readPgStartupMessage(conn)
 		if err != nil {
 			return
@@ -220,5 +220,5 @@ func writePgErrorResponse(w io.Writer, msg string) {
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(body)+4))
 	pkt = append(pkt, lenBuf[:]...)
 	pkt = append(pkt, body...)
-	w.Write(pkt)
+	_, _ = w.Write(pkt)
 }
