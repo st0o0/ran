@@ -61,9 +61,9 @@ func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byt
 		return
 	}
 
-	varbindList := berSequence(nil)
-	errorIndex := berInteger(0)
-	errorStatus := berInteger(2)
+	varbindList := berSequence(0x30)
+	errorIndex := berInteger(0x02, 0)
+	errorStatus := berInteger(0x02, 2)
 	requestID := append([]byte{0x02}, berLength(len(reqIDValue))...)
 	requestID = append(requestID, reqIDValue...)
 
@@ -76,15 +76,15 @@ func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byt
 	getResponse := append([]byte{0xA2}, berLength(len(pduContents))...)
 	getResponse = append(getResponse, pduContents...)
 
-	communityBytes := berOctetString([]byte(community))
-	versionBytes := berInteger(int(version))
+	communityBytes := berOctetString(0x04, []byte(community))
+	versionBytes := berInteger(0x02, int64(version))
 
 	outer := make([]byte, 0, len(versionBytes)+len(communityBytes)+len(getResponse))
 	outer = append(outer, versionBytes...)
 	outer = append(outer, communityBytes...)
 	outer = append(outer, getResponse...)
 
-	response := berSequence(outer)
+	response := berSequence(0x30, outer)
 	respond(response)
 }
 
@@ -128,48 +128,3 @@ func readTLV(data []byte, offset int) (tag byte, length int, value []byte, next 
 	return tag, length, value, next, true
 }
 
-func berLength(length int) []byte {
-	if length < 0x80 {
-		return []byte{byte(length)}
-	}
-	if length <= 0xFF {
-		return []byte{0x81, byte(length)}
-	}
-	return []byte{0x82, byte(length >> 8), byte(length)}
-}
-
-func berInteger(value int) []byte {
-	var b []byte
-	if value == 0 {
-		b = []byte{0}
-	} else {
-		v := value
-		var tmp []byte
-		for v > 0 {
-			tmp = append([]byte{byte(v & 0xFF)}, tmp...)
-			v >>= 8
-		}
-		if tmp[0]&0x80 != 0 {
-			tmp = append([]byte{0}, tmp...)
-		}
-		b = tmp
-	}
-	result := []byte{0x02}
-	result = append(result, berLength(len(b))...)
-	result = append(result, b...)
-	return result
-}
-
-func berOctetString(value []byte) []byte {
-	result := []byte{0x04}
-	result = append(result, berLength(len(value))...)
-	result = append(result, value...)
-	return result
-}
-
-func berSequence(contents []byte) []byte {
-	result := []byte{0x30}
-	result = append(result, berLength(len(contents))...)
-	result = append(result, contents...)
-	return result
-}

@@ -23,38 +23,38 @@ func testLDAPConfig(addr string) *config.Config {
 }
 
 func buildBindRequest(msgID int, dn, password string) []byte {
-	msgIDBytes := berEncodeInteger(0x02, int64(msgID))
+	msgIDBytes := berInteger(0x02, int64(msgID))
 
-	version := berEncodeInteger(0x02, 3)
-	name := berEncodeOctetString(dn)
+	version := berInteger(0x02, 3)
+	name := berOctetString(0x04, []byte(dn))
 	auth := []byte{0x80, byte(len(password))}
 	auth = append(auth, []byte(password)...)
 
-	bindReq := berEncodeSequence(0x60, version, name, auth)
-	return berEncodeSequence(0x30, msgIDBytes, bindReq)
+	bindReq := berSequence(0x60, version, name, auth)
+	return berSequence(0x30, msgIDBytes, bindReq)
 }
 
 func buildUnbindRequest(msgID int) []byte {
-	msgIDBytes := berEncodeInteger(0x02, int64(msgID))
+	msgIDBytes := berInteger(0x02, int64(msgID))
 	unbind := []byte{0x42, 0x00}
-	return berEncodeSequence(0x30, msgIDBytes, unbind)
+	return berSequence(0x30, msgIDBytes, unbind)
 }
 
 func buildSearchRequest(msgID int) []byte {
-	msgIDBytes := berEncodeInteger(0x02, int64(msgID))
+	msgIDBytes := berInteger(0x02, int64(msgID))
 
-	baseObject := berEncodeOctetString("dc=example,dc=com")
-	scope := berEncodeInteger(0x0a, 2) // wholeSubtree
-	deref := berEncodeInteger(0x0a, 0)
-	sizeLimit := berEncodeInteger(0x02, 0)
-	timeLimit := berEncodeInteger(0x02, 0)
+	baseObject := berOctetString(0x04, []byte("dc=example,dc=com"))
+	scope := berInteger(0x0a, 2) // wholeSubtree
+	deref := berInteger(0x0a, 0)
+	sizeLimit := berInteger(0x02, 0)
+	timeLimit := berInteger(0x02, 0)
 	typesOnly := []byte{0x01, 0x01, 0x00}
 	filter := []byte{0x87, 0x0b}
 	filter = append(filter, []byte("objectClass")...)
-	attrs := berEncodeSequence(0x30)
+	attrs := berSequence(0x30)
 
-	searchReq := berEncodeSequence(0x63, baseObject, scope, deref, sizeLimit, timeLimit, typesOnly, filter, attrs)
-	return berEncodeSequence(0x30, msgIDBytes, searchReq)
+	searchReq := berSequence(0x63, baseObject, scope, deref, sizeLimit, timeLimit, typesOnly, filter, attrs)
+	return berSequence(0x30, msgIDBytes, searchReq)
 }
 
 func TestLDAPTrapBindRequest(t *testing.T) {
@@ -74,7 +74,7 @@ func TestLDAPTrapBindRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -82,7 +82,7 @@ func TestLDAPTrapBindRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	req := buildBindRequest(1, "cn=admin,dc=example,dc=com", "secret123")
 	if _, err := conn.Write(req); err != nil {
@@ -126,7 +126,7 @@ func TestLDAPTrapBindRequest(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestLDAPTrapSearchRequest(t *testing.T) {
@@ -146,7 +146,7 @@ func TestLDAPTrapSearchRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -154,7 +154,7 @@ func TestLDAPTrapSearchRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	req := buildSearchRequest(2)
 	if _, err := conn.Write(req); err != nil {
@@ -178,7 +178,7 @@ func TestLDAPTrapSearchRequest(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestLDAPTrapUnbind(t *testing.T) {
@@ -198,7 +198,7 @@ func TestLDAPTrapUnbind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
@@ -206,7 +206,7 @@ func TestLDAPTrapUnbind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	req := buildUnbindRequest(3)
 	if _, err := conn.Write(req); err != nil {
@@ -220,5 +220,5 @@ func TestLDAPTrapUnbind(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

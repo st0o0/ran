@@ -38,14 +38,14 @@ func TestSNMPTrap(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go tr.Start(ctx)
+	go func() { _ = tr.Start(ctx) }()
 	time.Sleep(50 * time.Millisecond)
 
 	// Build SNMPv2c GetRequest packet
-	requestID := berInteger(1)
-	errorStatus := berInteger(0)
-	errorIndex := berInteger(0)
-	varbindList := berSequence(nil)
+	requestID := berInteger(0x02, 1)
+	errorStatus := berInteger(0x02, 0)
+	errorIndex := berInteger(0x02, 0)
+	varbindList := berSequence(0x30)
 
 	pduContents := make([]byte, 0, len(requestID)+len(errorStatus)+len(errorIndex)+len(varbindList))
 	pduContents = append(pduContents, requestID...)
@@ -56,15 +56,15 @@ func TestSNMPTrap(t *testing.T) {
 	getRequest := append([]byte{0xA0}, berLength(len(pduContents))...)
 	getRequest = append(getRequest, pduContents...)
 
-	version := berInteger(1) // v2c
-	community := berOctetString([]byte("public"))
+	version := berInteger(0x02, 1) // v2c
+	community := berOctetString(0x04, []byte("public"))
 
 	seqContents := make([]byte, 0, len(version)+len(community)+len(getRequest))
 	seqContents = append(seqContents, version...)
 	seqContents = append(seqContents, community...)
 	seqContents = append(seqContents, getRequest...)
 
-	packet := berSequence(seqContents)
+	packet := berSequence(0x30, seqContents)
 
 	c, err := net.Dial("udp", addr)
 	if err != nil {
@@ -77,7 +77,7 @@ func TestSNMPTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	resp := make([]byte, 512)
 	n, err := c.Read(resp)
 	if err != nil {
@@ -108,5 +108,5 @@ func TestSNMPTrap(t *testing.T) {
 	}
 
 	cancel()
-	tr.Stop(context.Background())
+	_ = tr.Stop(context.Background())
 }

@@ -2,7 +2,6 @@ package trap
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
@@ -89,7 +88,7 @@ func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	for {
 		tag, msgBytes, err := berReadElement(conn)
@@ -154,12 +153,12 @@ func (t *LDAPTrap) handleBind(ctx context.Context, conn net.Conn, host string, s
 	t.alerter.Alert(ctx, host, "ldap")
 
 	resp := berBuildBindResponse(msgID, 49, "", "Invalid credentials")
-	conn.Write(resp)
+	_, _ = conn.Write(resp)
 }
 
 func (t *LDAPTrap) handleSearch(conn net.Conn, msgID int64) {
 	resp := berBuildSearchDone(msgID, 50)
-	conn.Write(resp)
+	_, _ = conn.Write(resp)
 }
 
 // BER encoding helpers
@@ -262,75 +261,20 @@ func berReadOctetString(data []byte) ([]byte, []byte, error) {
 	return data[2 : 2+length], data[2+length:], nil
 }
 
-func berEncodeLength(length int) []byte {
-	if length < 0x80 {
-		return []byte{byte(length)}
-	}
-	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], uint32(length))
-	i := 0
-	for i < 3 && buf[i] == 0 {
-		i++
-	}
-	numBytes := 4 - i
-	result := make([]byte, 1+numBytes)
-	result[0] = byte(0x80 | numBytes)
-	copy(result[1:], buf[i:])
-	return result
-}
-
-func berEncodeInteger(tag byte, val int64) []byte {
-	var valBytes []byte
-	if val == 0 {
-		valBytes = []byte{0}
-	} else {
-		tmp := val
-		for tmp > 0 {
-			valBytes = append([]byte{byte(tmp & 0xff)}, valBytes...)
-			tmp >>= 8
-		}
-		if valBytes[0]&0x80 != 0 {
-			valBytes = append([]byte{0}, valBytes...)
-		}
-	}
-	result := []byte{tag}
-	result = append(result, berEncodeLength(len(valBytes))...)
-	result = append(result, valBytes...)
-	return result
-}
-
-func berEncodeOctetString(s string) []byte {
-	result := []byte{0x04}
-	result = append(result, berEncodeLength(len(s))...)
-	result = append(result, []byte(s)...)
-	return result
-}
-
-func berEncodeSequence(tag byte, children ...[]byte) []byte {
-	var payload []byte
-	for _, c := range children {
-		payload = append(payload, c...)
-	}
-	result := []byte{tag}
-	result = append(result, berEncodeLength(len(payload))...)
-	result = append(result, payload...)
-	return result
-}
-
 func berBuildBindResponse(msgID int64, resultCode int64, matchedDN, diagnostic string) []byte {
-	msgIDBytes := berEncodeInteger(0x02, msgID)
-	resultCodeBytes := berEncodeInteger(0x0a, resultCode)
-	matchedDNBytes := berEncodeOctetString(matchedDN)
-	diagnosticBytes := berEncodeOctetString(diagnostic)
-	bindResp := berEncodeSequence(0x61, resultCodeBytes, matchedDNBytes, diagnosticBytes)
-	return berEncodeSequence(0x30, msgIDBytes, bindResp)
+	msgIDBytes := berInteger(0x02, msgID)
+	resultCodeBytes := berInteger(0x0a, resultCode)
+	matchedDNBytes := berOctetString(0x04, []byte(matchedDN))
+	diagnosticBytes := berOctetString(0x04, []byte(diagnostic))
+	bindResp := berSequence(0x61, resultCodeBytes, matchedDNBytes, diagnosticBytes)
+	return berSequence(0x30, msgIDBytes, bindResp)
 }
 
 func berBuildSearchDone(msgID int64, resultCode int64) []byte {
-	msgIDBytes := berEncodeInteger(0x02, msgID)
-	resultCodeBytes := berEncodeInteger(0x0a, resultCode)
-	matchedDNBytes := berEncodeOctetString("")
-	diagnosticBytes := berEncodeOctetString("")
-	searchDone := berEncodeSequence(0x65, resultCodeBytes, matchedDNBytes, diagnosticBytes)
-	return berEncodeSequence(0x30, msgIDBytes, searchDone)
+	msgIDBytes := berInteger(0x02, msgID)
+	resultCodeBytes := berInteger(0x0a, resultCode)
+	matchedDNBytes := berOctetString(0x04, []byte(""))
+	diagnosticBytes := berOctetString(0x04, []byte(""))
+	searchDone := berSequence(0x65, resultCodeBytes, matchedDNBytes, diagnosticBytes)
+	return berSequence(0x30, msgIDBytes, searchDone)
 }
