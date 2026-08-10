@@ -90,9 +90,9 @@ func (t *RedisTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
-	reader := bufio.NewReader(conn)
+	reader := bufio.NewReaderSize(conn, 4096)
 
 	for {
 		args, err := readRedisCommand(reader)

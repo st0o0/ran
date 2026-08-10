@@ -89,10 +89,11 @@ func (t *MemcachedTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 	t.alerter.Alert(ctx, host, "memcached")
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 4096), 4096)
 	for scanner.Scan() {
 		line := strings.TrimRight(scanner.Text(), "\r")
 		if strings.ToLower(strings.TrimSpace(line)) == "quit" {

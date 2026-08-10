@@ -89,9 +89,9 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
-	reader := bufio.NewReader(conn)
+	reader := bufio.NewReaderSize(conn, 4096)
 
 	fmt.Fprint(conn, "\r\nLogin: ")
 	userLine, err := reader.ReadString('\n')

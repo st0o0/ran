@@ -89,13 +89,14 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	if _, err := fmt.Fprint(conn, "* OK IMAP4rev1 Server Ready\r\n"); err != nil {
 		return
 	}
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 1024), 1024)
 	for scanner.Scan() {
 		line := strings.TrimRight(scanner.Text(), "\r")
 		parts := strings.SplitN(line, " ", 3)

@@ -89,13 +89,14 @@ func (t *POP3Trap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	if _, err := fmt.Fprint(conn, "+OK POP3 server ready\r\n"); err != nil {
 		return
 	}
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 1024), 1024)
 	var username string
 
 	for scanner.Scan() {

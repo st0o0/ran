@@ -89,9 +89,10 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 512), 512)
 	var nick string
 	registered := false
 

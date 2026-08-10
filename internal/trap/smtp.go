@@ -91,13 +91,14 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	if _, err := fmt.Fprintf(conn, "220 mail.example.com ESMTP ready\r\n"); err != nil {
 		return
 	}
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 512), 512)
 	for scanner.Scan() {
 		line := scanner.Text()
 		cmd := strings.ToUpper(strings.TrimSpace(line))
