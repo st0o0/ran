@@ -1,9 +1,11 @@
 package trap_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,12 +38,9 @@ func TestIntegrationAllTraps(t *testing.T) {
 	mysqlAddr := freeAddr(t)
 
 	cfg := &config.Config{
-		SSH:            true,
-		HTTP:           true,
-		MySQL:          true,
-		SSHAddr:        sshAddr,
-		HTTPAddr:       httpAddr,
-		MySQLAddr:      mysqlAddr,
+		Traps:          []string{"ssh", "http", "mysql"},
+		Addrs:          map[string]string{"ssh": sshAddr, "http": httpAddr, "mysql": mysqlAddr},
+		SSHHostKeyPath: "",
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
@@ -158,4 +157,126 @@ func TestIntegrationAllTraps(t *testing.T) {
 			t.Errorf("log output missing %s", want)
 		}
 	}
+}
+
+func TestIntegrationFTP(t *testing.T) {
+	addr := freeAddr(t)
+	cfg := &config.Config{
+		Traps:          []string{"ftp"},
+		Addrs:          map[string]string{"ftp": addr},
+		SessionTimeout: 5 * time.Second,
+		MaxSessions:    100,
+		MaxPerIP:       10,
+	}
+
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+
+	tr := trap.NewFTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = tr.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	reader := bufio.NewReader(conn)
+	banner, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(banner, "220") {
+		t.Errorf("FTP banner = %q, want 220 prefix", banner)
+	}
+
+	cancel()
+	_ = tr.Stop(context.Background())
+}
+
+func TestIntegrationTelnet(t *testing.T) {
+	addr := freeAddr(t)
+	cfg := &config.Config{
+		Traps:          []string{"telnet"},
+		Addrs:          map[string]string{"telnet": addr},
+		SessionTimeout: 5 * time.Second,
+		MaxSessions:    100,
+		MaxPerIP:       10,
+	}
+
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+
+	tr := trap.NewTelnet(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = tr.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	buf := make([]byte, 256)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := string(buf[:n])
+	if !strings.Contains(prompt, "login") && !strings.Contains(prompt, "Login") && len(prompt) == 0 {
+		t.Errorf("Telnet prompt = %q, expected login prompt or negotiation", prompt)
+	}
+
+	cancel()
+	_ = tr.Stop(context.Background())
+}
+
+func TestIntegrationRedis(t *testing.T) {
+	addr := freeAddr(t)
+	cfg := &config.Config{
+		Traps:          []string{"redis"},
+		Addrs:          map[string]string{"redis": addr},
+		SessionTimeout: 5 * time.Second,
+		MaxSessions:    100,
+		MaxPerIP:       10,
+	}
+
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+
+	tr := trap.NewRedis(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = tr.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	fmt.Fprintf(conn, "*1\r\n$4\r\nPING\r\n")
+	reader := bufio.NewReader(conn)
+	resp, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resp, "PONG") && !strings.Contains(resp, "ERR") && !strings.HasPrefix(resp, "+") && !strings.HasPrefix(resp, "-") {
+		t.Errorf("Redis response = %q, expected RESP reply", resp)
+	}
+
+	cancel()
+	_ = tr.Stop(context.Background())
 }

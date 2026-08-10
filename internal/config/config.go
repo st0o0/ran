@@ -50,14 +50,7 @@ type Config struct {
 	Traps []string
 	Addrs map[string]string
 
-	// Legacy fields kept for backwards compat in run.go migration
-	SSH   bool
-	HTTP  bool
-	MySQL bool
-
-	SSHAddr   string
-	HTTPAddr  string
-	MySQLAddr string
+	SSHHostKeyPath string
 
 	LogLevel  slog.Level
 	LogFormat string
@@ -92,16 +85,17 @@ func Load(getenv func(string) string) (*Config, error) {
 	e := &envReader{getenv: getenv}
 
 	c := &Config{
-		Addrs:          make(map[string]string),
-		LogLevel:       e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
-		LogFormat:      e.logFormat("RAN_LOG_FORMAT", "json"),
-		MetricsAddr:    e.str("RAN_METRICS_ADDR", ":9550"),
-		SessionTimeout: e.duration("RAN_SESSION_TIMEOUT", 30*time.Second),
-		MaxSessions:    e.intMin("RAN_MAX_SESSIONS", 500, 1),
-		MaxPerIP:       e.intMin("RAN_MAX_PER_IP", 10, 1),
-		CrowdSec:       e.boolean("RAN_CROWDSEC", false),
-		CrowdSecURL:    e.str("RAN_CROWDSEC_URL", ""),
-		CrowdSecAPIKey: e.str("RAN_CROWDSEC_API_KEY", ""),
+		Addrs:               make(map[string]string),
+		SSHHostKeyPath:      e.str("RAN_SSH_HOST_KEY_PATH", "/data/ssh_host_key"),
+		LogLevel:            e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
+		LogFormat:           e.logFormat("RAN_LOG_FORMAT", "json"),
+		MetricsAddr:         e.str("RAN_METRICS_ADDR", ":9550"),
+		SessionTimeout:      e.duration("RAN_SESSION_TIMEOUT", 30*time.Second),
+		MaxSessions:         e.intMin("RAN_MAX_SESSIONS", 500, 1),
+		MaxPerIP:            e.intMin("RAN_MAX_PER_IP", 10, 1),
+		CrowdSec:            e.boolean("RAN_CROWDSEC", false),
+		CrowdSecURL:         e.str("RAN_CROWDSEC_URL", ""),
+		CrowdSecAPIKey:      e.str("RAN_CROWDSEC_API_KEY", ""),
 		CrowdSecBanDuration: e.banDuration("RAN_CROWDSEC_BAN_DURATION", 4*time.Hour),
 	}
 	if e.err != nil {
@@ -125,39 +119,10 @@ func Load(getenv func(string) string) (*Config, error) {
 			}
 			c.Traps = append(c.Traps, name)
 		}
-	} else {
-		// Legacy per-trap env vars
-		legacySSH := e.boolean("RAN_SSH", false)
-		legacyHTTP := e.boolean("RAN_HTTP", false)
-		legacyMySQL := e.boolean("RAN_MYSQL", false)
-		if e.err != nil {
-			return nil, e.err
-		}
-		if legacySSH {
-			c.Traps = append(c.Traps, "ssh")
-		}
-		if legacyHTTP {
-			c.Traps = append(c.Traps, "http")
-		}
-		if legacyMySQL {
-			c.Traps = append(c.Traps, "mysql")
-		}
 	}
 
 	if len(c.Traps) == 0 {
-		return nil, fmt.Errorf("at least one trap must be enabled (RAN_TRAPS or RAN_SSH, RAN_HTTP, RAN_MYSQL)")
-	}
-
-	// Set legacy bool fields for backwards compat
-	for _, name := range c.Traps {
-		switch name {
-		case "ssh":
-			c.SSH = true
-		case "http":
-			c.HTTP = true
-		case "mysql":
-			c.MySQL = true
-		}
+		return nil, fmt.Errorf("at least one trap must be enabled via RAN_TRAPS")
 	}
 
 	// Load per-trap addr overrides
@@ -168,20 +133,6 @@ func Load(getenv func(string) string) (*Config, error) {
 		} else {
 			c.Addrs[name] = DefaultPorts[name]
 		}
-	}
-
-	// Keep legacy addr fields in sync
-	c.SSHAddr = c.TrapAddr("ssh")
-	c.HTTPAddr = c.TrapAddr("http")
-	c.MySQLAddr = c.TrapAddr("mysql")
-	if c.SSHAddr == "" {
-		c.SSHAddr = DefaultPorts["ssh"]
-	}
-	if c.HTTPAddr == "" {
-		c.HTTPAddr = DefaultPorts["http"]
-	}
-	if c.MySQLAddr == "" {
-		c.MySQLAddr = DefaultPorts["mysql"]
 	}
 
 	if c.CrowdSec {

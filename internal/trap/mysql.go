@@ -39,12 +39,12 @@ func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 
 func (t *MySQLTrap) Start(ctx context.Context) error {
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.MySQLAddr)
+	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("mysql"))
 	if err != nil {
 		return fmt.Errorf("mysql listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.MySQLAddr)
+	t.logger.Info("listening", "addr", t.cfg.TrapAddr("mysql"))
 
 	go func() {
 		<-ctx.Done()

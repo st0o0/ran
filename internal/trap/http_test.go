@@ -27,8 +27,8 @@ func httpTestConfig(t *testing.T) *config.Config {
 	ln.Close()
 
 	return &config.Config{
-		HTTP:           true,
-		HTTPAddr:       addr,
+		Traps:          []string{"http"},
+		Addrs:          map[string]string{"http": addr},
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
@@ -48,7 +48,7 @@ func TestHTTPLoginPage(t *testing.T) {
 	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
-	resp, err := http.Get("http://" + cfg.HTTPAddr + "/wp-login.php")
+	resp, err := http.Get("http://" + cfg.TrapAddr("http") + "/wp-login.php")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestHTTPCredentialCapture(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.Post(
-		"http://"+cfg.HTTPAddr+"/wp-login.php",
+		"http://"+cfg.TrapAddr("http")+"/wp-login.php",
 		"application/x-www-form-urlencoded",
 		strings.NewReader("log=admin&pwd=secret123"),
 	)
@@ -105,7 +105,7 @@ func TestHTTPAdminPage(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.Post(
-		"http://"+cfg.HTTPAddr+"/admin",
+		"http://"+cfg.TrapAddr("http")+"/admin",
 		"application/x-www-form-urlencoded",
 		strings.NewReader("username=admin&password=pass"),
 	)
@@ -133,7 +133,7 @@ func TestHTTPResponseHeaders(t *testing.T) {
 	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
-	resp, err := http.Get("http://" + cfg.HTTPAddr + "/admin")
+	resp, err := http.Get("http://" + cfg.TrapAddr("http") + "/admin")
 	if err != nil {
 		t.Fatal(err)
 	}

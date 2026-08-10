@@ -26,8 +26,9 @@ func testConfig(t *testing.T) *config.Config {
 	ln.Close()
 
 	return &config.Config{
-		SSH:            true,
-		SSHAddr:        addr,
+		Traps:          []string{"ssh"},
+		Addrs:          map[string]string{"ssh": addr},
+		SSHHostKeyPath: "",
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
@@ -49,7 +50,7 @@ func TestSSHTrapCaptures(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	clientCfg := &gossh.ClientConfig{
@@ -59,7 +60,7 @@ func TestSSHTrapCaptures(t *testing.T) {
 		Timeout:         2 * time.Second,
 	}
 
-	conn, err := gossh.Dial("tcp", cfg.SSHAddr, clientCfg)
+	conn, err := gossh.Dial("tcp", cfg.TrapAddr("ssh"), clientCfg)
 	if err == nil {
 		conn.Close()
 	}
@@ -71,7 +72,7 @@ func TestSSHTrapCaptures(t *testing.T) {
 
 func TestSSHHostKeyGeneration(t *testing.T) {
 	logger := slog.Default()
-	signer, err := loadOrGenerateHostKey(logger)
+	signer, err := loadOrGenerateHostKey("", logger)
 	if err != nil {
 		t.Fatalf("key generation failed: %v", err)
 	}
@@ -98,10 +99,10 @@ func TestSSHBanner(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
-	conn, err := net.DialTimeout("tcp", cfg.SSHAddr, 2*time.Second)
+	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("ssh"), 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

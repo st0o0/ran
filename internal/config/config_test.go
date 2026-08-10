@@ -11,16 +11,16 @@ func envFunc(m map[string]string) func(string) string {
 }
 
 func TestDefaults(t *testing.T) {
-	_, err := Load(envFunc(map[string]string{"RAN_SSH": "on"}))
+	_, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestDefaultValues(t *testing.T) {
-	c, _ := Load(envFunc(map[string]string{"RAN_SSH": "on"}))
-	if c.SSHAddr != ":2222" {
-		t.Errorf("SSHAddr = %q, want :2222", c.SSHAddr)
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if c.TrapAddr("ssh") != ":2222" {
+		t.Errorf("TrapAddr(ssh) = %q, want :2222", c.TrapAddr("ssh"))
 	}
 	if c.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want INFO", c.LogLevel)
@@ -40,25 +40,21 @@ func TestDefaultValues(t *testing.T) {
 	if c.MaxPerIP != 10 {
 		t.Errorf("MaxPerIP = %d, want 10", c.MaxPerIP)
 	}
+	if c.SSHHostKeyPath != "/data/ssh_host_key" {
+		t.Errorf("SSHHostKeyPath = %q, want /data/ssh_host_key", c.SSHHostKeyPath)
+	}
 }
 
-func TestToggles(t *testing.T) {
+func TestSSHHostKeyPathCustom(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":   "on",
-		"RAN_HTTP":  "on",
-		"RAN_MYSQL": "off",
+		"RAN_TRAPS":              "ssh",
+		"RAN_SSH_HOST_KEY_PATH": "/custom/path/key",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !c.SSH {
-		t.Error("SSH should be on")
-	}
-	if !c.HTTP {
-		t.Error("HTTP should be on")
-	}
-	if c.MySQL {
-		t.Error("MySQL should be off")
+	if c.SSHHostKeyPath != "/custom/path/key" {
+		t.Errorf("SSHHostKeyPath = %q, want /custom/path/key", c.SSHHostKeyPath)
 	}
 }
 
@@ -69,16 +65,9 @@ func TestNoTrapsEnabled(t *testing.T) {
 	}
 }
 
-func TestInvalidToggle(t *testing.T) {
-	_, err := Load(envFunc(map[string]string{"RAN_SSH": "banana"}))
-	if err == nil {
-		t.Fatal("expected error for invalid toggle")
-	}
-}
-
 func TestDurationParsing(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":             "on",
+		"RAN_TRAPS":           "ssh",
 		"RAN_SESSION_TIMEOUT": "1m",
 	}))
 	if err != nil {
@@ -91,7 +80,7 @@ func TestDurationParsing(t *testing.T) {
 
 func TestInvalidDuration(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_SSH":             "on",
+		"RAN_TRAPS":           "ssh",
 		"RAN_SESSION_TIMEOUT": "banana",
 	}))
 	if err == nil {
@@ -101,7 +90,7 @@ func TestInvalidDuration(t *testing.T) {
 
 func TestLogLevel(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":       "on",
+		"RAN_TRAPS":     "ssh",
 		"RAN_LOG_LEVEL": "debug",
 	}))
 	if err != nil {
@@ -114,7 +103,7 @@ func TestLogLevel(t *testing.T) {
 
 func TestInvalidLogLevel(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_SSH":       "on",
+		"RAN_TRAPS":     "ssh",
 		"RAN_LOG_LEVEL": "verbose",
 	}))
 	if err == nil {
@@ -124,22 +113,20 @@ func TestInvalidLogLevel(t *testing.T) {
 
 func TestCustomAddresses(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":        "on",
-		"RAN_SSH_ADDR":   ":2200",
-		"RAN_HTTP_ADDR":  ":9090",
-		"RAN_MYSQL_ADDR": ":3308",
+		"RAN_TRAPS":    "ssh",
+		"RAN_SSH_ADDR": ":2200",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.SSHAddr != ":2200" {
-		t.Errorf("SSHAddr = %q, want :2200", c.SSHAddr)
+	if c.TrapAddr("ssh") != ":2200" {
+		t.Errorf("TrapAddr(ssh) = %q, want :2200", c.TrapAddr("ssh"))
 	}
 }
 
 func TestCrowdSecEnabled(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":              "on",
+		"RAN_TRAPS":            "ssh",
 		"RAN_CROWDSEC":         "on",
 		"RAN_CROWDSEC_URL":     "http://crowdsec:8080",
 		"RAN_CROWDSEC_API_KEY": "abc123",
@@ -160,7 +147,7 @@ func TestCrowdSecEnabled(t *testing.T) {
 
 func TestCrowdSecMissingURL(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_SSH":              "on",
+		"RAN_TRAPS":            "ssh",
 		"RAN_CROWDSEC":         "on",
 		"RAN_CROWDSEC_API_KEY": "abc123",
 	}))
@@ -171,7 +158,7 @@ func TestCrowdSecMissingURL(t *testing.T) {
 
 func TestCrowdSecMissingKey(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_SSH":          "on",
+		"RAN_TRAPS":        "ssh",
 		"RAN_CROWDSEC":     "on",
 		"RAN_CROWDSEC_URL": "http://crowdsec:8080",
 	}))
@@ -182,7 +169,7 @@ func TestCrowdSecMissingKey(t *testing.T) {
 
 func TestCrowdSecPermanentBan(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":                   "on",
+		"RAN_TRAPS":                 "ssh",
 		"RAN_CROWDSEC":              "on",
 		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
 		"RAN_CROWDSEC_API_KEY":      "abc123",
@@ -198,7 +185,7 @@ func TestCrowdSecPermanentBan(t *testing.T) {
 
 func TestCrowdSecCustomDuration(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":                   "on",
+		"RAN_TRAPS":                 "ssh",
 		"RAN_CROWDSEC":              "on",
 		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
 		"RAN_CROWDSEC_API_KEY":      "abc123",
@@ -214,7 +201,7 @@ func TestCrowdSecCustomDuration(t *testing.T) {
 
 func TestCustomLimits(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":          "on",
+		"RAN_TRAPS":        "ssh",
 		"RAN_MAX_SESSIONS": "200",
 		"RAN_MAX_PER_IP":   "5",
 	}))
@@ -242,26 +229,6 @@ func TestRanTrapsList(t *testing.T) {
 	}
 	if traps[0] != "ssh" || traps[1] != "ftp" || traps[2] != "redis" {
 		t.Errorf("EnabledTraps() = %v, want [ssh ftp redis]", traps)
-	}
-	if !c.SSH {
-		t.Error("SSH legacy field should be true")
-	}
-}
-
-func TestRanTrapsOverridesLegacy(t *testing.T) {
-	c, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS": "ftp",
-		"RAN_SSH":   "on",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	traps := c.EnabledTraps()
-	if len(traps) != 1 || traps[0] != "ftp" {
-		t.Errorf("EnabledTraps() = %v, want [ftp]", traps)
-	}
-	if c.SSH {
-		t.Error("SSH should be false when RAN_TRAPS overrides")
 	}
 }
 

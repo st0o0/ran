@@ -20,7 +20,6 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
-const sshHostKeyPath = "/data/ssh_host_key"
 
 type SSHTrap struct {
 	cfg      *config.Config
@@ -34,7 +33,7 @@ type SSHTrap struct {
 }
 
 func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (*SSHTrap, error) {
-	signer, err := loadOrGenerateHostKey(logger)
+	signer, err := loadOrGenerateHostKey(cfg.SSHHostKeyPath, logger)
 	if err != nil {
 		return nil, fmt.Errorf("ssh host key: %w", err)
 	}
@@ -50,12 +49,12 @@ func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 
 func (t *SSHTrap) Start(ctx context.Context) error {
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.SSHAddr)
+	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("ssh"))
 	if err != nil {
 		return fmt.Errorf("ssh listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.SSHAddr)
+	t.logger.Info("listening", "addr", t.cfg.TrapAddr("ssh"))
 
 	go func() {
 		<-ctx.Done()
@@ -126,12 +125,12 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn) {
 	sshConn.Close()
 }
 
-func loadOrGenerateHostKey(logger *slog.Logger) (gossh.Signer, error) {
-	data, err := os.ReadFile(sshHostKeyPath)
+func loadOrGenerateHostKey(path string, logger *slog.Logger) (gossh.Signer, error) {
+	data, err := os.ReadFile(path)
 	if err == nil {
 		key, err := gossh.ParsePrivateKey(data)
 		if err == nil {
-			logger.Info("loaded ssh host key", "path", sshHostKeyPath)
+			logger.Info("loaded ssh host key", "path", path)
 			return key, nil
 		}
 	}
@@ -149,8 +148,8 @@ func loadOrGenerateHostKey(logger *slog.Logger) (gossh.Signer, error) {
 	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err == nil {
 		pemBlock := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})
-		if writeErr := os.WriteFile(sshHostKeyPath, pemBlock, 0600); writeErr == nil {
-			logger.Info("persisted ssh host key", "path", sshHostKeyPath)
+		if writeErr := os.WriteFile(path, pemBlock, 0600); writeErr == nil {
+			logger.Info("persisted ssh host key", "path", path)
 		}
 	}
 

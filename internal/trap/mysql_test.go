@@ -25,8 +25,8 @@ func mysqlTestConfig(t *testing.T) *config.Config {
 	ln.Close()
 
 	return &config.Config{
-		MySQL:          true,
-		MySQLAddr:      addr,
+		Traps:          []string{"mysql"},
+		Addrs:          map[string]string{"mysql": addr},
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
@@ -111,10 +111,10 @@ func TestMySQLTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
-	conn, err := net.DialTimeout("tcp", cfg.MySQLAddr, 2*time.Second)
+	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("mysql"), 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
