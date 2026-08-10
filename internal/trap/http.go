@@ -92,7 +92,7 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 		w.Header().Set("X-Powered-By", "PHP/8.3.6")
 
 		if r.Method == http.MethodPost {
-			r.ParseForm()
+			_ = r.ParseForm()
 			username := firstOf(r.PostForm, "username", "user", "log")
 			password := firstOf(r.PostForm, "password", "pass", "pwd")
 			sess.LogAuthAttempt(t.logger,

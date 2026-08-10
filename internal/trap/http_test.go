@@ -45,7 +45,7 @@ func TestHTTPLoginPage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.Get("http://" + cfg.HTTPAddr + "/wp-login.php")
@@ -73,7 +73,7 @@ func TestHTTPCredentialCapture(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.Post(
@@ -101,7 +101,7 @@ func TestHTTPAdminPage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.Post(
@@ -130,7 +130,7 @@ func TestHTTPResponseHeaders(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.Get("http://" + cfg.HTTPAddr + "/admin")

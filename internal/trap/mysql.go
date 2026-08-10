@@ -92,7 +92,7 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	challenge := make([]byte, 20)
 	rand.Read(challenge)
@@ -116,7 +116,7 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
 	sess.RecordCredentials(t.metrics)
 	t.alerter.Alert(ctx, host, "mysql")
 
-	conn.Write(buildErrPacket(2, 1045, "28000", "Access denied for user '"+username+"'"))
+	_, _ = conn.Write(buildErrPacket(2, 1045, "28000", "Access denied for user '"+username+"'"))
 }
 
 func buildGreeting(connID uint32, challenge []byte) []byte {

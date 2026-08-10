@@ -103,7 +103,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	sshCfg := &gossh.ServerConfig{
 		ServerVersion: "SSH-2.0-OpenSSH_9.6",

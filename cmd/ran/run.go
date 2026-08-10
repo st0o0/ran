@@ -38,7 +38,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 	logger.Info("shutting down")
 
 	for _, t := range traps {
-		t.Stop(context.Background())
+		_ = t.Stop(context.Background())
 	}
 	return nil
 }

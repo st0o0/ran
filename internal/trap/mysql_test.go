@@ -122,7 +122,7 @@ func TestMySQLTrapConnection(t *testing.T) {
 
 	// Read greeting
 	header := make([]byte, 4)
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := conn.Read(header); err != nil {
 		t.Fatal(err)
 	}
@@ -146,11 +146,11 @@ func TestMySQLTrapConnection(t *testing.T) {
 	resp = append(resp, []byte("password123")...)
 
 	pkt := wrapMySQLPacket(1, resp)
-	conn.Write(pkt)
+	_, _ = conn.Write(pkt)
 
 	// Read ERR response
 	errHeader := make([]byte, 4)
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := conn.Read(errHeader); err != nil {
 		t.Fatal(err)
 	}
@@ -164,5 +164,5 @@ func TestMySQLTrapConnection(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

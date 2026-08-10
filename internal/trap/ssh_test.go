@@ -66,7 +66,7 @@ func TestSSHTrapCaptures(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestSSHHostKeyGeneration(t *testing.T) {
@@ -108,7 +108,7 @@ func TestSSHBanner(t *testing.T) {
 	defer conn.Close()
 
 	buf := make([]byte, 256)
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, err := conn.Read(buf)
 	if err != nil {
 		t.Fatal(err)
@@ -119,5 +119,5 @@ func TestSSHBanner(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

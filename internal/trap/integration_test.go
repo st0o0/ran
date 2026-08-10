@@ -63,15 +63,15 @@ func TestIntegrationAllTraps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go sshTrap.Start(ctx)
+	go func() { _ = sshTrap.Start(ctx) }()
 
 	// Start HTTP trap
 	httpTrap := trap.NewHTTP(cfg, logger, m, limiter, noop)
-	go httpTrap.Start(ctx)
+	go func() { _ = httpTrap.Start(ctx) }()
 
 	// Start MySQL trap
 	mysqlTrap := trap.NewMySQL(cfg, logger, m, limiter, noop)
-	go mysqlTrap.Start(ctx)
+	go func() { _ = mysqlTrap.Start(ctx) }()
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -104,11 +104,11 @@ func TestIntegrationAllTraps(t *testing.T) {
 	}
 	// Read greeting
 	header := make([]byte, 4)
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	conn.Read(header)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _ = conn.Read(header)
 	greetLen := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
 	greetPayload := make([]byte, greetLen)
-	conn.Read(greetPayload)
+	_, _ = conn.Read(greetPayload)
 	// Send handshake response
 	var mysqlResp []byte
 	mysqlResp = binary.LittleEndian.AppendUint32(mysqlResp, 0x000FA68D)
@@ -125,17 +125,17 @@ func TestIntegrationAllTraps(t *testing.T) {
 	pkt[2] = byte(len(mysqlResp) >> 16)
 	pkt[3] = 1
 	copy(pkt[4:], mysqlResp)
-	conn.Write(pkt)
+	_, _ = conn.Write(pkt)
 	// Read ERR
-	conn.Read(make([]byte, 256))
+	_, _ = conn.Read(make([]byte, 256))
 	conn.Close()
 
 	time.Sleep(200 * time.Millisecond)
 	cancel()
 
-	sshTrap.Stop(context.Background())
-	httpTrap.Stop(context.Background())
-	mysqlTrap.Stop(context.Background())
+	_ = sshTrap.Stop(context.Background())
+	_ = httpTrap.Stop(context.Background())
+	_ = mysqlTrap.Stop(context.Background())
 
 	logs := logBuf.String()
 

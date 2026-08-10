@@ -28,7 +28,7 @@ func TestCrowdSecAlertFormat(t *testing.T) {
 			t.Errorf("X-Api-Key = %q, want testkey", r.Header.Get("X-Api-Key"))
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &received)
+		_ = json.Unmarshal(body, &received)
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -63,7 +63,7 @@ func TestCrowdSecPermanentBan(t *testing.T) {
 	var received []csAlert
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &received)
+		_ = json.Unmarshal(body, &received)
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
