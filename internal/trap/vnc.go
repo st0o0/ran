@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -90,7 +91,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	// Send server RFB version
 	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
@@ -99,7 +100,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 
 	// Read client RFB version
 	var clientVersion [12]byte
-	if _, err := readFull(conn, clientVersion[:]); err != nil {
+	if _, err := io.ReadFull(conn, clientVersion[:]); err != nil {
 		return
 	}
 
@@ -110,7 +111,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 
 	// Read client security type selection (1 byte)
 	var secType [1]byte
-	if _, err := readFull(conn, secType[:]); err != nil {
+	if _, err := io.ReadFull(conn, secType[:]); err != nil {
 		return
 	}
 
@@ -125,7 +126,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 
 	// Read 16-byte DES-encrypted response
 	var response [16]byte
-	if _, err := readFull(conn, response[:]); err != nil {
+	if _, err := io.ReadFull(conn, response[:]); err != nil {
 		return
 	}
 
@@ -139,12 +140,12 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 	// Send SecurityResult: failed (1)
 	var result [4]byte
 	binary.BigEndian.PutUint32(result[:], 1)
-	conn.Write(result[:])
+	_, _ = conn.Write(result[:])
 
 	// Send reason string (uint32 length + null-terminated string)
 	reason := "Authentication failed"
 	var reasonLen [4]byte
 	binary.BigEndian.PutUint32(reasonLen[:], uint32(len(reason)))
-	conn.Write(reasonLen[:])
-	conn.Write([]byte(reason))
+	_, _ = conn.Write(reasonLen[:])
+	_, _ = conn.Write([]byte(reason))
 }

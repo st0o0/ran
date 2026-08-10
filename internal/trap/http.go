@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sync"
-
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
@@ -20,7 +18,6 @@ type HTTPTrap struct {
 	limiter *Limiter
 	alerter alert.Alerter
 	srv     *http.Server
-	wg      sync.WaitGroup
 }
 
 func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *HTTPTrap {
@@ -38,7 +35,7 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 	mux.HandleFunc("/", t.handleLogin("generic"))
 
 	t.srv = &http.Server{
-		Addr:         cfg.HTTPAddr,
+		Addr:         cfg.TrapAddr("http"),
 		Handler:      mux,
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
@@ -48,11 +45,11 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 
 func (t *HTTPTrap) Start(ctx context.Context) error {
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.HTTPAddr)
+	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("http"))
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
 	}
-	t.logger.Info("listening", "addr", t.cfg.HTTPAddr)
+	t.logger.Info("listening", "addr", t.cfg.TrapAddr("http"))
 
 	go func() {
 		<-ctx.Done()
@@ -67,7 +64,6 @@ func (t *HTTPTrap) Start(ctx context.Context) error {
 
 func (t *HTTPTrap) Stop(ctx context.Context) error {
 	t.srv.Close()
-	t.wg.Wait()
 	return nil
 }
 

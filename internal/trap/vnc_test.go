@@ -3,6 +3,7 @@ package trap
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestVNCTrapHandshake(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("vnc"), 2*time.Second)
@@ -51,11 +52,11 @@ func TestVNCTrapHandshake(t *testing.T) {
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 
 	// Read server RFB version
 	var serverVersion [12]byte
-	if _, err := readFull(conn, serverVersion[:]); err != nil {
+	if _, err := io.ReadFull(conn, serverVersion[:]); err != nil {
 		t.Fatal(err)
 	}
 	if string(serverVersion[:]) != "RFB 003.008\n" {
@@ -69,7 +70,7 @@ func TestVNCTrapHandshake(t *testing.T) {
 
 	// Read security types
 	var secTypes [2]byte
-	if _, err := readFull(conn, secTypes[:]); err != nil {
+	if _, err := io.ReadFull(conn, secTypes[:]); err != nil {
 		t.Fatal(err)
 	}
 	if secTypes[0] != 1 {
@@ -86,7 +87,7 @@ func TestVNCTrapHandshake(t *testing.T) {
 
 	// Read 16-byte challenge
 	var challenge [16]byte
-	if _, err := readFull(conn, challenge[:]); err != nil {
+	if _, err := io.ReadFull(conn, challenge[:]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +102,7 @@ func TestVNCTrapHandshake(t *testing.T) {
 
 	// Read SecurityResult (uint32 = 1 for failure)
 	var result [4]byte
-	if _, err := readFull(conn, result[:]); err != nil {
+	if _, err := io.ReadFull(conn, result[:]); err != nil {
 		t.Fatal(err)
 	}
 	secResult := binary.BigEndian.Uint32(result[:])
@@ -111,14 +112,14 @@ func TestVNCTrapHandshake(t *testing.T) {
 
 	// Read reason length
 	var reasonLen [4]byte
-	if _, err := readFull(conn, reasonLen[:]); err != nil {
+	if _, err := io.ReadFull(conn, reasonLen[:]); err != nil {
 		t.Fatal(err)
 	}
 	rLen := binary.BigEndian.Uint32(reasonLen[:])
 
 	// Read reason string
 	reason := make([]byte, rLen)
-	if _, err := readFull(conn, reason); err != nil {
+	if _, err := io.ReadFull(conn, reason); err != nil {
 		t.Fatal(err)
 	}
 	if string(reason) != "Authentication failed" {
@@ -126,7 +127,7 @@ func TestVNCTrapHandshake(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }
 
 func TestVNCTrapVersion(t *testing.T) {
@@ -139,7 +140,7 @@ func TestVNCTrapVersion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go trap.Start(ctx)
+	go func() { _ = trap.Start(ctx) }()
 	time.Sleep(100 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("vnc"), 2*time.Second)
@@ -148,10 +149,10 @@ func TestVNCTrapVersion(t *testing.T) {
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 
 	var serverVersion [12]byte
-	if _, err := readFull(conn, serverVersion[:]); err != nil {
+	if _, err := io.ReadFull(conn, serverVersion[:]); err != nil {
 		t.Fatal(err)
 	}
 	if string(serverVersion[:]) != "RFB 003.008\n" {
@@ -159,5 +160,5 @@ func TestVNCTrapVersion(t *testing.T) {
 	}
 
 	cancel()
-	trap.Stop(context.Background())
+	_ = trap.Stop(context.Background())
 }

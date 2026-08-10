@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -90,11 +91,11 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect(t.logger)
 
-	conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	// Read TPKT header (4 bytes)
 	var tpkt [4]byte
-	if _, err := readFull(conn, tpkt[:]); err != nil {
+	if _, err := io.ReadFull(conn, tpkt[:]); err != nil {
 		return
 	}
 	if tpkt[0] != 3 || tpkt[1] != 0 {
@@ -107,7 +108,7 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	// Read X.224 Connection Request payload
 	payload := make([]byte, tpktLen-4)
-	if _, err := readFull(conn, payload); err != nil {
+	if _, err := io.ReadFull(conn, payload); err != nil {
 		return
 	}
 
@@ -137,7 +138,7 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	// Send X.224 Connection Confirm with RDP Negotiation Failure
 	resp := buildRDPNegFailure()
-	conn.Write(resp)
+	_, _ = conn.Write(resp)
 }
 
 func buildRDPNegFailure() []byte {
@@ -163,14 +164,3 @@ func buildRDPNegFailure() []byte {
 	return buf
 }
 
-func readFull(conn net.Conn, buf []byte) (int, error) {
-	total := 0
-	for total < len(buf) {
-		n, err := conn.Read(buf[total:])
-		total += n
-		if err != nil {
-			return total, err
-		}
-	}
-	return total, nil
-}

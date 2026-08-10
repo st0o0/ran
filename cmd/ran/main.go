@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -60,7 +61,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	metricsSrv.Close()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	metricsSrv.Shutdown(shutdownCtx)
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
