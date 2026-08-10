@@ -1,0 +1,19 @@
+# Local design/plan docs — never committed
+docs/
+
+# Claude Code
+.claude/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Test artifacts
+tests/tmp/
+*.log
+
+# Go build output
+/ran
+/ran.exe

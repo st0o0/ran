@@ -1,0 +1,45 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Compose snippet / commands. Redact keys and real IPs.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Container logs
+      description: Output of `docker logs <ran-container>`. Redact secrets.
+      render: shell
+  - type: input
+    id: image
+    attributes:
+      label: Image tag
+      description: e.g. ghcr.io/st0o0/ran:1.2.0
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host / Docker
+      description: OS, kernel, Docker version, arch (amd64/arm64)
+    validations:
+      required: true
+  - type: textarea
+    id: honeypot-config
+    attributes:
+      label: Honeypot configuration
+      description: Which services/ports are exposed? Redact any secrets.
+      render: yaml
