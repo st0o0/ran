@@ -22,12 +22,6 @@ func TestDefaultValues(t *testing.T) {
 	if c.SSHAddr != ":2222" {
 		t.Errorf("SSHAddr = %q, want :2222", c.SSHAddr)
 	}
-	if c.HTTPAddr != ":8081" {
-		t.Errorf("HTTPAddr = %q, want :8081", c.HTTPAddr)
-	}
-	if c.MySQLAddr != ":3307" {
-		t.Errorf("MySQLAddr = %q, want :3307", c.MySQLAddr)
-	}
 	if c.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want INFO", c.LogLevel)
 	}
@@ -141,20 +135,14 @@ func TestCustomAddresses(t *testing.T) {
 	if c.SSHAddr != ":2200" {
 		t.Errorf("SSHAddr = %q, want :2200", c.SSHAddr)
 	}
-	if c.HTTPAddr != ":9090" {
-		t.Errorf("HTTPAddr = %q, want :9090", c.HTTPAddr)
-	}
-	if c.MySQLAddr != ":3308" {
-		t.Errorf("MySQLAddr = %q, want :3308", c.MySQLAddr)
-	}
 }
 
 func TestCrowdSecEnabled(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":               "on",
-		"RAN_CROWDSEC":          "on",
-		"RAN_CROWDSEC_URL":      "http://crowdsec:8080",
-		"RAN_CROWDSEC_API_KEY":  "abc123",
+		"RAN_SSH":              "on",
+		"RAN_CROWDSEC":         "on",
+		"RAN_CROWDSEC_URL":     "http://crowdsec:8080",
+		"RAN_CROWDSEC_API_KEY": "abc123",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -194,11 +182,11 @@ func TestCrowdSecMissingKey(t *testing.T) {
 
 func TestCrowdSecPermanentBan(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":                      "on",
-		"RAN_CROWDSEC":                 "on",
-		"RAN_CROWDSEC_URL":             "http://crowdsec:8080",
-		"RAN_CROWDSEC_API_KEY":         "abc123",
-		"RAN_CROWDSEC_BAN_DURATION":    "0",
+		"RAN_SSH":                   "on",
+		"RAN_CROWDSEC":              "on",
+		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
+		"RAN_CROWDSEC_API_KEY":      "abc123",
+		"RAN_CROWDSEC_BAN_DURATION": "0",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -210,11 +198,11 @@ func TestCrowdSecPermanentBan(t *testing.T) {
 
 func TestCrowdSecCustomDuration(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_SSH":                      "on",
-		"RAN_CROWDSEC":                 "on",
-		"RAN_CROWDSEC_URL":             "http://crowdsec:8080",
-		"RAN_CROWDSEC_API_KEY":         "abc123",
-		"RAN_CROWDSEC_BAN_DURATION":    "24h",
+		"RAN_SSH":                   "on",
+		"RAN_CROWDSEC":              "on",
+		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
+		"RAN_CROWDSEC_API_KEY":      "abc123",
+		"RAN_CROWDSEC_BAN_DURATION": "24h",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -238,5 +226,67 @@ func TestCustomLimits(t *testing.T) {
 	}
 	if c.MaxPerIP != 5 {
 		t.Errorf("MaxPerIP = %d, want 5", c.MaxPerIP)
+	}
+}
+
+func TestRanTrapsList(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS": "ssh,ftp,redis",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	traps := c.EnabledTraps()
+	if len(traps) != 3 {
+		t.Fatalf("EnabledTraps() len = %d, want 3", len(traps))
+	}
+	if traps[0] != "ssh" || traps[1] != "ftp" || traps[2] != "redis" {
+		t.Errorf("EnabledTraps() = %v, want [ssh ftp redis]", traps)
+	}
+	if !c.SSH {
+		t.Error("SSH legacy field should be true")
+	}
+}
+
+func TestRanTrapsOverridesLegacy(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS": "ftp",
+		"RAN_SSH":   "on",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	traps := c.EnabledTraps()
+	if len(traps) != 1 || traps[0] != "ftp" {
+		t.Errorf("EnabledTraps() = %v, want [ftp]", traps)
+	}
+	if c.SSH {
+		t.Error("SSH should be false when RAN_TRAPS overrides")
+	}
+}
+
+func TestRanTrapsUnknownName(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS": "ssh,banana",
+	}))
+	if err == nil {
+		t.Fatal("expected error for unknown trap name")
+	}
+}
+
+func TestTrapAddrDefault(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ftp"}))
+	if c.TrapAddr("ftp") != ":21" {
+		t.Errorf("TrapAddr(ftp) = %q, want :21", c.TrapAddr("ftp"))
+	}
+}
+
+func TestTrapAddrOverride(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":    "ftp",
+		"RAN_FTP_ADDR": ":2121",
+	}))
+	if c.TrapAddr("ftp") != ":2121" {
+		t.Errorf("TrapAddr(ftp) = %q, want :2121", c.TrapAddr("ftp"))
 	}
 }

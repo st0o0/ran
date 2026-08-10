@@ -8,7 +8,49 @@ import (
 	"time"
 )
 
+var DefaultPorts = map[string]string{
+	"ssh":           ":2222",
+	"http":          ":8081",
+	"mysql":         ":3307",
+	"ftp":           ":21",
+	"telnet":        ":23",
+	"smtp":          ":25",
+	"dns":           ":53",
+	"pop3":          ":110",
+	"imap":          ":143",
+	"ldap":          ":389",
+	"smb":           ":445",
+	"modbus":        ":502",
+	"socks5":        ":1080",
+	"mssql":         ":1433",
+	"oracle":        ":1521",
+	"mqtt":          ":1883",
+	"rdp":           ":3389",
+	"postgres":      ":5432",
+	"sip":           ":5060",
+	"vnc":           ":5900",
+	"redis":         ":6379",
+	"irc":           ":6667",
+	"httpproxy":     ":8080",
+	"elasticsearch": ":9200",
+	"ntp":           ":123",
+	"snmp":          ":161",
+	"memcached":     ":11211",
+}
+
+var ValidTraps = func() map[string]bool {
+	m := make(map[string]bool, len(DefaultPorts))
+	for k := range DefaultPorts {
+		m[k] = true
+	}
+	return m
+}()
+
 type Config struct {
+	Traps []string
+	Addrs map[string]string
+
+	// Legacy fields kept for backwards compat in run.go migration
 	SSH   bool
 	HTTP  bool
 	MySQL bool
@@ -32,32 +74,116 @@ type Config struct {
 	CrowdSecBanDuration time.Duration
 }
 
+func (c *Config) EnabledTraps() []string {
+	return c.Traps
+}
+
+func (c *Config) TrapAddr(name string) string {
+	if addr, ok := c.Addrs[name]; ok {
+		return addr
+	}
+	if def, ok := DefaultPorts[name]; ok {
+		return def
+	}
+	return ""
+}
+
 func Load(getenv func(string) string) (*Config, error) {
 	e := &envReader{getenv: getenv}
+
 	c := &Config{
-		SSH:            e.boolean("RAN_SSH", false),
-		HTTP:           e.boolean("RAN_HTTP", false),
-		MySQL:          e.boolean("RAN_MYSQL", false),
-		SSHAddr:        e.str("RAN_SSH_ADDR", ":2222"),
-		HTTPAddr:       e.str("RAN_HTTP_ADDR", ":8081"),
-		MySQLAddr:      e.str("RAN_MYSQL_ADDR", ":3307"),
+		Addrs:          make(map[string]string),
 		LogLevel:       e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
 		LogFormat:      e.logFormat("RAN_LOG_FORMAT", "json"),
 		MetricsAddr:    e.str("RAN_METRICS_ADDR", ":9550"),
 		SessionTimeout: e.duration("RAN_SESSION_TIMEOUT", 30*time.Second),
 		MaxSessions:    e.intMin("RAN_MAX_SESSIONS", 500, 1),
-		MaxPerIP:            e.intMin("RAN_MAX_PER_IP", 10, 1),
-		CrowdSec:            e.boolean("RAN_CROWDSEC", false),
-		CrowdSecURL:         e.str("RAN_CROWDSEC_URL", ""),
-		CrowdSecAPIKey:      e.str("RAN_CROWDSEC_API_KEY", ""),
+		MaxPerIP:       e.intMin("RAN_MAX_PER_IP", 10, 1),
+		CrowdSec:       e.boolean("RAN_CROWDSEC", false),
+		CrowdSecURL:    e.str("RAN_CROWDSEC_URL", ""),
+		CrowdSecAPIKey: e.str("RAN_CROWDSEC_API_KEY", ""),
 		CrowdSecBanDuration: e.banDuration("RAN_CROWDSEC_BAN_DURATION", 4*time.Hour),
 	}
 	if e.err != nil {
 		return nil, e.err
 	}
-	if !c.SSH && !c.HTTP && !c.MySQL {
-		return nil, fmt.Errorf("at least one trap must be enabled (RAN_SSH, RAN_HTTP, or RAN_MYSQL)")
+
+	// Parse trap list
+	trapList := strings.TrimSpace(getenv("RAN_TRAPS"))
+	if trapList != "" {
+		for _, name := range strings.Split(trapList, ",") {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if !ValidTraps[name] {
+				validNames := make([]string, 0, len(ValidTraps))
+				for k := range ValidTraps {
+					validNames = append(validNames, k)
+				}
+				return nil, fmt.Errorf("unknown trap %q in RAN_TRAPS (valid: %s)", name, strings.Join(validNames, ", "))
+			}
+			c.Traps = append(c.Traps, name)
+		}
+	} else {
+		// Legacy per-trap env vars
+		legacySSH := e.boolean("RAN_SSH", false)
+		legacyHTTP := e.boolean("RAN_HTTP", false)
+		legacyMySQL := e.boolean("RAN_MYSQL", false)
+		if e.err != nil {
+			return nil, e.err
+		}
+		if legacySSH {
+			c.Traps = append(c.Traps, "ssh")
+		}
+		if legacyHTTP {
+			c.Traps = append(c.Traps, "http")
+		}
+		if legacyMySQL {
+			c.Traps = append(c.Traps, "mysql")
+		}
 	}
+
+	if len(c.Traps) == 0 {
+		return nil, fmt.Errorf("at least one trap must be enabled (RAN_TRAPS or RAN_SSH, RAN_HTTP, RAN_MYSQL)")
+	}
+
+	// Set legacy bool fields for backwards compat
+	for _, name := range c.Traps {
+		switch name {
+		case "ssh":
+			c.SSH = true
+		case "http":
+			c.HTTP = true
+		case "mysql":
+			c.MySQL = true
+		}
+	}
+
+	// Load per-trap addr overrides
+	for _, name := range c.Traps {
+		envKey := "RAN_" + strings.ToUpper(name) + "_ADDR"
+		if addr := getenv(envKey); addr != "" {
+			c.Addrs[name] = addr
+		} else {
+			c.Addrs[name] = DefaultPorts[name]
+		}
+	}
+
+	// Keep legacy addr fields in sync
+	c.SSHAddr = c.TrapAddr("ssh")
+	c.HTTPAddr = c.TrapAddr("http")
+	c.MySQLAddr = c.TrapAddr("mysql")
+	if c.SSHAddr == "" {
+		c.SSHAddr = DefaultPorts["ssh"]
+	}
+	if c.HTTPAddr == "" {
+		c.HTTPAddr = DefaultPorts["http"]
+	}
+	if c.MySQLAddr == "" {
+		c.MySQLAddr = DefaultPorts["mysql"]
+	}
+
 	if c.CrowdSec {
 		if c.CrowdSecURL == "" {
 			return nil, fmt.Errorf("RAN_CROWDSEC_URL is required when RAN_CROWDSEC=on")

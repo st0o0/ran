@@ -59,6 +59,38 @@ func (s *Session) LogAuthAttempt(logger *slog.Logger, attrs ...slog.Attr) {
 	logger.Info("auth_attempt", args...)
 }
 
+func (s *Session) LogCommand(logger *slog.Logger, command string, attrs ...slog.Attr) {
+	base := []slog.Attr{
+		slog.String("protocol", s.Protocol),
+		slog.String("session_id", s.ID),
+		slog.String("source_ip", s.SourceIP),
+		slog.Int("source_port", s.Port),
+		slog.String("action", "command"),
+		slog.String("command", command),
+	}
+	args := make([]any, 0, len(base)+len(attrs))
+	for _, a := range append(base, attrs...) {
+		args = append(args, a)
+	}
+	logger.Info("command", args...)
+}
+
+func (s *Session) LogPayload(logger *slog.Logger, payloadType string, attrs ...slog.Attr) {
+	base := []slog.Attr{
+		slog.String("protocol", s.Protocol),
+		slog.String("session_id", s.ID),
+		slog.String("source_ip", s.SourceIP),
+		slog.Int("source_port", s.Port),
+		slog.String("action", "payload"),
+		slog.String("payload_type", payloadType),
+	}
+	args := make([]any, 0, len(base)+len(attrs))
+	for _, a := range append(base, attrs...) {
+		args = append(args, a)
+	}
+	logger.Info("payload", args...)
+}
+
 func (s *Session) LogDisconnect(logger *slog.Logger) {
 	logger.Info("disconnect",
 		"protocol", s.Protocol,

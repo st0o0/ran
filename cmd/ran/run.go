@@ -22,20 +22,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 	}
 	defer alerter.Close()
 
-	var traps []trap.Trap
-
-	if cfg.SSH {
-		t, err := trap.NewSSH(cfg, logger, m, limiter, alerter)
-		if err != nil {
-			return err
-		}
-		traps = append(traps, t)
-	}
-	if cfg.HTTP {
-		traps = append(traps, trap.NewHTTP(cfg, logger, m, limiter, alerter))
-	}
-	if cfg.MySQL {
-		traps = append(traps, trap.NewMySQL(cfg, logger, m, limiter, alerter))
+	traps, err := trap.CreateTraps(cfg, logger, m, limiter, alerter)
+	if err != nil {
+		return err
 	}
 
 	errc := make(chan error, len(traps))
