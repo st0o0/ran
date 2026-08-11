@@ -36,7 +36,7 @@ func TestNew(t *testing.T) {
 	m.SessionDuration.WithLabelValues("ssh").Observe(1.5)
 	m.CrowdSecAlerts.WithLabelValues("ssh", "success").Inc()
 
-	families, err = reg.Gather()
+	families, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("gather error: %v", err)
 	}
