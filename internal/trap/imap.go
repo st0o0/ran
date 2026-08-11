@@ -35,8 +35,7 @@ func NewIMAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *IMAPTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("imap"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("imap"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("imap listen: %w", err)
 	}

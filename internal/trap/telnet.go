@@ -35,8 +35,7 @@ func NewTelnet(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *TelnetTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("telnet"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("telnet"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("telnet listen: %w", err)
 	}

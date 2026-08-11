@@ -37,8 +37,7 @@ func NewSMTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *SMTPTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("smtp"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("smtp"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("smtp listen: %w", err)
 	}

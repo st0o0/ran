@@ -6,18 +6,22 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
+	"sync"
+
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type HTTPTrap struct {
-	cfg     *config.Config
-	logger  *slog.Logger
-	metrics *metrics.Metrics
-	limiter *Limiter
-	alerter alert.Alerter
-	srv     *http.Server
+	cfg      *config.Config
+	logger   *slog.Logger
+	metrics  *metrics.Metrics
+	limiter  *Limiter
+	alerter  alert.Alerter
+	srv      *http.Server
+	sessions sync.Map
 }
 
 func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *HTTPTrap {
@@ -39,13 +43,37 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 		Handler:      mux,
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
+		ConnState:    t.connState,
 	}
 	return t
 }
 
+func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
+	addr := conn.RemoteAddr().String()
+	switch state {
+	case http.StateNew:
+		host, port := ParseAddr(addr)
+		if !t.limiter.Acquire(host) {
+			t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+			conn.Close()
+			return
+		}
+		sess := NewSession("http", host, port)
+		t.sessions.Store(addr, sess)
+		sess.LogConnect(t.logger)
+		sess.RecordStart(t.metrics)
+	case http.StateClosed, http.StateHijacked:
+		if v, ok := t.sessions.LoadAndDelete(addr); ok {
+			sess := v.(*Session)
+			sess.LogDisconnect(t.logger)
+			sess.RecordEnd(t.metrics)
+			t.limiter.Release(sess.SourceIP)
+		}
+	}
+}
+
 func (t *HTTPTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("http"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("http"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
 	}
@@ -69,20 +97,12 @@ func (t *HTTPTrap) Stop(ctx context.Context) error {
 
 func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		host, port := ParseAddr(r.RemoteAddr)
-		sess := NewSession("http", host, port)
-
-		if !t.limiter.Acquire(host) {
-			t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		v, ok := t.sessions.Load(r.RemoteAddr)
+		if !ok {
 			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		defer t.limiter.Release(host)
-
-		sess.LogConnect(t.logger)
-		sess.RecordStart(t.metrics)
-		defer sess.RecordEnd(t.metrics)
-		defer sess.LogDisconnect(t.logger)
+		sess := v.(*Session)
 
 		w.Header().Set("Server", "Apache/2.4.62")
 		w.Header().Set("X-Powered-By", "PHP/8.3.6")
@@ -91,13 +111,21 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 			_ = r.ParseForm()
 			username := firstOf(r.PostForm, "username", "user", "log")
 			password := firstOf(r.PostForm, "password", "pass", "pwd")
-			sess.LogAuthAttempt(t.logger,
+			attrs := []slog.Attr{
 				slog.String("username", username),
 				slog.String("password", password),
 				slog.String("path", r.URL.Path),
-			)
+			}
+			if clientIP := clientIPFromHeaders(r); clientIP != "" {
+				attrs = append(attrs, slog.String("client_ip", clientIP))
+			}
+			sess.LogAuthAttempt(t.logger, attrs...)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(r.Context(), host, "http")
+			alertIP := sess.SourceIP
+			if ip := clientIPFromHeaders(r); ip != "" {
+				alertIP = ip
+			}
+			t.alerter.Alert(r.Context(), alertIP, "http")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, loginErrorPage(style))
@@ -110,6 +138,19 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 	}
 }
 
+
+func clientIPFromHeaders(r *http.Request) string {
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return strings.TrimSpace(ip)
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	return ""
+}
 
 func firstOf(form map[string][]string, keys ...string) string {
 	for _, k := range keys {

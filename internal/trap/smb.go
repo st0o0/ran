@@ -36,8 +36,7 @@ func NewSMB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *SMBTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("smb"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("smb"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("smb listen: %w", err)
 	}

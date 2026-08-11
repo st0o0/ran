@@ -48,8 +48,7 @@ func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *SSHTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("ssh"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("ssh"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("ssh listen: %w", err)
 	}

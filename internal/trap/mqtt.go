@@ -35,8 +35,7 @@ func NewMQTT(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *MQTTTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("mqtt"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("mqtt"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("mqtt listen: %w", err)
 	}

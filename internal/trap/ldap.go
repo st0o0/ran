@@ -34,8 +34,7 @@ func NewLDAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *LDAPTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("ldap"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("ldap"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("ldap listen: %w", err)
 	}

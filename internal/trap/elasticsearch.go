@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"sync"
 
@@ -54,8 +53,7 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 
 func (t *ElasticsearchTrap) Start(ctx context.Context) error {
 	addr := t.cfg.TrapAddr("elasticsearch")
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", addr)
+	ln, err := ListenTCP(ctx, addr, t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("elasticsearch listen: %w", err)
 	}

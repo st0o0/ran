@@ -35,8 +35,7 @@ func NewMemcached(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 }
 
 func (t *MemcachedTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("memcached"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("memcached"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("memcached listen: %w", err)
 	}

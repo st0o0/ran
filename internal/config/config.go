@@ -61,6 +61,8 @@ type Config struct {
 	MaxSessions    int
 	MaxPerIP       int
 
+	ProxyProtocol bool
+
 	CrowdSec            bool
 	CrowdSecURL         string
 	CrowdSecAPIKey      string
@@ -93,6 +95,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		SessionTimeout:      e.duration("RAN_SESSION_TIMEOUT", 30*time.Second),
 		MaxSessions:         e.intMin("RAN_MAX_SESSIONS", 500, 1),
 		MaxPerIP:            e.intMin("RAN_MAX_PER_IP", 10, 1),
+		ProxyProtocol:       e.boolean("RAN_PROXY_PROTOCOL", false),
 		CrowdSec:            e.boolean("RAN_CROWDSEC", false),
 		CrowdSecURL:         e.str("RAN_CROWDSEC_URL", ""),
 		CrowdSecAPIKey:      e.str("RAN_CROWDSEC_API_KEY", ""),

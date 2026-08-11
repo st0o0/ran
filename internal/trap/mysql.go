@@ -38,8 +38,7 @@ func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 }
 
 func (t *MySQLTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("mysql"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("mysql"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("mysql listen: %w", err)
 	}

@@ -124,6 +124,18 @@ func ParseAddr(addr string) (string, int) {
 	return host, port
 }
 
+func ListenTCP(ctx context.Context, addr string, proxyProto bool) (net.Listener, error) {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	if proxyProto {
+		return &proxyListener{Listener: ln}, nil
+	}
+	return ln, nil
+}
+
 func deadlineFromContext(ctx context.Context, timeout time.Duration) time.Time {
 	if dl, ok := ctx.Deadline(); ok && dl.Before(time.Now().Add(timeout)) {
 		return dl

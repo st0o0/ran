@@ -35,8 +35,7 @@ func NewPostgres(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, li
 }
 
 func (t *PostgresTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("postgres"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("postgres"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("postgres listen: %w", err)
 	}

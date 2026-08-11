@@ -36,8 +36,7 @@ func NewMSSQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 }
 
 func (t *MSSQLTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("mssql"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("mssql"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("mssql listen: %w", err)
 	}

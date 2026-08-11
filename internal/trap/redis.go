@@ -36,8 +36,7 @@ func NewRedis(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 }
 
 func (t *RedisTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("redis"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("redis"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("redis listen: %w", err)
 	}

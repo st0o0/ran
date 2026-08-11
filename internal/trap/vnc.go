@@ -37,8 +37,7 @@ func NewVNC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *VNCTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("vnc"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("vnc"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("vnc listen: %w", err)
 	}

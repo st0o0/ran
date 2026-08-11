@@ -35,8 +35,7 @@ func NewIRC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *IRCTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("irc"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("irc"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("irc listen: %w", err)
 	}

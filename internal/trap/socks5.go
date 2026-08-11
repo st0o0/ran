@@ -35,8 +35,7 @@ func NewSOCKS5(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *SOCKS5Trap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("socks5"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("socks5"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("socks5 listen: %w", err)
 	}

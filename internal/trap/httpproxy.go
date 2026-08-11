@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -46,8 +45,7 @@ func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 
 func (t *HTTPProxyTrap) Start(ctx context.Context) error {
 	addr := t.cfg.TrapAddr("httpproxy")
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", addr)
+	ln, err := ListenTCP(ctx, addr, t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("httpproxy listen: %w", err)
 	}

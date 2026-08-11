@@ -35,8 +35,7 @@ func NewPOP3(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *POP3Trap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("pop3"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("pop3"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("pop3 listen: %w", err)
 	}

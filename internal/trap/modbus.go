@@ -35,8 +35,7 @@ func NewModbus(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *ModbusTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("modbus"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("modbus"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("modbus listen: %w", err)
 	}

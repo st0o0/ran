@@ -37,8 +37,7 @@ func NewRDP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *RDPTrap) Start(ctx context.Context) error {
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", t.cfg.TrapAddr("rdp"))
+	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("rdp"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("rdp listen: %w", err)
 	}
