@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/st0o0/ran/compare/v0.1.0...v0.1.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* track HTTP sessions per TCP connection and add PROXY protocol support ([6425938](https://github.com/st0o0/ran/commit/64259380befcc6a79f6e52f386ee6d17e76b64b8))
+
 ## 0.1.0 (2026-08-11)
 
 
