@@ -5,10 +5,9 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
 
-A single-binary honeypot that emulates **27 network services** — from SSH and
-RDP to Modbus and MQTT — captures credentials, commands, and payloads as
-structured JSON, and pushes ban decisions to CrowdSec. Pure Go, no external
-dependencies, **~8 MB scratch image**.
+Single-binary honeypot written in Go. Emulates 27 network services (SSH, RDP,
+Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
+pushes ban decisions to CrowdSec. No external dependencies, ~8 MB scratch image.
 
 Named after the Norse goddess who catches sailors in her net.
 
@@ -33,49 +32,32 @@ services:
       - "9550:9550"   # Prometheus metrics
 ```
 
-## Features
+## Why rán?
 
-- **27 protocol traps, one binary.** Credential capture for SSH, FTP, Telnet,
-  SMTP, MySQL, PostgreSQL, MSSQL, RDP, VNC, SMB, LDAP, and more. Command logging
-  for Redis, Memcached, IRC. Payload inspection for DNS, SNMP, Modbus, MQTT.
-- **CrowdSec-native.** Every credential capture pushes a self-contained ban
-  decision to CrowdSec's LAPI — bouncers (Caddy, Nginx, iptables) enforce it
-  automatically. No local scenario needed.
-- **Structured JSON logging.** Every connection, auth attempt, command, and
-  payload is a single JSON line to stdout with session ID, source IP, protocol,
-  and action — ready for Loki, Elasticsearch, or any log pipeline.
-- **Pick exactly what you need.** Enable traps with a comma-separated list
-  (`RAN_TRAPS=ssh,rdp,smb`). Each trap has a sensible default port,
-  overridable per-trap.
-- **Rate-limited and safe.** Per-IP and global session limits prevent resource
-  exhaustion. UDP traps drop amplification probes (NTP monlist, DNS ANY).
-  Session timeouts enforce cleanup.
-- **Tiny, static, scratch.** Single Go binary, no CGO, no shell, no coreutils.
-  ~8 MB image for `linux/amd64` and `linux/arm64`.
+There are already good honeypots out there. The reason I built rán:
 
-## Why
+- **T-Pot** is excellent if you have a dedicated server — but it's 31 Docker
+  containers, an ELK stack, and 8+ GB RAM. Way too heavy for running alongside
+  production services.
+- **qeeqbox/honeypots** has great protocol coverage in Python, but it needs a
+  Python runtime and pip, and doesn't integrate with CrowdSec.
 
-| | T-Pot | qeeqbox/honeypots | **rán** |
+rán does one thing: catch probes, log them, ban the source. Single static Go
+binary, no shell, no runtime, just protocol stubs and a CrowdSec LAPI client.
+
+| | T-Pot | qeeqbox/honeypots | rán |
 |---|:---:|:---:|:---:|
-| Single binary / container | ❌ 31 containers | ⚠️ Python + deps | ✅ |
-| Protocol coverage | ✅ 31 honeypots | ✅ 30 protocols | ✅ 27 protocols |
-| Resource footprint | ❌ 8+ GB RAM | ⚠️ ~500 MB | ✅ ~20 MB |
-| CrowdSec integration | ⚠️ via log parser | ❌ | ✅ native LAPI push |
-| Selective trap enabling | ⚠️ edition-based | ✅ | ✅ |
-| No external dependencies | ❌ Docker Compose stack | ❌ Python, pip | ✅ static Go binary |
-| Prometheus metrics | ✅ via ELK | ❌ | ✅ native |
-
-- **T-Pot** is a full honeypot platform — 31 Docker containers, ELK stack,
-  Kibana dashboards, 8+ GB RAM minimum. Great for dedicated honeypot servers,
-  heavy for a side deployment.
-- **qeeqbox/honeypots** covers 30 protocols in Python. Solid protocol breadth
-  but requires a Python runtime, pip dependencies, and has no built-in
-  threat-intelligence integration.
+| Single binary / container | 31 containers | Python + deps | yes |
+| Protocol coverage | 31 honeypots | 30 protocols | 27 protocols |
+| RAM | 8+ GB | ~500 MB | ~20 MB |
+| CrowdSec | via log parser | no | native LAPI push |
+| Selective traps | edition-based | yes | yes |
+| External deps | Docker Compose stack | Python, pip | none (static binary) |
+| Prometheus metrics | via ELK | no | native |
 
 ## Quick start
 
-1. Choose your traps. Start small — `ssh,http,ftp` covers the most-scanned ports.
-2. Run the container:
+Pick your traps, start the container:
 
 ```bash
 docker run --rm \
@@ -84,13 +66,7 @@ docker run --rm \
   ghcr.io/st0o0/ran:latest
 ```
 
-3. Watch credentials roll in:
-
-```bash
-docker logs -f ran
-```
-
-Prometheus metrics are at `:9550/metrics`.
+Watch the logs with `docker logs -f ran`. Prometheus metrics are at `:9550/metrics`.
 
 ## How it works
 
@@ -109,10 +85,9 @@ attacker connects ──▶ protocol handshake ──▶ credential / command / 
                                                   (Caddy, nginx, iptables)
 ```
 
-Every trap emulates just enough protocol to complete the handshake, capture
-the interesting data, and return a plausible error. No interactive sessions,
-no filesystem emulation, no query execution — minimal attack surface on the
-honeypot itself.
+Each trap emulates just enough protocol to complete the handshake, grab the
+interesting data, and return a plausible error. No interactive sessions,
+no filesystem emulation — minimal attack surface on the honeypot itself.
 
 ## Traps
 
@@ -186,8 +161,8 @@ honeypot itself.
 | `RAN_TRAPS` | | Comma-separated list of traps to enable |
 | `RAN_<PROTO>_ADDR` | *(see traps table)* | Override listen address for any trap |
 
-> Legacy variables `RAN_SSH=on`, `RAN_HTTP=on`, `RAN_MYSQL=on` still work but
-> `RAN_TRAPS` takes precedence when set.
+Legacy variables `RAN_SSH=on`, `RAN_HTTP=on`, etc. still work but `RAN_TRAPS`
+takes precedence when set.
 
 ### Logging
 
@@ -231,7 +206,7 @@ Scenario names follow the pattern `custom/ran-<protocol>-trap`. Each alert
 includes a self-contained ban decision — CrowdSec forwards it directly to
 bouncers without needing a local scenario.
 
-## Log output
+## Log format
 
 Structured JSON to stdout, one line per event:
 
@@ -254,45 +229,39 @@ Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`.
 
 ## Troubleshooting
 
-- **`at least one trap must be enabled`** — set `RAN_TRAPS` or at least one
-  `RAN_<PROTO>=on` variable.
-- **Port already in use** — another service is on the default port. Override
-  with `RAN_<PROTO>_ADDR=:<port>`.
-- **CrowdSec alerts not arriving** — verify `RAN_CROWDSEC_URL` is reachable
-  from the container and the API key is a valid bouncer key.
-- **UDP traps not receiving packets** — Docker needs explicit UDP port mapping:
-  `-p 53:53/udp`, not just `-p 53:53`.
-- **High connection volume causing drops** — increase `RAN_MAX_SESSIONS` and
-  `RAN_MAX_PER_IP`, or enable only the traps you need.
+**`at least one trap must be enabled`** — set `RAN_TRAPS` or at least one
+`RAN_<PROTO>=on` variable.
+
+**Port already in use** — another service is on the default port. Override
+with `RAN_<PROTO>_ADDR=:<port>`.
+
+**CrowdSec alerts not arriving** — verify `RAN_CROWDSEC_URL` is reachable
+from the container and the API key is a valid bouncer key.
+
+**UDP traps not receiving packets** — Docker needs explicit UDP port mapping:
+`-p 53:53/udp`, not just `-p 53:53`.
+
+**High connection volume causing drops** — increase `RAN_MAX_SESSIONS` and
+`RAN_MAX_PER_IP`, or enable only the traps you need.
 
 ## Development
 
 ```bash
-# tests
-go test ./...
-
-# vet + lint (golangci-lint v2)
-go vet ./...
-golangci-lint run
-
-# Dockerfile lint
-docker run --rm -i hadolint/hadolint < Dockerfile
-
-# build
-docker build -t ran:dev .
+go test ./...                                    # tests
+go vet ./... && golangci-lint run                 # lint
+docker run --rm -i hadolint/hadolint < Dockerfile # Dockerfile lint
+docker build -t ran:dev .                         # build
 ```
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/);
-releases and the GHCR image are cut automatically by release-please.
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+Releases and the GHCR image are cut automatically by release-please.
 
 ## Image
 
-- Registry: `ghcr.io/st0o0/ran`
-- Tags: `latest`, `MAJOR.MINOR`, and the exact `MAJOR.MINOR.PATCH` per release.
-- Architectures: `linux/amd64`, `linux/arm64`.
+Registry: `ghcr.io/st0o0/ran`
+Tags: `latest`, `MAJOR.MINOR`, and exact `MAJOR.MINOR.PATCH` per release.
+Architectures: `linux/amd64`, `linux/arm64`.
 
 ## License
 
-MIT (see [`LICENSE.md`](LICENSE.md)). rán is a pure-Go static binary; the built
-image bundles no third-party GPL binaries. Its Go module dependencies are
-permissively licensed (MIT/BSD); see `go.sum`.
+MIT — see [`LICENSE.md`](LICENSE.md).
