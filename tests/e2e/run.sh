@@ -16,9 +16,7 @@ trap cleanup EXIT
 echo "==> Starting ran container"
 docker run -d \
   --name "$CONTAINER" \
-  -e RAN_SSH=on \
-  -e RAN_HTTP=on \
-  -e RAN_MYSQL=on \
+  -e RAN_TRAPS=ssh,http,mysql \
   -e RAN_SSH_ADDR=:2222 \
   -e RAN_HTTP_ADDR=:8081 \
   -e RAN_MYSQL_ADDR=:3307 \
