@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/st0o0/ran/compare/v0.1.1...v0.2.0) (2026-08-12)
+
+
+### Features
+
+* enrich session logging with duration, counters, and human-readable messages ([0a269e2](https://github.com/st0o0/ran/commit/0a269e2d7ff643cefb061948831d4b66f1c93719))
+
 ## [0.1.1](https://github.com/st0o0/ran/compare/v0.1.0...v0.1.1) (2026-08-11)
 
 
