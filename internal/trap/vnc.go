@@ -29,7 +29,7 @@ type VNCTrap struct {
 func NewVNC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *VNCTrap {
 	return &VNCTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "vnc"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -77,7 +77,8 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("vnc", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("vnc", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -85,10 +86,10 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -129,7 +130,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	sess.LogAuthAttempt(t.logger,
+	sess.LogAuthAttempt(
 		slog.String("challenge", hex.EncodeToString(challenge[:])),
 		slog.String("response", hex.EncodeToString(response[:])),
 	)

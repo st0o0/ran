@@ -27,7 +27,7 @@ type HTTPProxyTrap struct {
 func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *HTTPProxyTrap {
 	t := &HTTPProxyTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "httpproxy"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -70,7 +70,8 @@ func (t *HTTPProxyTrap) Stop(ctx context.Context) error {
 
 func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, port := ParseAddr(r.RemoteAddr)
-	sess := NewSession("httpproxy", host, port)
+	_, destPort := ParseAddr(t.cfg.TrapAddr("httpproxy"))
+	sess := NewSession("httpproxy", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -79,17 +80,17 @@ func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	if authHeader := r.Header.Get("Proxy-Authorization"); authHeader != "" {
 		t.handleProxyAuth(sess, r, host, authHeader)
 	}
 
 	if r.Method == http.MethodConnect {
-		sess.LogCommand(t.logger, "CONNECT "+r.Host)
+		sess.LogCommand("CONNECT "+r.Host)
 		t.alerter.Alert(r.Context(), host, "httpproxy")
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
@@ -97,7 +98,7 @@ func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Host != "" {
-		sess.LogCommand(t.logger, r.Method+" "+r.URL.String())
+		sess.LogCommand(r.Method+" "+r.URL.String())
 		t.alerter.Alert(r.Context(), host, "httpproxy")
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
@@ -123,7 +124,7 @@ func (t *HTTPProxyTrap) handleProxyAuth(sess *Session, r *http.Request, host, au
 		return
 	}
 
-	sess.LogAuthAttempt(t.logger,
+	sess.LogAuthAttempt(
 		slog.String("username", creds[0]),
 		slog.String("password", creds[1]),
 	)

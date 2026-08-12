@@ -27,7 +27,7 @@ type FTPTrap struct {
 func NewFTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *FTPTrap {
 	return &FTPTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "ftp"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -75,7 +75,8 @@ func (t *FTPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("ftp", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("ftp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -83,10 +84,10 @@ func (t *FTPTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -109,7 +110,7 @@ func (t *FTPTrap) handle(ctx context.Context, conn net.Conn) {
 
 		case strings.HasPrefix(upper, "PASS "):
 			password := strings.TrimSpace(line[5:])
-			sess.LogAuthAttempt(t.logger,
+			sess.LogAuthAttempt(
 				slog.String("username", username),
 				slog.String("password", password),
 			)

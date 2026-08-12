@@ -27,7 +27,7 @@ type IRCTrap struct {
 func NewIRC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *IRCTrap {
 	return &IRCTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "irc"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -75,7 +75,8 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("irc", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("irc", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -83,10 +84,10 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -111,7 +112,7 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 		switch cmd {
 		case "PASS":
 			password := strings.TrimPrefix(params, ":")
-			sess.LogAuthAttempt(t.logger,
+			sess.LogAuthAttempt(
 				slog.String("username", nick),
 				slog.String("password", password),
 			)
@@ -141,7 +142,7 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 			fmt.Fprintf(conn, "PONG %s\r\n", params)
 
 		default:
-			sess.LogCommand(t.logger, line)
+			sess.LogCommand(line)
 		}
 	}
 }

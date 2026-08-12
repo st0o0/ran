@@ -11,14 +11,17 @@ import (
 )
 
 type snmpHandler struct {
-	logger  *slog.Logger
-	alerter alert.Alerter
+	logger   *slog.Logger
+	destPort int
+	alerter  alert.Alerter
 }
 
 func NewSNMP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
+	_, destPort := ParseAddr(cfg.TrapAddr("snmp"))
 	handler := &snmpHandler{
-		logger:  logger,
-		alerter: alerter,
+		logger:   logger,
+		destPort: destPort,
+		alerter:  alerter,
 	}
 	return NewUDP("snmp", cfg.TrapAddr("snmp"), logger, m, limiter, alerter, handler)
 }
@@ -52,8 +55,8 @@ func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byt
 	pdu := value
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("snmp", host, port)
-	sess.LogPayload(h.logger, "snmp_request", slog.String("community", community), slog.Int("version", int(version)))
+	sess := NewSession("snmp", host, port, h.destPort, h.logger)
+	sess.LogPayload("snmp_request", slog.String("community", community), slog.Int("version", int(version)))
 	h.alerter.Alert(ctx, host, "snmp")
 
 	reqTag, _, reqIDValue, _, ok := readTLV(pdu, 0)

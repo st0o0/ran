@@ -28,7 +28,7 @@ type RedisTrap struct {
 func NewRedis(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *RedisTrap {
 	return &RedisTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "redis"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -76,7 +76,8 @@ func (t *RedisTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("redis", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("redis", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -84,10 +85,10 @@ func (t *RedisTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -109,7 +110,7 @@ func (t *RedisTrap) handle(ctx context.Context, conn net.Conn) {
 			if len(args) > 1 {
 				password = args[1]
 			}
-			sess.LogAuthAttempt(t.logger,
+			sess.LogAuthAttempt(
 				slog.String("username", ""),
 				slog.String("password", password),
 			)
@@ -122,7 +123,7 @@ func (t *RedisTrap) handle(ctx context.Context, conn net.Conn) {
 			return
 
 		default:
-			sess.LogCommand(t.logger, strings.Join(args, " "))
+			sess.LogCommand(strings.Join(args, " "))
 			fmt.Fprint(conn, "-NOAUTH Authentication required.\r\n")
 		}
 	}

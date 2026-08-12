@@ -11,14 +11,17 @@ import (
 )
 
 type ntpHandler struct {
-	logger  *slog.Logger
-	alerter alert.Alerter
+	logger   *slog.Logger
+	destPort int
+	alerter  alert.Alerter
 }
 
 func NewNTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
+	_, destPort := ParseAddr(cfg.TrapAddr("ntp"))
 	handler := &ntpHandler{
-		logger:  logger,
-		alerter: alerter,
+		logger:   logger,
+		destPort: destPort,
+		alerter:  alerter,
 	}
 	return NewUDP("ntp", cfg.TrapAddr("ntp"), logger, m, limiter, alerter, handler)
 }
@@ -40,8 +43,8 @@ func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	}
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("ntp", host, port)
-	sess.LogPayload(h.logger, "ntp_request", slog.Int("version", version), slog.Int("mode", mode))
+	sess := NewSession("ntp", host, port, h.destPort, h.logger)
+	sess.LogPayload("ntp_request", slog.Int("version", version), slog.Int("mode", mode))
 	h.alerter.Alert(ctx, host, "ntp")
 
 	resp := make([]byte, 48)

@@ -13,14 +13,17 @@ import (
 )
 
 type dnsHandler struct {
-	logger  *slog.Logger
-	alerter alert.Alerter
+	logger   *slog.Logger
+	destPort int
+	alerter  alert.Alerter
 }
 
 func NewDNS(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
+	_, destPort := ParseAddr(cfg.TrapAddr("dns"))
 	handler := &dnsHandler{
-		logger:  logger,
-		alerter: alerter,
+		logger:   logger,
+		destPort: destPort,
+		alerter:  alerter,
 	}
 	return NewUDP("dns", cfg.TrapAddr("dns"), logger, m, limiter, alerter, handler)
 }
@@ -46,8 +49,8 @@ func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	qtypeStr := dnsTypeName(qtype)
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("dns", host, port)
-	sess.LogPayload(h.logger, "dns_query", slog.String("domain", domain), slog.String("qtype", qtypeStr))
+	sess := NewSession("dns", host, port, h.destPort, h.logger)
+	sess.LogPayload("dns_query", slog.String("domain", domain), slog.String("qtype", qtypeStr))
 	h.alerter.Alert(ctx, host, "dns")
 
 	questionLen := qEnd + 4 - 12

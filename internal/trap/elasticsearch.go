@@ -26,7 +26,7 @@ type ElasticsearchTrap struct {
 func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *ElasticsearchTrap {
 	t := &ElasticsearchTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "elasticsearch"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -83,7 +83,8 @@ func (t *ElasticsearchTrap) setHeaders(w http.ResponseWriter) {
 
 func (t *ElasticsearchTrap) withSession(w http.ResponseWriter, r *http.Request) (*Session, bool) {
 	host, port := ParseAddr(r.RemoteAddr)
-	sess := NewSession("elasticsearch", host, port)
+	_, destPort := ParseAddr(t.cfg.TrapAddr("elasticsearch"))
+	sess := NewSession("elasticsearch", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -91,14 +92,14 @@ func (t *ElasticsearchTrap) withSession(w http.ResponseWriter, r *http.Request) 
 		return nil, false
 	}
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	return sess, true
 }
 
 func (t *ElasticsearchTrap) releaseSession(sess *Session, host string) {
 	sess.RecordEnd(t.metrics)
-	sess.LogDisconnect(t.logger)
+	sess.LogDisconnect()
 	t.limiter.Release(host)
 }
 
@@ -115,7 +116,7 @@ func (t *ElasticsearchTrap) handleRoot(w http.ResponseWriter, r *http.Request) {
 	host, _ := ParseAddr(r.RemoteAddr)
 	defer t.releaseSession(sess, host)
 
-	sess.LogCommand(t.logger, "GET /")
+	sess.LogCommand("GET /")
 	t.alerter.Alert(r.Context(), host, "elasticsearch")
 
 	t.setHeaders(w)
@@ -131,7 +132,7 @@ func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.R
 	host, _ := ParseAddr(r.RemoteAddr)
 	defer t.releaseSession(sess, host)
 
-	sess.LogCommand(t.logger, "GET /_cluster/health")
+	sess.LogCommand("GET /_cluster/health")
 	t.alerter.Alert(r.Context(), host, "elasticsearch")
 
 	t.setHeaders(w)
@@ -153,7 +154,7 @@ func (t *ElasticsearchTrap) handleCatchAll(w http.ResponseWriter, r *http.Reques
 		cmd += " " + string(body)
 	}
 
-	sess.LogCommand(t.logger, cmd)
+	sess.LogCommand(cmd)
 	t.alerter.Alert(r.Context(), host, "elasticsearch")
 
 	t.setHeaders(w)

@@ -17,6 +17,7 @@ type PacketHandler interface {
 type UDPTrap struct {
 	protocol string
 	addr     string
+	destPort int
 	logger   *slog.Logger
 	metrics  *metrics.Metrics
 	limiter  *Limiter
@@ -27,10 +28,12 @@ type UDPTrap struct {
 }
 
 func NewUDP(protocol, addr string, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter, handler PacketHandler) *UDPTrap {
+	_, dp := ParseAddr(addr)
 	return &UDPTrap{
 		protocol: protocol,
 		addr:     addr,
-		logger:   logger.With("trap", protocol),
+		destPort: dp,
+		logger:   logger,
 		metrics:  m,
 		limiter:  limiter,
 		alerter:  alerter,
@@ -69,8 +72,8 @@ func (t *UDPTrap) Start(ctx context.Context) error {
 			continue
 		}
 
-		sess := NewSession(t.protocol, host, port)
-		sess.LogConnect(t.logger)
+		sess := NewSession(t.protocol, host, port, t.destPort, t.logger)
+		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 
 		data := make([]byte, n)

@@ -27,7 +27,7 @@ type SOCKS5Trap struct {
 func NewSOCKS5(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *SOCKS5Trap {
 	return &SOCKS5Trap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "socks5"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -75,7 +75,8 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("socks5", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("socks5", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -83,10 +84,10 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -158,7 +159,7 @@ func (t *SOCKS5Trap) handleUserPassAuth(ctx context.Context, conn net.Conn, host
 		return
 	}
 
-	sess.LogAuthAttempt(t.logger,
+	sess.LogAuthAttempt(
 		slog.String("username", string(username)),
 		slog.String("password", string(password)),
 	)
@@ -214,7 +215,7 @@ func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host strin
 	targetPort := binary.BigEndian.Uint16(portBytes[:])
 
 	target := fmt.Sprintf("%s:%d", targetAddr, targetPort)
-	sess.LogPayload(t.logger, "connect_request", slog.String("target", target))
+	sess.LogPayload("connect_request", slog.String("target", target))
 	t.alerter.Alert(ctx, host, "socks5")
 
 	// General failure reply

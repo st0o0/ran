@@ -26,7 +26,7 @@ type LDAPTrap struct {
 func NewLDAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *LDAPTrap {
 	return &LDAPTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "ldap"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -74,7 +74,8 @@ func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("ldap", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("ldap", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -82,10 +83,10 @@ func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -144,7 +145,7 @@ func (t *LDAPTrap) handleBind(ctx context.Context, conn net.Conn, host string, s
 		}
 	}
 
-	sess.LogAuthAttempt(t.logger,
+	sess.LogAuthAttempt(
 		slog.String("username", string(name)),
 		slog.String("password", password),
 	)

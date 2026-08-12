@@ -27,7 +27,7 @@ type IMAPTrap struct {
 func NewIMAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *IMAPTrap {
 	return &IMAPTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "imap"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -75,7 +75,8 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("imap", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("imap", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -83,10 +84,10 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -120,7 +121,7 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 			if len(fields) >= 2 {
 				password = strings.Trim(fields[1], "\"")
 			}
-			sess.LogAuthAttempt(t.logger,
+			sess.LogAuthAttempt(
 				slog.String("username", username),
 				slog.String("password", password),
 			)
@@ -139,7 +140,7 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 			fmt.Fprintf(conn, "%s OK NOOP completed\r\n", tag)
 
 		default:
-			sess.LogCommand(t.logger, line)
+			sess.LogCommand(line)
 			fmt.Fprintf(conn, "%s BAD Unknown command\r\n", tag)
 		}
 	}

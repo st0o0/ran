@@ -29,7 +29,7 @@ type SMTPTrap struct {
 func NewSMTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *SMTPTrap {
 	return &SMTPTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "smtp"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -77,7 +77,8 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	sess := NewSession("smtp", host, port)
+	_, destPort := ParseAddr(t.listener.Addr().String())
+	sess := NewSession("smtp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
 		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
@@ -85,10 +86,10 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	defer t.limiter.Release(host)
 
-	sess.LogConnect(t.logger)
+	sess.LogConnect()
 	sess.RecordStart(t.metrics)
 	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect(t.logger)
+	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
@@ -152,7 +153,7 @@ func (t *SMTPTrap) handleAuthLogin(ctx context.Context, conn net.Conn, scanner *
 	username := string(userBytes)
 	password := string(passBytes)
 
-	sess.LogAuthAttempt(t.logger,
+	sess.LogAuthAttempt(
 		slog.String("username", username),
 		slog.String("password", password),
 	)
@@ -184,7 +185,7 @@ func (t *SMTPTrap) handleAuthPlain(ctx context.Context, conn net.Conn, line stri
 		password = string(fields[2])
 	}
 
-	sess.LogAuthAttempt(t.logger,
+	sess.LogAuthAttempt(
 		slog.String("username", username),
 		slog.String("password", password),
 	)

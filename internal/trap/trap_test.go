@@ -2,6 +2,8 @@ package trap
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -47,7 +49,8 @@ func TestParseAddrIPv6(t *testing.T) {
 }
 
 func TestNewSession(t *testing.T) {
-	sess := NewSession("ssh", "10.0.0.1", 4321)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sess := NewSession("ssh", "10.0.0.1", 4321, 22, logger)
 	if sess.Protocol != "ssh" {
 		t.Errorf("Protocol = %q, want ssh", sess.Protocol)
 	}
@@ -57,11 +60,17 @@ func TestNewSession(t *testing.T) {
 	if sess.Port != 4321 {
 		t.Errorf("Port = %d, want 4321", sess.Port)
 	}
+	if sess.DestPort != 22 {
+		t.Errorf("DestPort = %d, want 22", sess.DestPort)
+	}
 	if sess.ID == "" {
 		t.Error("ID should not be empty")
 	}
 	if sess.Start.IsZero() {
 		t.Error("Start should not be zero")
+	}
+	if sess.Logger == nil {
+		t.Error("Logger should not be nil")
 	}
 }
 

@@ -27,7 +27,7 @@ type HTTPTrap struct {
 func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *HTTPTrap {
 	t := &HTTPTrap{
 		cfg:     cfg,
-		logger:  logger.With("trap", "http"),
+		logger:  logger,
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
@@ -58,14 +58,15 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 			conn.Close()
 			return
 		}
-		sess := NewSession("http", host, port)
+		_, destPort := ParseAddr(t.cfg.TrapAddr("http"))
+		sess := NewSession("http", host, port, destPort, t.logger)
 		t.sessions.Store(addr, sess)
-		sess.LogConnect(t.logger)
+		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 	case http.StateClosed, http.StateHijacked:
 		if v, ok := t.sessions.LoadAndDelete(addr); ok {
 			sess := v.(*Session)
-			sess.LogDisconnect(t.logger)
+			sess.LogDisconnect()
 			sess.RecordEnd(t.metrics)
 			t.limiter.Release(sess.SourceIP)
 		}
@@ -119,7 +120,7 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 			if clientIP := clientIPFromHeaders(r); clientIP != "" {
 				attrs = append(attrs, slog.String("client_ip", clientIP))
 			}
-			sess.LogAuthAttempt(t.logger, attrs...)
+			sess.LogAuthAttempt(attrs...)
 			sess.RecordCredentials(t.metrics)
 			alertIP := sess.SourceIP
 			if ip := clientIPFromHeaders(r); ip != "" {
