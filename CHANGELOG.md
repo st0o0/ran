@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/st0o0/ran/compare/v0.2.0...v0.3.0) (2026-08-15)
+
+
+### Features
+
+* replace CrowdSec API-key auth with machine-login JWT ([94e9950](https://github.com/st0o0/ran/commit/94e9950d98ae8a1cd1a3415c2fbdf9baf3614375))
+
+
+### Bug Fixes
+
+* check json.Encode error returns in crowdsec tests ([f9e88f0](https://github.com/st0o0/ran/commit/f9e88f0be886de4e3cdda3492f0f16b8130b765a))
+
 ## [0.2.0](https://github.com/st0o0/ran/compare/v0.1.1...v0.2.0) (2026-08-12)
 
 
