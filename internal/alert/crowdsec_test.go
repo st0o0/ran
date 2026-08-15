@@ -37,7 +37,7 @@ func loginHandler(t *testing.T, machineID, password string) http.HandlerFunc {
 		expire := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 		resp := loginResponse{Token: "test-jwt-token", Expire: expire}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -163,7 +163,7 @@ func TestCrowdSec401Retry(t *testing.T) {
 		expire := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
 		resp := loginResponse{Token: token, Expire: expire}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/v1/alerts", func(w http.ResponseWriter, r *http.Request) {
 		n := pushCount.Add(1)
@@ -205,7 +205,7 @@ func TestCrowdSecTokenRefresh(t *testing.T) {
 		expire := time.Now().Add(2 * time.Second).Format(time.RFC3339)
 		resp := loginResponse{Token: "short-lived-token", Expire: expire}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/v1/alerts", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
