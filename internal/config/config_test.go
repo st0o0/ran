@@ -126,10 +126,11 @@ func TestCustomAddresses(t *testing.T) {
 
 func TestCrowdSecEnabled(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":            "ssh",
-		"RAN_CROWDSEC":         "on",
-		"RAN_CROWDSEC_URL":     "http://crowdsec:8080",
-		"RAN_CROWDSEC_API_KEY": "abc123",
+		"RAN_TRAPS":               "ssh",
+		"RAN_CROWDSEC":            "on",
+		"RAN_CROWDSEC_URL":        "http://crowdsec:8080",
+		"RAN_CROWDSEC_MACHINE_ID": "ran-honeypot",
+		"RAN_CROWDSEC_PASSWORD":   "secret",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -147,23 +148,37 @@ func TestCrowdSecEnabled(t *testing.T) {
 
 func TestCrowdSecMissingURL(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":            "ssh",
-		"RAN_CROWDSEC":         "on",
-		"RAN_CROWDSEC_API_KEY": "abc123",
+		"RAN_TRAPS":               "ssh",
+		"RAN_CROWDSEC":            "on",
+		"RAN_CROWDSEC_MACHINE_ID": "ran-honeypot",
+		"RAN_CROWDSEC_PASSWORD":   "secret",
 	}))
 	if err == nil {
 		t.Fatal("expected error when CrowdSec enabled without URL")
 	}
 }
 
-func TestCrowdSecMissingKey(t *testing.T) {
+func TestCrowdSecMissingMachineID(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":        "ssh",
-		"RAN_CROWDSEC":     "on",
-		"RAN_CROWDSEC_URL": "http://crowdsec:8080",
+		"RAN_TRAPS":             "ssh",
+		"RAN_CROWDSEC":          "on",
+		"RAN_CROWDSEC_URL":      "http://crowdsec:8080",
+		"RAN_CROWDSEC_PASSWORD": "secret",
 	}))
 	if err == nil {
-		t.Fatal("expected error when CrowdSec enabled without API key")
+		t.Fatal("expected error when CrowdSec enabled without machine ID")
+	}
+}
+
+func TestCrowdSecMissingPassword(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_CROWDSEC":            "on",
+		"RAN_CROWDSEC_URL":        "http://crowdsec:8080",
+		"RAN_CROWDSEC_MACHINE_ID": "ran-honeypot",
+	}))
+	if err == nil {
+		t.Fatal("expected error when CrowdSec enabled without password")
 	}
 }
 
@@ -172,7 +187,8 @@ func TestCrowdSecPermanentBan(t *testing.T) {
 		"RAN_TRAPS":                 "ssh",
 		"RAN_CROWDSEC":              "on",
 		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
-		"RAN_CROWDSEC_API_KEY":      "abc123",
+		"RAN_CROWDSEC_MACHINE_ID":   "ran-honeypot",
+		"RAN_CROWDSEC_PASSWORD":     "secret",
 		"RAN_CROWDSEC_BAN_DURATION": "0",
 	}))
 	if err != nil {
@@ -188,7 +204,8 @@ func TestCrowdSecCustomDuration(t *testing.T) {
 		"RAN_TRAPS":                 "ssh",
 		"RAN_CROWDSEC":              "on",
 		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
-		"RAN_CROWDSEC_API_KEY":      "abc123",
+		"RAN_CROWDSEC_MACHINE_ID":   "ran-honeypot",
+		"RAN_CROWDSEC_PASSWORD":     "secret",
 		"RAN_CROWDSEC_BAN_DURATION": "24h",
 	}))
 	if err != nil {

@@ -66,18 +66,22 @@ Duration fields SHALL use Go `time.ParseDuration` format (e.g. `30s`, `1m`). Aff
 - **THEN** the metrics server listens on port 9999
 
 ### Requirement: CrowdSec configuration
-The config SHALL include CrowdSec env vars: `RAN_CROWDSEC` (on/off, default off), `RAN_CROWDSEC_URL` (required when enabled), `RAN_CROWDSEC_API_KEY` (required when enabled), `RAN_CROWDSEC_BAN_DURATION` (Go duration or `0` for permanent, default `4h`).
+The config SHALL include CrowdSec env vars: `RAN_CROWDSEC` (on/off, default off), `RAN_CROWDSEC_URL` (required when enabled), `RAN_CROWDSEC_MACHINE_ID` (required when enabled), `RAN_CROWDSEC_PASSWORD` (required when enabled), `RAN_CROWDSEC_BAN_DURATION` (Go duration or `0` for permanent, default `4h`).
 
 #### Scenario: CrowdSec enabled with all vars
-- **WHEN** `RAN_CROWDSEC=on`, `RAN_CROWDSEC_URL=http://crowdsec:8080`, `RAN_CROWDSEC_API_KEY=abc123`
+- **WHEN** `RAN_CROWDSEC=on`, `RAN_CROWDSEC_URL=http://crowdsec:8080`, `RAN_CROWDSEC_MACHINE_ID=ran-honeypot`, `RAN_CROWDSEC_PASSWORD=secret`
 - **THEN** config loads successfully with CrowdSec enabled
+
+#### Scenario: CrowdSec enabled without machine ID
+- **WHEN** `RAN_CROWDSEC=on` but `RAN_CROWDSEC_MACHINE_ID` is not set
+- **THEN** config loading returns an error
+
+#### Scenario: CrowdSec enabled without password
+- **WHEN** `RAN_CROWDSEC=on` but `RAN_CROWDSEC_PASSWORD` is not set
+- **THEN** config loading returns an error
 
 #### Scenario: CrowdSec enabled without URL
 - **WHEN** `RAN_CROWDSEC=on` but `RAN_CROWDSEC_URL` is not set
-- **THEN** config loading returns an error
-
-#### Scenario: CrowdSec enabled without API key
-- **WHEN** `RAN_CROWDSEC=on` but `RAN_CROWDSEC_API_KEY` is not set
 - **THEN** config loading returns an error
 
 #### Scenario: Permanent ban duration

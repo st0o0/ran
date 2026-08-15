@@ -65,7 +65,8 @@ type Config struct {
 
 	CrowdSec            bool
 	CrowdSecURL         string
-	CrowdSecAPIKey      string
+	CrowdSecMachineID   string
+	CrowdSecPassword    string
 	CrowdSecBanDuration time.Duration
 }
 
@@ -98,7 +99,8 @@ func Load(getenv func(string) string) (*Config, error) {
 		ProxyProtocol:       e.boolean("RAN_PROXY_PROTOCOL", false),
 		CrowdSec:            e.boolean("RAN_CROWDSEC", false),
 		CrowdSecURL:         e.str("RAN_CROWDSEC_URL", ""),
-		CrowdSecAPIKey:      e.str("RAN_CROWDSEC_API_KEY", ""),
+		CrowdSecMachineID:   e.str("RAN_CROWDSEC_MACHINE_ID", ""),
+		CrowdSecPassword:    e.str("RAN_CROWDSEC_PASSWORD", ""),
 		CrowdSecBanDuration: e.banDuration("RAN_CROWDSEC_BAN_DURATION", 4*time.Hour),
 	}
 	if e.err != nil {
@@ -142,8 +144,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		if c.CrowdSecURL == "" {
 			return nil, fmt.Errorf("RAN_CROWDSEC_URL is required when RAN_CROWDSEC=on")
 		}
-		if c.CrowdSecAPIKey == "" {
-			return nil, fmt.Errorf("RAN_CROWDSEC_API_KEY is required when RAN_CROWDSEC=on")
+		if c.CrowdSecMachineID == "" {
+			return nil, fmt.Errorf("RAN_CROWDSEC_MACHINE_ID is required when RAN_CROWDSEC=on")
+		}
+		if c.CrowdSecPassword == "" {
+			return nil, fmt.Errorf("RAN_CROWDSEC_PASSWORD is required when RAN_CROWDSEC=on")
 		}
 	}
 	return c, nil

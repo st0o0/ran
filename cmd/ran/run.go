@@ -17,7 +17,11 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 
 	var alerter alert.Alerter
 	if cfg.CrowdSec {
-		alerter = alert.NewCrowdSec(cfg.CrowdSecURL, cfg.CrowdSecAPIKey, cfg.CrowdSecBanDuration, logger, m)
+		cs, err := alert.NewCrowdSec(cfg.CrowdSecURL, cfg.CrowdSecMachineID, cfg.CrowdSecPassword, cfg.CrowdSecBanDuration, logger, m)
+		if err != nil {
+			return fmt.Errorf("crowdsec: %w", err)
+		}
+		alerter = cs
 		logger.Info("crowdsec alerter enabled", "url", cfg.CrowdSecURL, "ban_duration", cfg.CrowdSecBanDuration)
 	} else {
 		alerter = alert.NoopAlerter{}

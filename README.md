@@ -20,7 +20,8 @@ services:
       RAN_TRAPS: ssh,http,ftp,telnet,redis,rdp,smb
       RAN_CROWDSEC: "on"
       RAN_CROWDSEC_URL: http://crowdsec:8080
-      RAN_CROWDSEC_API_KEY: ${CROWDSEC_KEY}
+      RAN_CROWDSEC_MACHINE_ID: ran-honeypot
+      RAN_CROWDSEC_PASSWORD: ${CROWDSEC_PASSWORD}
     ports:
       - "2222:2222"   # SSH
       - "8081:8081"   # HTTP
@@ -199,12 +200,21 @@ Exposed metrics:
 |---|---|---|
 | `RAN_CROWDSEC` | `off` | Enable CrowdSec LAPI alerting |
 | `RAN_CROWDSEC_URL` | | CrowdSec LAPI URL (required when enabled) |
-| `RAN_CROWDSEC_API_KEY` | | CrowdSec bouncer API key (required when enabled) |
+| `RAN_CROWDSEC_MACHINE_ID` | | Machine ID for LAPI login (required when enabled) |
+| `RAN_CROWDSEC_PASSWORD` | | Machine password for LAPI login (required when enabled) |
 | `RAN_CROWDSEC_BAN_DURATION` | `4h` | Ban duration (`0` = permanent) |
 
-Scenario names follow the pattern `custom/ran-<protocol>-trap`. Each alert
-includes a self-contained ban decision — CrowdSec forwards it directly to
-bouncers without needing a local scenario.
+Register the machine before starting rán:
+
+```bash
+cscli machines add -m ran-honeypot -p <password>
+```
+
+rán authenticates via machine-login (`POST /v1/watchers/login`) and
+automatically refreshes the JWT token in the background. Scenario names
+follow the pattern `custom/ran-<protocol>-trap`. Each alert includes a
+self-contained ban decision — CrowdSec forwards it directly to bouncers
+without needing a local scenario.
 
 ## Log format
 
@@ -236,7 +246,7 @@ Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`.
 with `RAN_<PROTO>_ADDR=:<port>`.
 
 **CrowdSec alerts not arriving** — verify `RAN_CROWDSEC_URL` is reachable
-from the container and the API key is a valid bouncer key.
+from the container and the machine is registered (`cscli machines list`).
 
 **UDP traps not receiving packets** — Docker needs explicit UDP port mapping:
 `-p 53:53/udp`, not just `-p 53:53`.
