@@ -235,7 +235,7 @@ func (a *CrowdSecAlerter) push(msg alertMsg) {
 			Scope:    "ip",
 			Value:    msg.IP,
 			Type:     "ban",
-			Origin:   "crowdsec",
+			Origin:   "ran",
 		}},
 	}}
 
