@@ -117,7 +117,7 @@ func (t *ElasticsearchTrap) handleRoot(w http.ResponseWriter, r *http.Request) {
 	defer t.releaseSession(sess, host)
 
 	sess.LogCommand("GET /")
-	t.alerter.Alert(r.Context(), host, "elasticsearch")
+	t.alerter.Alert(r.Context(), host, "elasticsearch", map[string]string{"command": "GET /"})
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
@@ -133,7 +133,7 @@ func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.R
 	defer t.releaseSession(sess, host)
 
 	sess.LogCommand("GET /_cluster/health")
-	t.alerter.Alert(r.Context(), host, "elasticsearch")
+	t.alerter.Alert(r.Context(), host, "elasticsearch", map[string]string{"command": "GET /_cluster/health"})
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
@@ -155,7 +155,7 @@ func (t *ElasticsearchTrap) handleCatchAll(w http.ResponseWriter, r *http.Reques
 	}
 
 	sess.LogCommand(cmd)
-	t.alerter.Alert(r.Context(), host, "elasticsearch")
+	t.alerter.Alert(r.Context(), host, "elasticsearch", map[string]string{"command": cmd})
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusUnauthorized)

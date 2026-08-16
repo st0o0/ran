@@ -57,7 +57,7 @@ func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byt
 	host, port := ParseAddr(src.String())
 	sess := NewSession("snmp", host, port, h.destPort, h.logger)
 	sess.LogPayload("snmp_request", slog.String("community", community), slog.Int("version", int(version)))
-	h.alerter.Alert(ctx, host, "snmp")
+	h.alerter.Alert(ctx, host, "snmp", map[string]string{"community": community})
 
 	reqTag, _, reqIDValue, _, ok := readTLV(pdu, 0)
 	if !ok || reqTag != 0x02 {

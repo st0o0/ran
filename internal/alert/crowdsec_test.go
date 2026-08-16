@@ -97,7 +97,7 @@ func TestCrowdSecAlertFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
-	a.Alert(context.Background(), "1.2.3.4", "ssh")
+	a.Alert(context.Background(), "1.2.3.4", "ssh", map[string]string{"username": "root", "password": "admin"})
 	a.Close()
 
 	if len(received) != 1 {
@@ -119,6 +119,56 @@ func TestCrowdSecAlertFormat(t *testing.T) {
 	if alert.Decisions[0].Type != "ban" {
 		t.Errorf("type = %q, want ban", alert.Decisions[0].Type)
 	}
+	if alert.Source.Scope != "Ip" {
+		t.Errorf("source.scope = %q, want Ip", alert.Source.Scope)
+	}
+	if alert.Decisions[0].Scope != "Ip" {
+		t.Errorf("decisions[0].scope = %q, want Ip", alert.Decisions[0].Scope)
+	}
+	if len(alert.Events) != 1 {
+		t.Fatalf("got %d events, want 1", len(alert.Events))
+	}
+	if len(alert.Events[0].Meta) != 2 {
+		t.Fatalf("got %d meta entries, want 2", len(alert.Events[0].Meta))
+	}
+	if alert.Events[0].Meta[0].Key != "password" || alert.Events[0].Meta[0].Value != "admin" {
+		t.Errorf("meta[0] = %+v, want {password admin}", alert.Events[0].Meta[0])
+	}
+	if alert.Events[0].Meta[1].Key != "username" || alert.Events[0].Meta[1].Value != "root" {
+		t.Errorf("meta[1] = %+v, want {username root}", alert.Events[0].Meta[1])
+	}
+}
+
+func TestCrowdSecAlertNilMeta(t *testing.T) {
+	var received []csAlert
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+	a.Alert(context.Background(), "10.0.0.1", "memcached", nil)
+	a.Close()
+
+	if len(received) != 1 {
+		t.Fatalf("got %d alerts, want 1", len(received))
+	}
+	alert := received[0]
+	if len(alert.Events) != 1 {
+		t.Fatalf("got %d events, want 1", len(alert.Events))
+	}
+	if alert.Events[0].Meta == nil {
+		t.Fatal("events[0].meta is nil, want empty array")
+	}
+	if len(alert.Events[0].Meta) != 0 {
+		t.Errorf("got %d meta entries, want 0", len(alert.Events[0].Meta))
+	}
 }
 
 func TestCrowdSecPermanentBan(t *testing.T) {
@@ -135,7 +185,7 @@ func TestCrowdSecPermanentBan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
-	a.Alert(context.Background(), "5.6.7.8", "mysql")
+	a.Alert(context.Background(), "5.6.7.8", "mysql", nil)
 	a.Close()
 
 	if len(received) != 1 {
@@ -185,7 +235,7 @@ func TestCrowdSec401Retry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
-	a.Alert(context.Background(), "1.2.3.4", "ssh")
+	a.Alert(context.Background(), "1.2.3.4", "ssh", map[string]string{"username": "root", "password": "admin"})
 	a.Close()
 
 	if got := pushCount.Load(); got != 2 {
@@ -242,10 +292,10 @@ func TestCrowdSecChannelOverflow(t *testing.T) {
 	}
 
 	for range 256 {
-		a.Alert(context.Background(), "1.1.1.1", "ssh")
+		a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
 	}
 	// This should be dropped (channel full)
-	a.Alert(context.Background(), "2.2.2.2", "ssh")
+	a.Alert(context.Background(), "2.2.2.2", "ssh", nil)
 
 	a.Close()
 }
@@ -262,7 +312,7 @@ func TestCrowdSecFailureMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
-	a.Alert(context.Background(), "1.2.3.4", "http")
+	a.Alert(context.Background(), "1.2.3.4", "http", nil)
 	a.Close()
 }
 
@@ -279,9 +329,9 @@ func TestCrowdSecGracefulDrain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
-	a.Alert(context.Background(), "1.1.1.1", "ssh")
-	a.Alert(context.Background(), "2.2.2.2", "http")
-	a.Alert(context.Background(), "3.3.3.3", "mysql")
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "2.2.2.2", "http", nil)
+	a.Alert(context.Background(), "3.3.3.3", "mysql", nil)
 	a.Close()
 
 	if got := count.Load(); got != 3 {
@@ -291,6 +341,6 @@ func TestCrowdSecGracefulDrain(t *testing.T) {
 
 func TestNoopAlerter(t *testing.T) {
 	var a Alerter = NoopAlerter{}
-	a.Alert(context.Background(), "1.2.3.4", "ssh")
+	a.Alert(context.Background(), "1.2.3.4", "ssh", map[string]string{"username": "root", "password": "admin"})
 	a.Close()
 }

@@ -134,7 +134,7 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("username", username),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "rdp")
+	t.alerter.Alert(ctx, host, "rdp", map[string]string{"username": username})
 
 	// Send X.224 Connection Confirm with RDP Negotiation Failure
 	resp := buildRDPNegFailure()

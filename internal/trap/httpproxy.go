@@ -91,7 +91,7 @@ func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodConnect {
 		sess.LogCommand("CONNECT "+r.Host)
-		t.alerter.Alert(r.Context(), host, "httpproxy")
+		t.alerter.Alert(r.Context(), host, "httpproxy", map[string]string{"command": "CONNECT " + r.Host})
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 		return
@@ -99,7 +99,7 @@ func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Host != "" {
 		sess.LogCommand(r.Method+" "+r.URL.String())
-		t.alerter.Alert(r.Context(), host, "httpproxy")
+		t.alerter.Alert(r.Context(), host, "httpproxy", map[string]string{"command": r.Method + " " + r.URL.String()})
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 		return
@@ -129,5 +129,5 @@ func (t *HTTPProxyTrap) handleProxyAuth(sess *Session, r *http.Request, host, au
 		slog.String("password", creds[1]),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(r.Context(), host, "httpproxy")
+	t.alerter.Alert(r.Context(), host, "httpproxy", map[string]string{"username": creds[0], "password": creds[1]})
 }

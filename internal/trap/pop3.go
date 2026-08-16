@@ -115,7 +115,7 @@ func (t *POP3Trap) handle(ctx context.Context, conn net.Conn) {
 				slog.String("password", password),
 			)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "pop3")
+			t.alerter.Alert(ctx, host, "pop3", map[string]string{"username": username, "password": password})
 			fmt.Fprint(conn, "-ERR [AUTH] Authentication failed\r\n")
 
 		case strings.HasPrefix(upper, "QUIT"):

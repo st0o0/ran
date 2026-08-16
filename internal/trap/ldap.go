@@ -150,7 +150,7 @@ func (t *LDAPTrap) handleBind(ctx context.Context, conn net.Conn, host string, s
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "ldap")
+	t.alerter.Alert(ctx, host, "ldap", map[string]string{"username": string(name), "password": password})
 
 	resp := berBuildBindResponse(msgID, 49, "", "Invalid credentials")
 	_, _ = conn.Write(resp)

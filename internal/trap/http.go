@@ -126,7 +126,7 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 			if ip := clientIPFromHeaders(r); ip != "" {
 				alertIP = ip
 			}
-			t.alerter.Alert(r.Context(), alertIP, "http")
+			t.alerter.Alert(r.Context(), alertIP, "http", map[string]string{"username": username, "password": password, "path": r.URL.Path})
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, loginErrorPage(style))

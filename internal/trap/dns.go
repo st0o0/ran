@@ -51,7 +51,7 @@ func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	host, port := ParseAddr(src.String())
 	sess := NewSession("dns", host, port, h.destPort, h.logger)
 	sess.LogPayload("dns_query", slog.String("domain", domain), slog.String("qtype", qtypeStr))
-	h.alerter.Alert(ctx, host, "dns")
+	h.alerter.Alert(ctx, host, "dns", map[string]string{"domain": domain, "qtype": qtypeStr})
 
 	questionLen := qEnd + 4 - 12
 	resp := make([]byte, 12+questionLen)

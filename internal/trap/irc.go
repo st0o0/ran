@@ -117,7 +117,7 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 				slog.String("password", password),
 			)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "irc")
+			t.alerter.Alert(ctx, host, "irc", map[string]string{"username": nick, "password": password})
 
 		case "NICK":
 			nick = strings.TrimPrefix(params, ":")

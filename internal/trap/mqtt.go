@@ -111,7 +111,7 @@ func (t *MQTTTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "mqtt")
+	t.alerter.Alert(ctx, host, "mqtt", map[string]string{"client_id": clientID, "username": username, "password": password})
 
 	_, _ = conn.Write(buildMQTTConnack(protocolLevel))
 }

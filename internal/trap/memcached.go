@@ -90,7 +90,7 @@ func (t *MemcachedTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.LogDisconnect()
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-	t.alerter.Alert(ctx, host, "memcached")
+	t.alerter.Alert(ctx, host, "memcached", nil)
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 4096), 4096)

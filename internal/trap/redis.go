@@ -115,7 +115,7 @@ func (t *RedisTrap) handle(ctx context.Context, conn net.Conn) {
 				slog.String("password", password),
 			)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "redis")
+			t.alerter.Alert(ctx, host, "redis", map[string]string{"password": password})
 			fmt.Fprint(conn, "-ERR invalid password\r\n")
 
 		case "QUIT":

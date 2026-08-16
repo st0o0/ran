@@ -164,7 +164,7 @@ func (t *SOCKS5Trap) handleUserPassAuth(ctx context.Context, conn net.Conn, host
 		slog.String("password", string(password)),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "socks5")
+	t.alerter.Alert(ctx, host, "socks5", map[string]string{"username": string(username), "password": string(password)})
 
 	// Auth failure
 	_, _ = conn.Write([]byte{0x01, 0x01})
@@ -216,7 +216,7 @@ func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host strin
 
 	target := fmt.Sprintf("%s:%d", targetAddr, targetPort)
 	sess.LogPayload("connect_request", slog.String("target", target))
-	t.alerter.Alert(ctx, host, "socks5")
+	t.alerter.Alert(ctx, host, "socks5", map[string]string{"target": target})
 
 	// General failure reply
 	resp := []byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 type alertMsg struct {
 	IP       string
 	Protocol string
+	Meta     map[string]string
 }
 
 type CrowdSecAlerter struct {
@@ -73,9 +75,9 @@ func NewCrowdSec(url, machineID, password string, banDuration time.Duration, log
 	return a, nil
 }
 
-func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string) {
+func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string, meta map[string]string) {
 	select {
-	case a.ch <- alertMsg{IP: ip, Protocol: protocol}:
+	case a.ch <- alertMsg{IP: ip, Protocol: protocol, Meta: meta}:
 	default:
 		a.logger.Warn("alert channel full, dropping", "ip", ip, "protocol", protocol)
 	}
@@ -210,6 +212,22 @@ func (a *CrowdSecAlerter) worker() {
 	}
 }
 
+func buildEventMeta(meta map[string]string) []csMeta {
+	if len(meta) == 0 {
+		return []csMeta{}
+	}
+	keys := make([]string, 0, len(meta))
+	for k := range meta {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]csMeta, len(keys))
+	for i, k := range keys {
+		out[i] = csMeta{Key: k, Value: meta[k]}
+	}
+	return out
+}
+
 func (a *CrowdSecAlerter) push(msg alertMsg) {
 	scenario := "custom/ran-" + msg.Protocol + "-trap"
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -225,14 +243,18 @@ func (a *CrowdSecAlerter) push(msg alertMsg) {
 		Capacity:        0,
 		Leakspeed:       "0",
 		Simulated:       false,
+		Events: []csEvent{{
+			Timestamp: now,
+			Meta:      buildEventMeta(msg.Meta),
+		}},
 		Source: csSource{
-			Scope: "ip",
+			Scope: "Ip",
 			Value: msg.IP,
 		},
 		Decisions: []csDecision{{
 			Duration: a.banDuration,
 			Scenario: scenario,
-			Scope:    "ip",
+			Scope:    "Ip",
 			Value:    msg.IP,
 			Type:     "ban",
 			Origin:   "ran",
@@ -308,8 +330,19 @@ type csAlert struct {
 	Capacity        int          `json:"capacity"`
 	Leakspeed       string       `json:"leakspeed"`
 	Simulated       bool         `json:"simulated"`
+	Events          []csEvent    `json:"events"`
 	Source          csSource     `json:"source"`
 	Decisions       []csDecision `json:"decisions"`
+}
+
+type csEvent struct {
+	Timestamp string   `json:"timestamp"`
+	Meta      []csMeta `json:"meta"`
+}
+
+type csMeta struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 type csSource struct {

@@ -79,7 +79,7 @@ func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 		}
 	}
 
-	h.alerter.Alert(ctx, host, "sip")
+	h.alerter.Alert(ctx, host, "sip", map[string]string{"method": method, "from": from, "to": to})
 
 	nonce := generateNonce()
 	response := fmt.Sprintf("SIP/2.0 401 Unauthorized\r\nVia: %s\r\nFrom: %s\r\nTo: %s\r\nCall-ID: %s\r\nWWW-Authenticate: Digest realm=\"ran\",nonce=\"%s\"\r\nContent-Length: 0\r\n\r\n",

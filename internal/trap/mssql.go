@@ -134,7 +134,7 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "mssql")
+	t.alerter.Alert(ctx, host, "mssql", map[string]string{"username": username, "password": password})
 
 	_, _ = conn.Write(buildTDSErrorResponse())
 }

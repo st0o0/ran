@@ -114,7 +114,7 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "mysql")
+	t.alerter.Alert(ctx, host, "mysql", map[string]string{"username": username, "password": password})
 
 	_, _ = conn.Write(buildErrPacket(2, 1045, "28000", "Access denied for user '"+username+"'"))
 }

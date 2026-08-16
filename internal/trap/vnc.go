@@ -135,7 +135,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("response", hex.EncodeToString(response[:])),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "vnc")
+	t.alerter.Alert(ctx, host, "vnc", nil)
 
 	// Send SecurityResult: failed (1)
 	var result [4]byte

@@ -112,7 +112,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn) {
 				slog.String("password", string(pass)),
 			)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "ssh")
+			t.alerter.Alert(ctx, host, "ssh", map[string]string{"username": c.User(), "password": string(pass)})
 			return nil, errors.New("access denied")
 		},
 	}

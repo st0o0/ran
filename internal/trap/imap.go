@@ -126,7 +126,7 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 				slog.String("password", password),
 			)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "imap")
+			t.alerter.Alert(ctx, host, "imap", map[string]string{"username": username, "password": password})
 			fmt.Fprintf(conn, "%s NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", tag)
 
 		case "CAPABILITY":

@@ -158,7 +158,7 @@ func (t *SMTPTrap) handleAuthLogin(ctx context.Context, conn net.Conn, scanner *
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "smtp")
+	t.alerter.Alert(ctx, host, "smtp", map[string]string{"username": username, "password": password})
 
 	fmt.Fprintf(conn, "535 5.7.8 Authentication failed\r\n")
 }
@@ -190,7 +190,7 @@ func (t *SMTPTrap) handleAuthPlain(ctx context.Context, conn net.Conn, line stri
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "smtp")
+	t.alerter.Alert(ctx, host, "smtp", map[string]string{"username": username, "password": password})
 
 	fmt.Fprintf(conn, "535 5.7.8 Authentication failed\r\n")
 }

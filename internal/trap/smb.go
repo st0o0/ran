@@ -215,7 +215,7 @@ func (t *SMBTrap) handleSMB2SessionSetup(ctx context.Context, conn net.Conn, hos
 		slog.String("workstation", workstation),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "smb")
+	t.alerter.Alert(ctx, host, "smb", map[string]string{"username": user, "domain": domain, "workstation": workstation})
 
 	t.sendSessionSetupFailure(conn, payload)
 }

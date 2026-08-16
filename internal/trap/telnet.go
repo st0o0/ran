@@ -112,7 +112,7 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "telnet")
+	t.alerter.Alert(ctx, host, "telnet", map[string]string{"username": username, "password": password})
 
 	fmt.Fprint(conn, "\r\nLogin incorrect\r\n")
 }

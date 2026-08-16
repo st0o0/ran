@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"strconv"
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
@@ -45,7 +46,7 @@ func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	host, port := ParseAddr(src.String())
 	sess := NewSession("ntp", host, port, h.destPort, h.logger)
 	sess.LogPayload("ntp_request", slog.Int("version", version), slog.Int("mode", mode))
-	h.alerter.Alert(ctx, host, "ntp")
+	h.alerter.Alert(ctx, host, "ntp", map[string]string{"version": strconv.Itoa(version), "mode": strconv.Itoa(mode)})
 
 	resp := make([]byte, 48)
 	resp[0] = byte((3 << 6) | (version << 3) | 4)

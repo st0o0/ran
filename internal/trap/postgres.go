@@ -124,7 +124,7 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "postgres")
+	t.alerter.Alert(ctx, host, "postgres", map[string]string{"username": username, "password": password})
 
 	errMsg := fmt.Sprintf("password authentication failed for user \"%s\"", username)
 	writePgErrorResponse(conn, errMsg)

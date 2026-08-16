@@ -99,7 +99,7 @@ func (t *ModbusTrap) handle(ctx context.Context, conn net.Conn) {
 
 		attrs := parseModbusPDU(fc, pduData)
 		sess.LogPayload("modbus_request", attrs...)
-		t.alerter.Alert(ctx, host, "modbus")
+		t.alerter.Alert(ctx, host, "modbus", map[string]string{"function_code": fmt.Sprintf("%d", fc)})
 
 		resp := buildModbusException(transactionID, unitID, fc, 0x01)
 		if _, err := conn.Write(resp); err != nil {
