@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/st0o0/ran/compare/v0.3.1...v0.3.2) (2026-08-16)
+
+
+### Bug Fixes
+
+* **crowdsec:** use custom origin instead of reserved crowdsec origin ([65e9be2](https://github.com/st0o0/ran/commit/65e9be2cc3237986689b39ed923a729917eaccc7))
+
 ## [0.3.1](https://github.com/st0o0/ran/compare/v0.3.0...v0.3.1) (2026-08-16)
 
 
