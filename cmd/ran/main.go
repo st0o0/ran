@@ -73,12 +73,14 @@ func main() {
 func healthzHandler(ver string, startTime time.Time, traps []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"status":  "ok",
 			"version": ver,
 			"uptime":  time.Since(startTime).Truncate(time.Second).String(),
 			"traps":   traps,
-		})
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}
 }
 
