@@ -18,7 +18,8 @@ COPY LICENSE.md /LICENSE.md
 
 EXPOSE 21 23 25 53/udp 110 123/udp 143 161/udp 389 445 502 1080 1433 1521 1883 2222 3307 3389 5060/udp 5432 5900 6379 6667 8080 8081 9200 9550 11211
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s \
+           --start-period=15s --retries=3 \
   CMD ["/ran", "healthcheck"]
 
 ENTRYPOINT ["/ran"]

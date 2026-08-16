@@ -26,11 +26,15 @@ The build SHALL accept a `VERSION` build arg and inject it via `-ldflags="-s -w 
 - **THEN** `ran version` inside the container prints `0.1.0`
 
 ### Requirement: Docker healthcheck
-The Dockerfile SHALL define `HEALTHCHECK CMD ["/ran", "healthcheck"]` with a 30-second interval.
+The Dockerfile SHALL define `HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 CMD ["/ran", "healthcheck"]`.
 
 #### Scenario: Container health
 - **WHEN** the container is running with metrics enabled
-- **THEN** Docker reports the container as healthy
+- **THEN** Docker reports the container as healthy after the start period
+
+#### Scenario: Start period grace
+- **WHEN** the container has just started and traps are still binding
+- **THEN** Docker SHALL not mark the container as unhealthy during the first 45 seconds
 
 ### Requirement: Build flags
 The Go binary SHALL be compiled with `-trimpath` and `-ldflags="-s -w"` to strip debug info and paths.

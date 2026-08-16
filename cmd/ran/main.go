@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -38,11 +39,14 @@ func main() {
 	logger := newLogger(cfg)
 	slog.SetDefault(logger)
 
+	startTime := time.Now()
+
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg)
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	mux.HandleFunc("/healthz", healthzHandler(version, startTime, cfg.EnabledTraps()))
 	metricsSrv := &http.Server{Addr: cfg.MetricsAddr, Handler: mux}
 
 	go func() {
@@ -64,6 +68,18 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = metricsSrv.Shutdown(shutdownCtx)
+}
+
+func healthzHandler(ver string, startTime time.Time, traps []string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":  "ok",
+			"version": ver,
+			"uptime":  time.Since(startTime).Truncate(time.Second).String(),
+			"traps":   traps,
+		})
+	}
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
