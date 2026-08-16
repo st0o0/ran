@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1](https://github.com/st0o0/ran/compare/v0.3.0...v0.3.1) (2026-08-16)
+
+
+### Features
+
+* **health:** Add /healthz endpoint and improve healthcheck ([9f0681d](https://github.com/st0o0/ran/commit/9f0681d2a49e4294ad23c8f497f5b04b4a04c3b2))
+
+
+### Bug Fixes
+
+* check json.Encode error return in healthz handler ([ad575f6](https://github.com/st0o0/ran/commit/ad575f6da1734a83057900a686faa6ea286910a1))
+
 ## [0.3.0](https://github.com/st0o0/ran/compare/v0.2.0...v0.3.0) (2026-08-15)
 
 
