@@ -63,10 +63,7 @@ func (t *UDPTrap) Start(ctx context.Context) error {
 		go t.readLoop(ctx, conn)
 	}
 
-	// block on first conn's read loop to match original behavior
-	select {
-	case <-ctx.Done():
-	}
+	<-ctx.Done()
 	return nil
 }
 

@@ -61,7 +61,7 @@ func startMinecraftTrap(t *testing.T) (*MinecraftTrap, string, context.CancelFun
 func TestMinecraftStatusPing(t *testing.T) {
 	tr, addr, cancel := startMinecraftTrap(t)
 	defer cancel()
-	defer tr.Stop(context.Background())
+	defer func() { _ = tr.Stop(context.Background()) }()
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestMinecraftStatusPing(t *testing.T) {
 func TestMinecraftLoginDisconnect(t *testing.T) {
 	tr, addr, cancel := startMinecraftTrap(t)
 	defer cancel()
-	defer tr.Stop(context.Background())
+	defer func() { _ = tr.Stop(context.Background()) }()
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestMinecraftLoginDisconnect(t *testing.T) {
 func TestMinecraftMalformedHandshake(t *testing.T) {
 	tr, addr, cancel := startMinecraftTrap(t)
 	defer cancel()
-	defer tr.Stop(context.Background())
+	defer func() { _ = tr.Stop(context.Background()) }()
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
