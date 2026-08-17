@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/st0o0/ran/compare/v0.3.4...v0.3.5) (2026-08-17)
+
+
+### Bug Fixes
+
+* Log Crowdsec alert response on rejection ([c5db11c](https://github.com/st0o0/ran/commit/c5db11c6b8d99226c79a58e9e5366ee6e89ba6d7))
+
 ## [0.3.4](https://github.com/st0o0/ran/compare/v0.3.3...v0.3.4) (2026-08-17)
 
 
