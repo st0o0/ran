@@ -38,8 +38,9 @@ func TestADBTrapCNXN(t *testing.T) {
 	tr := NewADB(cfg, logger, m, limiter, alerter)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
+	started := make(chan struct{})
+	go func() { close(started); _ = tr.Start(ctx) }()
+	<-started
 	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("tcp", addr)
@@ -113,8 +114,8 @@ func TestADBTrapMalformed(t *testing.T) {
 	tr := NewADB(cfg, logger, m, limiter, alerter)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
+	startDone := make(chan struct{})
+	go func() { _ = tr.Start(ctx); close(startDone) }()
 	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("tcp", addr)
@@ -132,5 +133,6 @@ func TestADBTrapMalformed(t *testing.T) {
 	conn.Close()
 
 	cancel()
+	<-startDone
 	_ = tr.Stop(context.Background())
 }

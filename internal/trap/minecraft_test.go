@@ -28,7 +28,20 @@ func mcBuildHandshake(protocolVersion int32, serverAddr string, serverPort uint1
 	return append(mcWriteVarint(int32(len(payload))), payload...)
 }
 
-func startMinecraftTrap(t *testing.T) (*MinecraftTrap, string, context.CancelFunc) {
+type mcTestTrap struct {
+	trap      *MinecraftTrap
+	addr      string
+	cancel    context.CancelFunc
+	startDone chan struct{}
+}
+
+func (m *mcTestTrap) stopTrap() {
+	m.cancel()
+	<-m.startDone
+	_ = m.trap.Stop(context.Background())
+}
+
+func startMinecraftTrap(t *testing.T) *mcTestTrap {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -52,18 +65,18 @@ func startMinecraftTrap(t *testing.T) (*MinecraftTrap, string, context.CancelFun
 	tr := NewMinecraft(cfg, logger, m, limiter, alerter)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = tr.Start(ctx) }()
+	startDone := make(chan struct{})
+	go func() { _ = tr.Start(ctx); close(startDone) }()
 	time.Sleep(50 * time.Millisecond)
 
-	return tr, addr, cancel
+	return &mcTestTrap{trap: tr, addr: addr, cancel: cancel, startDone: startDone}
 }
 
 func TestMinecraftStatusPing(t *testing.T) {
-	tr, addr, cancel := startMinecraftTrap(t)
-	defer cancel()
-	defer func() { _ = tr.Stop(context.Background()) }()
+	tt := startMinecraftTrap(t)
+	defer tt.stopTrap()
 
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", tt.addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,11 +140,10 @@ func TestMinecraftStatusPing(t *testing.T) {
 }
 
 func TestMinecraftLoginDisconnect(t *testing.T) {
-	tr, addr, cancel := startMinecraftTrap(t)
-	defer cancel()
-	defer func() { _ = tr.Stop(context.Background()) }()
+	tt := startMinecraftTrap(t)
+	defer tt.stopTrap()
 
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", tt.addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +195,10 @@ func TestMinecraftLoginDisconnect(t *testing.T) {
 }
 
 func TestMinecraftMalformedHandshake(t *testing.T) {
-	tr, addr, cancel := startMinecraftTrap(t)
-	defer cancel()
-	defer func() { _ = tr.Stop(context.Background()) }()
+	tt := startMinecraftTrap(t)
+	defer tt.stopTrap()
 
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", tt.addr)
 	if err != nil {
 		t.Fatal(err)
 	}
