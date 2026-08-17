@@ -5,7 +5,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
 
-Single-binary honeypot written in Go. Emulates 27 network services (SSH, RDP,
+Single-binary honeypot written in Go. Emulates 29 network services (SSH, RDP,
 Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
 pushes ban decisions to CrowdSec. No external dependencies, ~8 MB scratch image.
 
@@ -49,7 +49,7 @@ binary, no shell, no runtime, just protocol stubs and a CrowdSec LAPI client.
 | | T-Pot | qeeqbox/honeypots | rán |
 |---|:---:|:---:|:---:|
 | Single binary / container | 31 containers | Python + deps | yes |
-| Protocol coverage | 31 honeypots | 30 protocols | 27 protocols |
+| Protocol coverage | 31 honeypots | 30 protocols | 29 protocols |
 | RAM | 8+ GB | ~500 MB | ~20 MB |
 | CrowdSec | via log parser | no | native LAPI push |
 | Selective traps | edition-based | yes | yes |
@@ -143,6 +143,8 @@ no filesystem emulation — minimal attack surface on the honeypot itself.
 |---|---|---|
 | `mqtt` | `:1883` | Credentials — CONNECT client ID + user/pass |
 | `modbus` | `:502` | ICS payloads — function codes + registers |
+| `adb` | `:5555` | ADB CNXN system identity — AUTH token challenge |
+| `minecraft` | `:25565` | Handshake metadata + player names from login attempts |
 
 ### UDP
 
@@ -160,7 +162,17 @@ no filesystem emulation — minimal attack surface on the honeypot itself.
 | Variable | Default | Purpose |
 |---|---|---|
 | `RAN_TRAPS` | | Comma-separated list of traps to enable |
-| `RAN_<PROTO>_ADDR` | *(see traps table)* | Override listen address for any trap |
+| `RAN_<PROTO>_ADDR` | *(see traps table)* | Override listen address (comma-separated for multi-port) |
+
+Multi-port: any trap can listen on multiple ports by passing a comma-separated
+list. The protocol behavior is identical on each port; logs record the actual
+`dest_port` per connection.
+
+```bash
+RAN_HTTP_ADDR=:8081,:8080,:8443,:3128   # HTTP on 4 ports
+RAN_SSH_ADDR=:2222,:22                  # SSH on both default and standard port
+RAN_SMTP_ADDR=:25,:587                  # SMTP on standard + submission port
+```
 
 Legacy variables `RAN_SSH=on`, `RAN_HTTP=on`, etc. still work but `RAN_TRAPS`
 takes precedence when set.

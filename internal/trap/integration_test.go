@@ -159,6 +159,67 @@ func TestIntegrationAllTraps(t *testing.T) {
 	}
 }
 
+func TestIntegrationMultiPort(t *testing.T) {
+	addr1 := freeAddr(t)
+	addr2 := freeAddr(t)
+
+	cfg := &config.Config{
+		Traps:          []string{"ftp"},
+		Addrs:          map[string]string{"ftp": addr1 + "," + addr2},
+		SessionTimeout: 5 * time.Second,
+		MaxSessions:    100,
+		MaxPerIP:       10,
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+
+	tr := trap.NewFTP(cfg, logger, m, limiter, alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = tr.Start(ctx) }()
+	time.Sleep(200 * time.Millisecond)
+
+	// Connect to first port
+	conn1, err := net.DialTimeout("tcp", addr1, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial addr1: %v", err)
+	}
+	_ = conn1.SetDeadline(time.Now().Add(2 * time.Second))
+	_, _ = bufio.NewReader(conn1).ReadString('\n')
+	conn1.Close()
+
+	// Connect to second port
+	conn2, err := net.DialTimeout("tcp", addr2, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial addr2: %v", err)
+	}
+	_ = conn2.SetDeadline(time.Now().Add(2 * time.Second))
+	_, _ = bufio.NewReader(conn2).ReadString('\n')
+	conn2.Close()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	_ = tr.Stop(context.Background())
+
+	logs := logBuf.String()
+
+	_, port1 := trap.ParseAddr(addr1)
+	_, port2 := trap.ParseAddr(addr2)
+	destPort1 := fmt.Sprintf(`"dest_port":%d`, port1)
+	destPort2 := fmt.Sprintf(`"dest_port":%d`, port2)
+
+	if !strings.Contains(logs, destPort1) {
+		t.Errorf("logs missing dest_port for first address (%d)", port1)
+	}
+	if !strings.Contains(logs, destPort2) {
+		t.Errorf("logs missing dest_port for second address (%d)", port2)
+	}
+}
+
 func TestIntegrationFTP(t *testing.T) {
 	addr := freeAddr(t)
 	cfg := &config.Config{

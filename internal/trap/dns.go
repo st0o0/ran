@@ -13,22 +13,19 @@ import (
 )
 
 type dnsHandler struct {
-	logger   *slog.Logger
-	destPort int
-	alerter  alert.Alerter
+	logger  *slog.Logger
+	alerter alert.Alerter
 }
 
 func NewDNS(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
-	_, destPort := ParseAddr(cfg.TrapAddr("dns"))
 	handler := &dnsHandler{
-		logger:   logger,
-		destPort: destPort,
-		alerter:  alerter,
+		logger:  logger,
+		alerter: alerter,
 	}
-	return NewUDP("dns", cfg.TrapAddr("dns"), logger, m, limiter, alerter, handler)
+	return NewUDP("dns", cfg.TrapAddrs("dns"), logger, m, limiter, alerter, handler)
 }
 
-func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte, respond func([]byte)) {
+func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
 	if len(data) < 12 {
 		return
 	}
@@ -49,7 +46,7 @@ func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	qtypeStr := dnsTypeName(qtype)
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("dns", host, port, h.destPort, h.logger)
+	sess := NewSession("dns", host, port, destPort, h.logger)
 	sess.LogPayload("dns_query", slog.String("domain", domain), slog.String("qtype", qtypeStr))
 	h.alerter.Alert(ctx, host, "dns", map[string]string{"domain": domain, "qtype": qtypeStr})
 

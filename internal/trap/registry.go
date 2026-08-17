@@ -93,6 +93,12 @@ var Registry = map[string]Factory{
 	"ntp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
 		return NewNTP(cfg, logger, m, limiter, alerter), nil
 	},
+	"adb": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
+		return NewADB(cfg, logger, m, limiter, alerter), nil
+	},
+	"minecraft": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
+		return NewMinecraft(cfg, logger, m, limiter, alerter), nil
+	},
 }
 
 func CreateTraps(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) ([]Trap, error) {

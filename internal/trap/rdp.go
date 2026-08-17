@@ -22,7 +22,7 @@ type RDPTrap struct {
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 }
 
@@ -37,12 +37,12 @@ func NewRDP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *RDPTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("rdp"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("rdp"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("rdp listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("rdp"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("rdp"))
 
 	go func() {
 		<-ctx.Done()
@@ -77,7 +77,7 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("rdp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

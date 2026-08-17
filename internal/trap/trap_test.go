@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"testing"
 	"time"
 )
@@ -91,5 +92,124 @@ func TestDeadlineFromContextEarlier(t *testing.T) {
 	diff := time.Until(dl)
 	if diff > 3*time.Second {
 		t.Errorf("deadline ~%v from now, should use context deadline (~2s)", diff.Round(time.Second))
+	}
+}
+
+func TestMultiListenerSingle(t *testing.T) {
+	ctx := context.Background()
+	ml, err := ListenMultiTCP(ctx, []string{":0"}, false)
+	if err != nil {
+		t.Fatalf("ListenMultiTCP: %v", err)
+	}
+	defer ml.Close()
+
+	addr := ml.Addr().String()
+	go func() {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			return
+		}
+		conn.Close()
+	}()
+
+	conn, err := ml.Accept()
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	conn.Close()
+}
+
+func TestMultiListenerMultiple(t *testing.T) {
+	ctx := context.Background()
+	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false)
+	if err != nil {
+		t.Fatalf("ListenMultiTCP: %v", err)
+	}
+	defer ml.Close()
+
+	if len(ml.listeners) != 2 {
+		t.Fatalf("expected 2 listeners, got %d", len(ml.listeners))
+	}
+
+	addr2 := ml.listeners[1].Addr().String()
+	go func() {
+		conn, err := net.Dial("tcp", addr2)
+		if err != nil {
+			return
+		}
+		conn.Close()
+	}()
+
+	conn, err := ml.Accept()
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	_, port := ParseAddr(conn.LocalAddr().String())
+	_, expectedPort := ParseAddr(addr2)
+	if port != expectedPort {
+		t.Errorf("conn.LocalAddr port = %d, want %d", port, expectedPort)
+	}
+	conn.Close()
+}
+
+func TestMultiListenerClose(t *testing.T) {
+	ctx := context.Background()
+	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false)
+	if err != nil {
+		t.Fatalf("ListenMultiTCP: %v", err)
+	}
+	ml.Close()
+
+	_, err = ml.Accept()
+	if err == nil {
+		t.Error("expected error after Close")
+	}
+}
+
+func TestMultiListenerAddr(t *testing.T) {
+	ctx := context.Background()
+	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false)
+	if err != nil {
+		t.Fatalf("ListenMultiTCP: %v", err)
+	}
+	defer ml.Close()
+
+	if ml.Addr().String() != ml.listeners[0].Addr().String() {
+		t.Errorf("Addr() = %v, want first listener addr %v", ml.Addr(), ml.listeners[0].Addr())
+	}
+}
+
+func TestConnContextWithDestPort(t *testing.T) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+
+	_, expectedPort := ParseAddr(ln.Addr().String())
+
+	go func() {
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			return
+		}
+		conn.Close()
+	}()
+
+	conn, _ := ln.Accept()
+	defer conn.Close()
+
+	ctx := ConnContextWithDestPort(context.Background(), conn)
+	port := DestPortFromContext(ctx)
+	if port != expectedPort {
+		t.Errorf("DestPortFromContext = %d, want %d", port, expectedPort)
+	}
+}
+
+func TestDestPortFromContextMissing(t *testing.T) {
+	port := DestPortFromContext(context.Background())
+	if port != 0 {
+		t.Errorf("DestPortFromContext on empty ctx = %d, want 0", port)
 	}
 }

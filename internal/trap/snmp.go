@@ -11,22 +11,19 @@ import (
 )
 
 type snmpHandler struct {
-	logger   *slog.Logger
-	destPort int
-	alerter  alert.Alerter
+	logger  *slog.Logger
+	alerter alert.Alerter
 }
 
 func NewSNMP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
-	_, destPort := ParseAddr(cfg.TrapAddr("snmp"))
 	handler := &snmpHandler{
-		logger:   logger,
-		destPort: destPort,
-		alerter:  alerter,
+		logger:  logger,
+		alerter: alerter,
 	}
-	return NewUDP("snmp", cfg.TrapAddr("snmp"), logger, m, limiter, alerter, handler)
+	return NewUDP("snmp", cfg.TrapAddrs("snmp"), logger, m, limiter, alerter, handler)
 }
 
-func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte, respond func([]byte)) {
+func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
 	tag, _, value, _, ok := readTLV(data, 0)
 	if !ok || tag != 0x30 {
 		return
@@ -55,7 +52,7 @@ func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byt
 	pdu := value
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("snmp", host, port, h.destPort, h.logger)
+	sess := NewSession("snmp", host, port, destPort, h.logger)
 	sess.LogPayload("snmp_request", slog.String("community", community), slog.Int("version", int(version)))
 	h.alerter.Alert(ctx, host, "snmp", map[string]string{"community": community})
 

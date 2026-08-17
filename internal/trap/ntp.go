@@ -12,22 +12,19 @@ import (
 )
 
 type ntpHandler struct {
-	logger   *slog.Logger
-	destPort int
-	alerter  alert.Alerter
+	logger  *slog.Logger
+	alerter alert.Alerter
 }
 
 func NewNTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
-	_, destPort := ParseAddr(cfg.TrapAddr("ntp"))
 	handler := &ntpHandler{
-		logger:   logger,
-		destPort: destPort,
-		alerter:  alerter,
+		logger:  logger,
+		alerter: alerter,
 	}
-	return NewUDP("ntp", cfg.TrapAddr("ntp"), logger, m, limiter, alerter, handler)
+	return NewUDP("ntp", cfg.TrapAddrs("ntp"), logger, m, limiter, alerter, handler)
 }
 
-func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte, respond func([]byte)) {
+func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
 	if len(data) < 48 {
 		return
 	}
@@ -44,7 +41,7 @@ func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	}
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("ntp", host, port, h.destPort, h.logger)
+	sess := NewSession("ntp", host, port, destPort, h.logger)
 	sess.LogPayload("ntp_request", slog.Int("version", version), slog.Int("mode", mode))
 	h.alerter.Alert(ctx, host, "ntp", map[string]string{"version": strconv.Itoa(version), "mode": strconv.Itoa(mode)})
 

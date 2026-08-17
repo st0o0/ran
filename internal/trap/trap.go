@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -138,16 +139,97 @@ func ParseAddr(addr string) (string, int) {
 	return host, port
 }
 
-func ListenTCP(ctx context.Context, addr string, proxyProto bool) (net.Listener, error) {
+type contextKey string
+
+var destPortCtxKey = contextKey("destPort")
+
+func ConnContextWithDestPort(ctx context.Context, conn net.Conn) context.Context {
+	_, port := ParseAddr(conn.LocalAddr().String())
+	return context.WithValue(ctx, destPortCtxKey, port)
+}
+
+func DestPortFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(destPortCtxKey).(int); ok {
+		return v
+	}
+	return 0
+}
+
+type MultiListener struct {
+	listeners []net.Listener
+	connCh    chan net.Conn
+	done      chan struct{}
+	wg        sync.WaitGroup
+	closeOnce sync.Once
+}
+
+func (ml *MultiListener) Accept() (net.Conn, error) {
+	conn, ok := <-ml.connCh
+	if !ok {
+		return nil, net.ErrClosed
+	}
+	return conn, nil
+}
+
+func (ml *MultiListener) Close() error {
+	ml.closeOnce.Do(func() {
+		close(ml.done)
+		for _, ln := range ml.listeners {
+			ln.Close()
+		}
+		ml.wg.Wait()
+		close(ml.connCh)
+	})
+	return nil
+}
+
+func (ml *MultiListener) Addr() net.Addr {
+	return ml.listeners[0].Addr()
+}
+
+func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool) (*MultiListener, error) {
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", addr)
-	if err != nil {
-		return nil, err
+	listeners := make([]net.Listener, 0, len(addrs))
+	for _, addr := range addrs {
+		ln, err := lc.Listen(ctx, "tcp", addr)
+		if err != nil {
+			for _, prev := range listeners {
+				prev.Close()
+			}
+			return nil, err
+		}
+		if proxyProto {
+			ln = &proxyListener{Listener: ln}
+		}
+		listeners = append(listeners, ln)
 	}
-	if proxyProto {
-		return &proxyListener{Listener: ln}, nil
+
+	ml := &MultiListener{
+		listeners: listeners,
+		connCh:    make(chan net.Conn, 64),
+		done:      make(chan struct{}),
 	}
-	return ln, nil
+
+	for _, ln := range listeners {
+		ml.wg.Add(1)
+		go func(l net.Listener) {
+			defer ml.wg.Done()
+			for {
+				conn, err := l.Accept()
+				if err != nil {
+					return
+				}
+				select {
+				case ml.connCh <- conn:
+				case <-ml.done:
+					conn.Close()
+					return
+				}
+			}
+		}(ln)
+	}
+
+	return ml, nil
 }
 
 func deadlineFromContext(ctx context.Context, timeout time.Duration) time.Time {

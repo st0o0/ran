@@ -11,28 +11,25 @@ import (
 )
 
 type PacketHandler interface {
-	HandlePacket(ctx context.Context, src net.Addr, data []byte, respond func([]byte))
+	HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte))
 }
 
 type UDPTrap struct {
 	protocol string
-	addr     string
-	destPort int
+	addrs    []string
 	logger   *slog.Logger
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
 	handler  PacketHandler
-	conn     net.PacketConn
+	conns    []net.PacketConn
 	wg       sync.WaitGroup
 }
 
-func NewUDP(protocol, addr string, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter, handler PacketHandler) *UDPTrap {
-	_, dp := ParseAddr(addr)
+func NewUDP(protocol string, addrs []string, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter, handler PacketHandler) *UDPTrap {
 	return &UDPTrap{
 		protocol: protocol,
-		addr:     addr,
-		destPort: dp,
+		addrs:    addrs,
 		logger:   logger,
 		metrics:  m,
 		limiter:  limiter,
@@ -43,24 +40,44 @@ func NewUDP(protocol, addr string, logger *slog.Logger, m *metrics.Metrics, limi
 
 func (t *UDPTrap) Start(ctx context.Context) error {
 	var lc net.ListenConfig
-	conn, err := lc.ListenPacket(ctx, "udp", t.addr)
-	if err != nil {
-		return err
+	for _, addr := range t.addrs {
+		conn, err := lc.ListenPacket(ctx, "udp", addr)
+		if err != nil {
+			for _, c := range t.conns {
+				c.Close()
+			}
+			return err
+		}
+		t.conns = append(t.conns, conn)
+		t.logger.Info("listening", "addr", addr)
 	}
-	t.conn = conn
-	t.logger.Info("listening", "addr", t.addr)
 
 	go func() {
 		<-ctx.Done()
-		conn.Close()
+		for _, c := range t.conns {
+			c.Close()
+		}
 	}()
 
+	for _, conn := range t.conns {
+		go t.readLoop(ctx, conn)
+	}
+
+	// block on first conn's read loop to match original behavior
+	select {
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	buf := make([]byte, 4096)
 	for {
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			if ctx.Err() != nil {
-				break
+				return
 			}
 			t.logger.Debug("read error", "error", err)
 			continue
@@ -72,7 +89,7 @@ func (t *UDPTrap) Start(ctx context.Context) error {
 			continue
 		}
 
-		sess := NewSession(t.protocol, host, port, t.destPort, t.logger)
+		sess := NewSession(t.protocol, host, port, destPort, t.logger)
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 
@@ -88,15 +105,14 @@ func (t *UDPTrap) Start(ctx context.Context) error {
 			defer t.wg.Done()
 			defer t.limiter.Release(host)
 			defer sess.RecordEnd(t.metrics)
-			t.handler.HandlePacket(ctx, addr, data, respond)
+			t.handler.HandlePacket(ctx, addr, destPort, data, respond)
 		}()
 	}
-	return nil
 }
 
 func (t *UDPTrap) Stop(_ context.Context) error {
-	if t.conn != nil {
-		t.conn.Close()
+	for _, c := range t.conns {
+		c.Close()
 	}
 	t.wg.Wait()
 	return nil

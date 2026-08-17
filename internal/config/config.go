@@ -36,6 +36,8 @@ var DefaultPorts = map[string]string{
 	"ntp":           ":123",
 	"snmp":          ":161",
 	"memcached":     ":11211",
+	"adb":           ":5555",
+	"minecraft":     ":25565",
 }
 
 var ValidTraps = func() map[string]bool {
@@ -82,6 +84,21 @@ func (c *Config) TrapAddr(name string) string {
 		return def
 	}
 	return ""
+}
+
+func (c *Config) TrapAddrs(name string) []string {
+	raw := c.TrapAddr(name)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	addrs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			addrs = append(addrs, s)
+		}
+	}
+	return addrs
 }
 
 func Load(getenv func(string) string) (*Config, error) {

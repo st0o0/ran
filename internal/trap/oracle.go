@@ -21,7 +21,7 @@ type OracleTrap struct {
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 }
 
@@ -36,12 +36,12 @@ func NewOracle(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *OracleTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("oracle"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("oracle"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("oracle listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("oracle"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("oracle"))
 
 	go func() {
 		<-ctx.Done()
@@ -76,7 +76,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("oracle", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

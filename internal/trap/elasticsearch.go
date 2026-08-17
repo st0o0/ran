@@ -41,23 +41,21 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 	mux.HandleFunc("POST /", t.handleCatchAll)
 	mux.HandleFunc("DELETE /", t.handleCatchAll)
 
-	addr := cfg.TrapAddr("elasticsearch")
 	t.srv = &http.Server{
-		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
+		ConnContext:  ConnContextWithDestPort,
 	}
 	return t
 }
 
 func (t *ElasticsearchTrap) Start(ctx context.Context) error {
-	addr := t.cfg.TrapAddr("elasticsearch")
-	ln, err := ListenTCP(ctx, addr, t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("elasticsearch"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("elasticsearch listen: %w", err)
 	}
-	t.logger.Info("listening", "addr", addr)
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("elasticsearch"))
 
 	go func() {
 		<-ctx.Done()
@@ -83,7 +81,7 @@ func (t *ElasticsearchTrap) setHeaders(w http.ResponseWriter) {
 
 func (t *ElasticsearchTrap) withSession(w http.ResponseWriter, r *http.Request) (*Session, bool) {
 	host, port := ParseAddr(r.RemoteAddr)
-	_, destPort := ParseAddr(t.cfg.TrapAddr("elasticsearch"))
+	destPort := DestPortFromContext(r.Context())
 	sess := NewSession("elasticsearch", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

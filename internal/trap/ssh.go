@@ -28,7 +28,7 @@ type SSHTrap struct {
 	limiter  *Limiter
 	alerter  alert.Alerter
 	signer   gossh.Signer
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 }
 
@@ -48,12 +48,12 @@ func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *SSHTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("ssh"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ssh"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("ssh listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("ssh"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("ssh"))
 
 	go func() {
 		<-ctx.Done()
@@ -88,7 +88,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("ssh", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

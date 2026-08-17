@@ -44,6 +44,7 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
 		ConnState:    t.connState,
+		ConnContext:  ConnContextWithDestPort,
 	}
 	return t
 }
@@ -58,7 +59,7 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 			conn.Close()
 			return
 		}
-		_, destPort := ParseAddr(t.cfg.TrapAddr("http"))
+		_, destPort := ParseAddr(conn.LocalAddr().String())
 		sess := NewSession("http", host, port, destPort, t.logger)
 		t.sessions.Store(addr, sess)
 		sess.LogConnect()
@@ -74,11 +75,11 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 }
 
 func (t *HTTPTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("http"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("http"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
 	}
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("http"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("http"))
 
 	go func() {
 		<-ctx.Done()

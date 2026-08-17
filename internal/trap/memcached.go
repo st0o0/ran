@@ -20,7 +20,7 @@ type MemcachedTrap struct {
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 }
 
@@ -35,12 +35,12 @@ func NewMemcached(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 }
 
 func (t *MemcachedTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("memcached"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("memcached"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("memcached listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("memcached"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("memcached"))
 
 	go func() {
 		<-ctx.Done()
@@ -75,7 +75,7 @@ func (t *MemcachedTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("memcached", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

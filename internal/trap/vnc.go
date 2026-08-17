@@ -22,7 +22,7 @@ type VNCTrap struct {
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 }
 
@@ -37,12 +37,12 @@ func NewVNC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *VNCTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("vnc"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("vnc"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("vnc listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("vnc"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("vnc"))
 
 	go func() {
 		<-ctx.Done()
@@ -77,7 +77,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("vnc", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

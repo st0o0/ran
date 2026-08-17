@@ -23,11 +23,19 @@ The trap SHALL capture POST form data containing credentials (fields: `username`
 - **THEN** the credentials are logged, and a login-failed page is returned
 
 ### Requirement: Session logging
-Each HTTP request SHALL be logged with: session_id, source_ip, source_port, protocol (`http`), method, path, and action (`connect` for GET, `auth_attempt` for credential POST, `disconnect`).
+Each HTTP connection SHALL be logged with: session_id, source_ip, source_port, dest_port, protocol (`http`), and action (`connect`, `auth_attempt`, `disconnect`). The dest_port SHALL be derived from the connection's local address via `ConnContext`, not from the config value.
 
 #### Scenario: Credential POST logging
 - **WHEN** an attacker POSTs credentials to `/wp-login.php`
 - **THEN** a log entry with action `auth_attempt`, username, and password is emitted
+
+#### Scenario: Single-port destPort
+- **WHEN** the HTTP trap listens on `:8081` and a connection arrives
+- **THEN** the session's dest_port is 8081, derived from `ConnContext`
+
+#### Scenario: Multi-port destPort
+- **WHEN** the HTTP trap listens on `[":8081", ":8443"]` and a connection arrives on port 8443
+- **THEN** the session's dest_port is 8443, derived from `ConnContext`
 
 ### Requirement: Realistic responses
 Login failure responses SHALL look like the real service (WordPress-style error for `/wp-login.php`, generic "invalid credentials" for `/admin`). HTTP headers SHALL mimic a typical web server.

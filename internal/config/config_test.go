@@ -274,3 +274,61 @@ func TestTrapAddrOverride(t *testing.T) {
 		t.Errorf("TrapAddr(ftp) = %q, want :2121", c.TrapAddr("ftp"))
 	}
 }
+
+func TestTrapAddrsSingle(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	addrs := c.TrapAddrs("ssh")
+	if len(addrs) != 1 || addrs[0] != ":2222" {
+		t.Errorf("TrapAddrs(ssh) = %v, want [:2222]", addrs)
+	}
+}
+
+func TestTrapAddrsMultiple(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":     "http",
+		"RAN_HTTP_ADDR": ":8081,:8080,:8443",
+	}))
+	addrs := c.TrapAddrs("http")
+	if len(addrs) != 3 || addrs[0] != ":8081" || addrs[1] != ":8080" || addrs[2] != ":8443" {
+		t.Errorf("TrapAddrs(http) = %v, want [:8081 :8080 :8443]", addrs)
+	}
+}
+
+func TestTrapAddrsWhitespace(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":     "http",
+		"RAN_HTTP_ADDR": ":8081, :8080 , :8443",
+	}))
+	addrs := c.TrapAddrs("http")
+	if len(addrs) != 3 || addrs[0] != ":8081" || addrs[1] != ":8080" || addrs[2] != ":8443" {
+		t.Errorf("TrapAddrs(http) = %v, want [:8081 :8080 :8443]", addrs)
+	}
+}
+
+func TestTrapAddrsUnknown(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	addrs := c.TrapAddrs("unknown")
+	if addrs != nil {
+		t.Errorf("TrapAddrs(unknown) = %v, want nil", addrs)
+	}
+}
+
+func TestADBTrapValid(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "adb"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.TrapAddr("adb") != ":5555" {
+		t.Errorf("TrapAddr(adb) = %q, want :5555", c.TrapAddr("adb"))
+	}
+}
+
+func TestMinecraftTrapValid(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "minecraft"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.TrapAddr("minecraft") != ":25565" {
+		t.Errorf("TrapAddr(minecraft) = %q, want :25565", c.TrapAddr("minecraft"))
+	}
+}

@@ -15,22 +15,19 @@ import (
 )
 
 type sipHandler struct {
-	logger   *slog.Logger
-	destPort int
-	alerter  alert.Alerter
+	logger  *slog.Logger
+	alerter alert.Alerter
 }
 
 func NewSIP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
-	_, destPort := ParseAddr(cfg.TrapAddr("sip"))
 	handler := &sipHandler{
-		logger:   logger,
-		destPort: destPort,
-		alerter:  alerter,
+		logger:  logger,
+		alerter: alerter,
 	}
-	return NewUDP("sip", cfg.TrapAddr("sip"), logger, m, limiter, alerter, handler)
+	return NewUDP("sip", cfg.TrapAddrs("sip"), logger, m, limiter, alerter, handler)
 }
 
-func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte, respond func([]byte)) {
+func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
 	msg := string(data)
 	var lines []string
 	if strings.Contains(msg, "\r\n") {
@@ -70,7 +67,7 @@ func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, data []byte
 	authorization := headers["authorization"]
 
 	host, port := ParseAddr(src.String())
-	sess := NewSession("sip", host, port, h.destPort, h.logger)
+	sess := NewSession("sip", host, port, destPort, h.logger)
 	sess.LogPayload("sip_request", slog.String("method", method), slog.String("from", from), slog.String("to", to))
 
 	if authorization != "" {

@@ -22,7 +22,7 @@ type MySQLTrap struct {
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 	connID   atomic.Uint32
 }
@@ -38,12 +38,12 @@ func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 }
 
 func (t *MySQLTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("mysql"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("mysql"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("mysql listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("mysql"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("mysql"))
 
 	go func() {
 		<-ctx.Done()
@@ -78,7 +78,7 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("mysql", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {

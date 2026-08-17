@@ -20,7 +20,7 @@ type MQTTTrap struct {
 	metrics  *metrics.Metrics
 	limiter  *Limiter
 	alerter  alert.Alerter
-	listener net.Listener
+	listener *MultiListener
 	wg       sync.WaitGroup
 }
 
@@ -35,12 +35,12 @@ func NewMQTT(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *MQTTTrap) Start(ctx context.Context) error {
-	ln, err := ListenTCP(ctx, t.cfg.TrapAddr("mqtt"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("mqtt"), t.cfg.ProxyProtocol)
 	if err != nil {
 		return fmt.Errorf("mqtt listen: %w", err)
 	}
 	t.listener = ln
-	t.logger.Info("listening", "addr", t.cfg.TrapAddr("mqtt"))
+	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("mqtt"))
 
 	go func() {
 		<-ctx.Done()
@@ -75,7 +75,7 @@ func (t *MQTTTrap) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(t.listener.Addr().String())
+	_, destPort := ParseAddr(conn.LocalAddr().String())
 	sess := NewSession("mqtt", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
