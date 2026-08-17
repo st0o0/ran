@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.4](https://github.com/st0o0/ran/compare/v0.3.3...v0.3.4) (2026-08-17)
+
+
+### Features
+
+* add multi-port listener support and ADB/Minecraft traps ([0bc1c25](https://github.com/st0o0/ran/commit/0bc1c255180c1402478b8b9849913292a21b23fe))
+
+
+### Bug Fixes
+
+* resolve data races in ADB and Minecraft test teardown ([320decf](https://github.com/st0o0/ran/commit/320decf629e98a155ed4399f4723a0118848164a))
+* resolve golangci-lint errcheck and staticcheck findings ([62e4745](https://github.com/st0o0/ran/commit/62e47458aaa2cccc63c2c08b4a389cabf84aee40))
+
 ## [0.3.3](https://github.com/st0o0/ran/compare/v0.3.2...v0.3.3) (2026-08-16)
 
 
