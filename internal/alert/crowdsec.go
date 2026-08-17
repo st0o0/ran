@@ -268,7 +268,7 @@ func (a *CrowdSecAlerter) push(msg alertMsg) {
 		return
 	}
 
-	status := a.doPost(body)
+	status, respBody := a.doPost(body)
 	if status == 401 {
 		a.mu.Lock()
 		if err := a.loginLocked(); err != nil {
@@ -278,24 +278,24 @@ func (a *CrowdSecAlerter) push(msg alertMsg) {
 			return
 		}
 		a.mu.Unlock()
-		status = a.doPost(body)
+		status, respBody = a.doPost(body)
 	}
 
 	if status >= 200 && status < 300 {
 		a.logger.Debug("alert pushed", "ip", msg.IP, "protocol", msg.Protocol, "scenario", scenario)
 		a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "success").Inc()
 	} else {
-		a.logger.Warn("push alert rejected", "status", status, "ip", msg.IP, "protocol", msg.Protocol)
+		a.logger.Warn("push alert rejected", "status", status, "ip", msg.IP, "protocol", msg.Protocol, "response", respBody)
 		a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
 	}
 }
 
-// doPost sends the alert body and returns the HTTP status code, or -1 on error.
-func (a *CrowdSecAlerter) doPost(body []byte) int {
+// doPost sends the alert body and returns the HTTP status code and response body, or -1 on error.
+func (a *CrowdSecAlerter) doPost(body []byte) (int, string) {
 	req, err := http.NewRequest("POST", a.alertsURL, bytes.NewReader(body))
 	if err != nil {
 		a.logger.Error("create request", "error", err)
-		return -1
+		return -1, ""
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -306,10 +306,17 @@ func (a *CrowdSecAlerter) doPost(body []byte) int {
 	resp, err := a.client.Do(req)
 	if err != nil {
 		a.logger.Warn("push alert failed", "error", err)
-		return -1
+		return -1, ""
 	}
-	resp.Body.Close()
-	return resp.StatusCode
+	defer resp.Body.Close()
+
+	var respBody string
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if b, err := io.ReadAll(io.LimitReader(resp.Body, 1024)); err == nil {
+			respBody = string(b)
+		}
+	}
+	return resp.StatusCode, respBody
 }
 
 func formatDuration(d time.Duration) string {
