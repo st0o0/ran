@@ -228,6 +228,63 @@ follow the pattern `custom/ran-<protocol>-trap`. Each alert includes a
 self-contained ban decision — CrowdSec forwards it directly to bouncers
 without needing a local scenario.
 
+#### Ban Escalation
+
+By default every attacker gets the same ban duration (`RAN_CROWDSEC_BAN_DURATION`,
+default `4h`). CrowdSec Profiles can override this with dynamic escalation
+based on how many times an IP has been banned before — no changes to rán
+required.
+
+> **Prerequisite:** `duration_expr` requires CrowdSec ≥ 1.4.
+
+Add the following to your CrowdSec `profiles.yaml`. **Order matters** —
+CrowdSec evaluates profiles top-to-bottom and stops at the first
+`on_success: break`. Place the permanent-ban profile before the escalation
+profile.
+
+```yaml
+# Permanent ban for persistent offenders (≥ 5 prior bans)
+name: ran_permanent
+filter: "Alert.Scenario startsWith 'custom/ran-' && GetDecisionsCount(Alert.GetValue()) >= 5"
+decisions:
+  - type: ban
+    scope: Ip
+    duration: 8760h
+on_success: break
+---
+# Exponential escalation: 4h → 12h → 36h → 108h → 324h
+name: ran_escalation
+filter: "Alert.Scenario startsWith 'custom/ran-'"
+decisions:
+  - type: ban
+    scope: Ip
+duration_expr: "Sprintf('%dh', 4 * (3 ^ GetDecisionsCount(Alert.GetValue())))"
+on_success: break
+```
+
+| Hit | Prior decisions | Duration |
+|-----|-----------------|----------|
+| 1st | 0 | 4h |
+| 2nd | 1 | 12h |
+| 3rd | 2 | 36h (1.5 days) |
+| 4th | 3 | 108h (4.5 days) |
+| 5th | 4 | 324h (13.5 days) |
+| 6th+ | ≥ 5 | 8760h (permanent) |
+
+Without these profiles, rán's embedded default decision applies unchanged —
+existing deployments are not affected.
+
+Verify escalation is working:
+
+```bash
+cscli decisions list -o json
+```
+
+> **Note:** `GetDecisionsCount()` queries CrowdSec's decision database.
+> Expired decisions are purged based on `db_config.flush.max_age` — if the
+> retention window is shorter than your escalation window, counters reset
+> early. Check your retention settings with `cscli config show`.
+
 ## Log format
 
 Structured JSON to stdout, one line per event:
