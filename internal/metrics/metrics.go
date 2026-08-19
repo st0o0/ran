@@ -7,7 +7,9 @@ type Metrics struct {
 	CredentialsCaptured *prometheus.CounterVec
 	ActiveSessions      *prometheus.GaugeVec
 	SessionDuration     *prometheus.HistogramVec
-	CrowdSecAlerts      *prometheus.CounterVec
+	CrowdSecAlerts  *prometheus.CounterVec
+	CrowdSecDeduped *prometheus.CounterVec
+	CrowdSecCached  *prometheus.CounterVec
 }
 
 func New(reg prometheus.Registerer) *Metrics {
@@ -33,7 +35,15 @@ func New(reg prometheus.Registerer) *Metrics {
 			Name: "ran_crowdsec_alerts_total",
 			Help: "Total number of CrowdSec alert pushes.",
 		}, []string{"protocol", "status"}),
+		CrowdSecDeduped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "ran_crowdsec_alerts_deduplicated_total",
+			Help: "Total number of CrowdSec alerts suppressed by deduplication.",
+		}, []string{"protocol"}),
+		CrowdSecCached: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "ran_crowdsec_alerts_cached_total",
+			Help: "Total number of CrowdSec alerts suppressed by decision cache.",
+		}, []string{"protocol"}),
 	}
-	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecAlerts)
+	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecAlerts, m.CrowdSecDeduped, m.CrowdSecCached)
 	return m
 }

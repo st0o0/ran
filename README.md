@@ -205,6 +205,8 @@ Exposed metrics:
 - `ran_active_sessions{protocol}` — active session gauge
 - `ran_session_duration_seconds{protocol}` — session duration histogram
 - `ran_crowdsec_alerts_total{protocol,status}` — CrowdSec alert push counter
+- `ran_crowdsec_alerts_deduplicated_total{protocol}` — alerts suppressed by dedup
+- `ran_crowdsec_alerts_cached_total{protocol}` — alerts suppressed by decision cache
 
 ### CrowdSec
 
@@ -215,6 +217,10 @@ Exposed metrics:
 | `RAN_CROWDSEC_MACHINE_ID` | | Machine ID for LAPI login (required when enabled) |
 | `RAN_CROWDSEC_PASSWORD` | | Machine password for LAPI login (required when enabled) |
 | `RAN_CROWDSEC_BAN_DURATION` | `4h` | Ban duration (`0` = permanent) |
+| `RAN_CROWDSEC_DEDUP_WINDOW` | `5m` | Cooldown per IP+scenario before re-alerting (`0s` = disabled) |
+| `RAN_CROWDSEC_BATCH_INTERVAL` | `10s` | Batch flush interval (`0s` = immediate, no batching) |
+| `RAN_CROWDSEC_BATCH_SIZE` | `50` | Max alerts per batch POST |
+| `RAN_CROWDSEC_DECISION_CACHE` | `on` | Cache own ban decisions to suppress redundant alerts |
 
 Register the machine before starting rán:
 
@@ -227,6 +233,38 @@ automatically refreshes the JWT token in the background. Scenario names
 follow the pattern `custom/ran-<protocol>-trap`. Each alert includes a
 self-contained ban decision — CrowdSec forwards it directly to bouncers
 without needing a local scenario.
+
+#### Alert Pipeline
+
+Alerts pass through three filters before reaching CrowdSec LAPI:
+
+```
+Alert(ip, protocol) → Decision Cache → Dedup Filter → Batch Queue → POST /v1/alerts
+```
+
+1. **Decision Cache** — if the IP was already banned by a prior alert, skip.
+2. **Dedup Filter** — if the same IP+scenario was reported within the dedup window, skip.
+3. **Batch Queue** — collect alerts and flush as a single POST on timer or batch-size threshold.
+
+After a successful POST, each IP in the batch is added to the decision cache
+with the configured ban duration.
+
+Example docker-compose with recommended alert optimization settings:
+
+```yaml
+services:
+  ran:
+    image: ghcr.io/st0o0/ran:latest
+    environment:
+      RAN_TRAPS: ssh,http,ftp,smtp,vnc,rdp
+      RAN_CROWDSEC: "on"
+      RAN_CROWDSEC_URL: http://crowdsec:8080
+      RAN_CROWDSEC_MACHINE_ID: ran-honeypot
+      RAN_CROWDSEC_PASSWORD: ${CROWDSEC_PASSWORD}
+      RAN_CROWDSEC_DEDUP_WINDOW: 5m
+      RAN_CROWDSEC_BATCH_INTERVAL: 10s
+      RAN_CROWDSEC_DECISION_CACHE: "on"
+```
 
 #### Ban Escalation
 

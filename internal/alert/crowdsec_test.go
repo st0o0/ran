@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +20,19 @@ import (
 func testMetrics(t *testing.T) *metrics.Metrics {
 	t.Helper()
 	return metrics.New(prometheus.NewRegistry())
+}
+
+func testConfig(url string) CrowdSecConfig {
+	return CrowdSecConfig{
+		URL:           url,
+		MachineID:     "ran",
+		Password:      "secret",
+		BanDuration:   4 * time.Hour,
+		DedupWindow:   0,
+		BatchInterval: 0,
+		BatchSize:     1,
+		DecisionCache: false,
+	}
 }
 
 func loginHandler(t *testing.T, machineID, password string) http.HandlerFunc {
@@ -56,7 +70,7 @@ func TestCrowdSecLogin(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -70,7 +84,9 @@ func TestCrowdSecLoginFailure(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	_, err := NewCrowdSec(srv.URL, "ran", "wrong-password", 4*time.Hour, slog.Default(), m)
+	cfg := testConfig(srv.URL)
+	cfg.Password = "wrong-password"
+	_, err := NewCrowdSec(cfg, slog.Default(), m)
 	if err == nil {
 		t.Fatal("expected error for invalid credentials")
 	}
@@ -93,7 +109,7 @@ func TestCrowdSecAlertFormat(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -149,7 +165,7 @@ func TestCrowdSecAlertNilMeta(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -181,7 +197,9 @@ func TestCrowdSecPermanentBan(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 0, slog.Default(), m)
+	cfg := testConfig(srv.URL)
+	cfg.BanDuration = 0
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -231,7 +249,7 @@ func TestCrowdSec401Retry(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -264,7 +282,7 @@ func TestCrowdSecTokenRefresh(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -286,7 +304,7 @@ func TestCrowdSecChannelOverflow(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -308,7 +326,7 @@ func TestCrowdSecFailureMetrics(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -325,7 +343,7 @@ func TestCrowdSecGracefulDrain(t *testing.T) {
 	defer srv.Close()
 
 	m := testMetrics(t)
-	a, err := NewCrowdSec(srv.URL, "ran", "secret", 4*time.Hour, slog.Default(), m)
+	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
@@ -343,4 +361,284 @@ func TestNoopAlerter(t *testing.T) {
 	var a Alerter = NoopAlerter{}
 	a.Alert(context.Background(), "1.2.3.4", "ssh", map[string]string{"username": "root", "password": "admin"})
 	a.Close()
+}
+
+// --- Dedup integration tests ---
+
+func TestCrowdSecDedup(t *testing.T) {
+	var count atomic.Int32
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.DedupWindow = 5 * time.Minute
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	for range 10 {
+		a.Alert(context.Background(), "1.2.3.4", "ssh", nil)
+	}
+	a.Close()
+
+	if got := count.Load(); got != 1 {
+		t.Errorf("POST count = %d, want 1 (9 deduplicated)", got)
+	}
+}
+
+func TestCrowdSecDedupDifferentIPs(t *testing.T) {
+	var count atomic.Int32
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.DedupWindow = 5 * time.Minute
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "2.2.2.2", "ssh", nil)
+	a.Alert(context.Background(), "3.3.3.3", "ssh", nil)
+	a.Close()
+
+	if got := count.Load(); got != 3 {
+		t.Errorf("POST count = %d, want 3 (different IPs)", got)
+	}
+}
+
+func TestCrowdSecDedupDifferentProtocols(t *testing.T) {
+	var count atomic.Int32
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.DedupWindow = 5 * time.Minute
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "1.1.1.1", "http", nil)
+	a.Close()
+
+	if got := count.Load(); got != 2 {
+		t.Errorf("POST count = %d, want 2 (different protocols)", got)
+	}
+}
+
+// --- Batch integration tests ---
+
+func TestCrowdSecBatch(t *testing.T) {
+	var mu sync.Mutex
+	var posts [][]csAlert
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var alerts []csAlert
+		_ = json.Unmarshal(body, &alerts)
+		mu.Lock()
+		posts = append(posts, alerts)
+		mu.Unlock()
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.BatchInterval = 50 * time.Millisecond
+	cfg.BatchSize = 50
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "2.2.2.2", "http", nil)
+	a.Alert(context.Background(), "3.3.3.3", "ftp", nil)
+
+	time.Sleep(100 * time.Millisecond)
+	a.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(posts) != 1 {
+		t.Fatalf("got %d POSTs, want 1 batch", len(posts))
+	}
+	if len(posts[0]) != 3 {
+		t.Errorf("batch contained %d alerts, want 3", len(posts[0]))
+	}
+}
+
+func TestCrowdSecBatchSizeFlush(t *testing.T) {
+	var mu sync.Mutex
+	var postCount int
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		postCount++
+		mu.Unlock()
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.BatchInterval = 10 * time.Second
+	cfg.BatchSize = 2
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "2.2.2.2", "ssh", nil)
+	a.Alert(context.Background(), "3.3.3.3", "ssh", nil)
+
+	time.Sleep(50 * time.Millisecond)
+	a.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount < 2 {
+		t.Errorf("POST count = %d, want >= 2 (batch size 2 with 3 alerts)", postCount)
+	}
+}
+
+func TestCrowdSecBatchCloseFlush(t *testing.T) {
+	var mu sync.Mutex
+	var totalAlerts int
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var alerts []csAlert
+		_ = json.Unmarshal(body, &alerts)
+		mu.Lock()
+		totalAlerts += len(alerts)
+		mu.Unlock()
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.BatchInterval = 10 * time.Second
+	cfg.BatchSize = 100
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "2.2.2.2", "http", nil)
+	a.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if totalAlerts != 2 {
+		t.Errorf("total alerts flushed = %d, want 2", totalAlerts)
+	}
+}
+
+func TestCrowdSecBatchImmediateMode(t *testing.T) {
+	var count atomic.Int32
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var alerts []csAlert
+		_ = json.Unmarshal(body, &alerts)
+		if len(alerts) != 1 {
+			t.Errorf("immediate mode: batch contained %d alerts, want 1", len(alerts))
+		}
+		count.Add(1)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.BatchInterval = 0
+	cfg.BatchSize = 1
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.1.1.1", "ssh", nil)
+	a.Alert(context.Background(), "2.2.2.2", "http", nil)
+	a.Close()
+
+	if got := count.Load(); got != 2 {
+		t.Errorf("POST count = %d, want 2 (immediate mode)", got)
+	}
+}
+
+// --- Decision cache integration tests ---
+
+func TestCrowdSecDecisionCache(t *testing.T) {
+	var count atomic.Int32
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.DecisionCache = true
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	a.Alert(context.Background(), "1.2.3.4", "ssh", nil)
+	a.Close()
+
+	if got := count.Load(); got != 1 {
+		t.Fatalf("POST count = %d, want 1", got)
+	}
+
+	// Verify cache was populated
+	if !a.decisionCache.IsBanned("1.2.3.4") {
+		t.Error("expected 1.2.3.4 to be cached as banned")
+	}
+}
+
+func TestCrowdSecDecisionCacheSuppresses(t *testing.T) {
+	var count atomic.Int32
+	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(200)
+	})
+	defer srv.Close()
+
+	m := testMetrics(t)
+	cfg := testConfig(srv.URL)
+	cfg.DecisionCache = true
+	a, err := NewCrowdSec(cfg, slog.Default(), m)
+	if err != nil {
+		t.Fatalf("NewCrowdSec failed: %v", err)
+	}
+
+	// Pre-populate cache
+	a.decisionCache.MarkBanned("1.2.3.4", 4*time.Hour)
+
+	a.Alert(context.Background(), "1.2.3.4", "ssh", nil)
+	a.Alert(context.Background(), "1.2.3.4", "http", nil)
+	a.Close()
+
+	if got := count.Load(); got != 0 {
+		t.Errorf("POST count = %d, want 0 (cached ban)", got)
+	}
 }

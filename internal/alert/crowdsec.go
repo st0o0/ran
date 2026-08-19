@@ -21,19 +21,36 @@ type alertMsg struct {
 	Meta     map[string]string
 }
 
+type CrowdSecConfig struct {
+	URL           string
+	MachineID     string
+	Password      string
+	BanDuration   time.Duration
+	DedupWindow   time.Duration
+	BatchInterval time.Duration
+	BatchSize     int
+	DecisionCache bool
+}
+
 type CrowdSecAlerter struct {
-	alertsURL   string
-	loginURL    string
-	machineID   string
-	password    string
-	banDuration string
-	logger      *slog.Logger
-	metrics     *metrics.Metrics
-	client      *http.Client
+	alertsURL      string
+	loginURL       string
+	machineID      string
+	password       string
+	banDuration    string
+	banDurationRaw time.Duration
+	logger         *slog.Logger
+	metrics        *metrics.Metrics
+	client         *http.Client
 
 	mu          sync.RWMutex
 	token       string
 	tokenExpiry time.Time
+
+	dedup         *dedupFilter
+	decisionCache DecisionCache
+	batchInterval time.Duration
+	batchSize     int
 
 	ch     chan alertMsg
 	stopCh chan struct{}
@@ -50,32 +67,62 @@ type loginResponse struct {
 	Expire string `json:"expire"`
 }
 
-func NewCrowdSec(url, machineID, password string, banDuration time.Duration, logger *slog.Logger, m *metrics.Metrics) (*CrowdSecAlerter, error) {
-	dur := formatDuration(banDuration)
+func NewCrowdSec(cfg CrowdSecConfig, logger *slog.Logger, m *metrics.Metrics) (*CrowdSecAlerter, error) {
+	var dc DecisionCache
+	if cfg.DecisionCache {
+		dc = newLocalDecisionCache()
+	} else {
+		dc = noopDecisionCache{}
+	}
+
+	batchSize := cfg.BatchSize
+	if cfg.BatchInterval == 0 {
+		batchSize = 1
+	}
+
 	a := &CrowdSecAlerter{
-		alertsURL:   url + "/v1/alerts",
-		loginURL:    url + "/v1/watchers/login",
-		machineID:   machineID,
-		password:    password,
-		banDuration: dur,
-		logger:      logger.With("component", "crowdsec"),
-		metrics:     m,
-		client:      &http.Client{Timeout: 10 * time.Second},
-		ch:          make(chan alertMsg, 256),
-		stopCh:      make(chan struct{}),
+		alertsURL:      cfg.URL + "/v1/alerts",
+		loginURL:       cfg.URL + "/v1/watchers/login",
+		machineID:      cfg.MachineID,
+		password:       cfg.Password,
+		banDuration:    formatDuration(cfg.BanDuration),
+		banDurationRaw: cfg.BanDuration,
+		logger:         logger.With("component", "crowdsec"),
+		metrics:        m,
+		client:         &http.Client{Timeout: 10 * time.Second},
+		dedup:          newDedupFilter(cfg.DedupWindow),
+		decisionCache:  dc,
+		batchInterval:  cfg.BatchInterval,
+		batchSize:      batchSize,
+		ch:             make(chan alertMsg, 256),
+		stopCh:         make(chan struct{}),
 	}
 
 	if err := a.login(); err != nil {
 		return nil, fmt.Errorf("crowdsec login: %w", err)
 	}
 
-	a.wg.Add(2)
-	go a.worker()
+	a.wg.Add(3)
+	go a.batchWorker()
 	go a.refreshLoop()
+	go a.cleanupLoop()
 	return a, nil
 }
 
 func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string, meta map[string]string) {
+	if a.decisionCache.IsBanned(ip) {
+		a.logger.Debug("alert skipped, ip banned", "ip", ip, "protocol", protocol)
+		a.metrics.CrowdSecCached.WithLabelValues(protocol).Inc()
+		return
+	}
+
+	scenario := "custom/ran-" + protocol + "-trap"
+	if !a.dedup.Allow(ip + "|" + scenario) {
+		a.logger.Debug("alert deduplicated", "ip", ip, "protocol", protocol)
+		a.metrics.CrowdSecDeduped.WithLabelValues(protocol).Inc()
+		return
+	}
+
 	select {
 	case a.ch <- alertMsg{IP: ip, Protocol: protocol, Meta: meta}:
 	default:
@@ -205,10 +252,59 @@ func (a *CrowdSecAlerter) refreshLoop() {
 	}
 }
 
-func (a *CrowdSecAlerter) worker() {
+func (a *CrowdSecAlerter) batchWorker() {
 	defer a.wg.Done()
-	for msg := range a.ch {
-		a.push(msg)
+
+	if a.batchInterval == 0 {
+		for msg := range a.ch {
+			a.flush([]alertMsg{msg})
+		}
+		return
+	}
+
+	ticker := time.NewTicker(a.batchInterval)
+	defer ticker.Stop()
+	var batch []alertMsg
+
+	for {
+		select {
+		case msg, ok := <-a.ch:
+			if !ok {
+				a.flush(batch)
+				return
+			}
+			batch = append(batch, msg)
+			if len(batch) >= a.batchSize {
+				a.flush(batch)
+				batch = nil
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				a.flush(batch)
+				batch = nil
+			}
+		}
+	}
+}
+
+func (a *CrowdSecAlerter) cleanupLoop() {
+	defer a.wg.Done()
+	interval := a.dedup.window
+	if interval == 0 {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.dedup.cleanup()
+			if ldc, ok := a.decisionCache.(*localDecisionCache); ok {
+				ldc.cleanup()
+			}
+		case <-a.stopCh:
+			return
+		}
 	}
 }
 
@@ -228,43 +324,51 @@ func buildEventMeta(meta map[string]string) []csMeta {
 	return out
 }
 
-func (a *CrowdSecAlerter) push(msg alertMsg) {
-	scenario := "custom/ran-" + msg.Protocol + "-trap"
-	now := time.Now().UTC().Format(time.RFC3339)
+func (a *CrowdSecAlerter) flush(batch []alertMsg) {
+	if len(batch) == 0 {
+		return
+	}
 
-	alerts := []csAlert{{
-		Scenario:        scenario,
-		ScenarioHash:    "",
-		ScenarioVersion: "",
-		Message:         fmt.Sprintf("Honeypot %s trap triggered by %s", msg.Protocol, msg.IP),
-		EventsCount:     1,
-		StartAt:         now,
-		StopAt:          now,
-		Capacity:        0,
-		Leakspeed:       "0",
-		Simulated:       false,
-		Events: []csEvent{{
-			Timestamp: now,
-			Meta:      buildEventMeta(msg.Meta),
-		}},
-		Source: csSource{
-			Scope: "Ip",
-			Value: msg.IP,
-		},
-		Decisions: []csDecision{{
-			Duration: a.banDuration,
-			Scenario: scenario,
-			Scope:    "Ip",
-			Value:    msg.IP,
-			Type:     "ban",
-			Origin:   "ran",
-		}},
-	}}
+	now := time.Now().UTC().Format(time.RFC3339)
+	alerts := make([]csAlert, len(batch))
+	for i, msg := range batch {
+		scenario := "custom/ran-" + msg.Protocol + "-trap"
+		alerts[i] = csAlert{
+			Scenario:        scenario,
+			ScenarioHash:    "",
+			ScenarioVersion: "",
+			Message:         fmt.Sprintf("Honeypot %s trap triggered by %s", msg.Protocol, msg.IP),
+			EventsCount:     1,
+			StartAt:         now,
+			StopAt:          now,
+			Capacity:        0,
+			Leakspeed:       "0",
+			Simulated:       false,
+			Events: []csEvent{{
+				Timestamp: now,
+				Meta:      buildEventMeta(msg.Meta),
+			}},
+			Source: csSource{
+				Scope: "Ip",
+				Value: msg.IP,
+			},
+			Decisions: []csDecision{{
+				Duration: a.banDuration,
+				Scenario: scenario,
+				Scope:    "Ip",
+				Value:    msg.IP,
+				Type:     "ban",
+				Origin:   "ran",
+			}},
+		}
+	}
 
 	body, err := json.Marshal(alerts)
 	if err != nil {
 		a.logger.Error("marshal alert", "error", err)
-		a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+		for _, msg := range batch {
+			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+		}
 		return
 	}
 
@@ -273,8 +377,10 @@ func (a *CrowdSecAlerter) push(msg alertMsg) {
 		a.mu.Lock()
 		if err := a.loginLocked(); err != nil {
 			a.mu.Unlock()
-			a.logger.Warn("re-login after 401 failed", "error", err, "ip", msg.IP, "protocol", msg.Protocol)
-			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+			a.logger.Warn("re-login after 401 failed", "error", err)
+			for _, msg := range batch {
+				a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+			}
 			return
 		}
 		a.mu.Unlock()
@@ -282,11 +388,16 @@ func (a *CrowdSecAlerter) push(msg alertMsg) {
 	}
 
 	if status >= 200 && status < 300 {
-		a.logger.Debug("alert pushed", "ip", msg.IP, "protocol", msg.Protocol, "scenario", scenario)
-		a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "success").Inc()
+		for _, msg := range batch {
+			a.logger.Debug("alert pushed", "ip", msg.IP, "protocol", msg.Protocol)
+			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "success").Inc()
+			a.decisionCache.MarkBanned(msg.IP, a.banDurationRaw)
+		}
 	} else {
-		a.logger.Warn("push alert rejected", "status", status, "ip", msg.IP, "protocol", msg.Protocol)
-		a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+		a.logger.Warn("push alert batch rejected", "status", status, "count", len(batch))
+		for _, msg := range batch {
+			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+		}
 	}
 }
 

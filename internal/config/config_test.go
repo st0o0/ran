@@ -216,6 +216,86 @@ func TestCrowdSecCustomDuration(t *testing.T) {
 	}
 }
 
+func TestCrowdSecOptimizationDefaults(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_CROWDSEC":            "on",
+		"RAN_CROWDSEC_URL":        "http://crowdsec:8080",
+		"RAN_CROWDSEC_MACHINE_ID": "ran",
+		"RAN_CROWDSEC_PASSWORD":   "secret",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.CrowdSecDedupWindow != 5*time.Minute {
+		t.Errorf("CrowdSecDedupWindow = %v, want 5m", c.CrowdSecDedupWindow)
+	}
+	if c.CrowdSecBatchInterval != 10*time.Second {
+		t.Errorf("CrowdSecBatchInterval = %v, want 10s", c.CrowdSecBatchInterval)
+	}
+	if c.CrowdSecBatchSize != 50 {
+		t.Errorf("CrowdSecBatchSize = %d, want 50", c.CrowdSecBatchSize)
+	}
+	if !c.CrowdSecDecisionCache {
+		t.Error("CrowdSecDecisionCache should default to true")
+	}
+}
+
+func TestCrowdSecOptimizationCustom(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                   "ssh",
+		"RAN_CROWDSEC":                "on",
+		"RAN_CROWDSEC_URL":            "http://crowdsec:8080",
+		"RAN_CROWDSEC_MACHINE_ID":     "ran",
+		"RAN_CROWDSEC_PASSWORD":       "secret",
+		"RAN_CROWDSEC_DEDUP_WINDOW":   "10m",
+		"RAN_CROWDSEC_BATCH_INTERVAL": "30s",
+		"RAN_CROWDSEC_BATCH_SIZE":     "100",
+		"RAN_CROWDSEC_DECISION_CACHE": "off",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.CrowdSecDedupWindow != 10*time.Minute {
+		t.Errorf("CrowdSecDedupWindow = %v, want 10m", c.CrowdSecDedupWindow)
+	}
+	if c.CrowdSecBatchInterval != 30*time.Second {
+		t.Errorf("CrowdSecBatchInterval = %v, want 30s", c.CrowdSecBatchInterval)
+	}
+	if c.CrowdSecBatchSize != 100 {
+		t.Errorf("CrowdSecBatchSize = %d, want 100", c.CrowdSecBatchSize)
+	}
+	if c.CrowdSecDecisionCache {
+		t.Error("CrowdSecDecisionCache should be false")
+	}
+}
+
+func TestCrowdSecDedupWindowDisabled(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                 "ssh",
+		"RAN_CROWDSEC_DEDUP_WINDOW": "0s",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.CrowdSecDedupWindow != 0 {
+		t.Errorf("CrowdSecDedupWindow = %v, want 0", c.CrowdSecDedupWindow)
+	}
+}
+
+func TestCrowdSecBatchIntervalDisabled(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                   "ssh",
+		"RAN_CROWDSEC_BATCH_INTERVAL": "0s",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.CrowdSecBatchInterval != 0 {
+		t.Errorf("CrowdSecBatchInterval = %v, want 0", c.CrowdSecBatchInterval)
+	}
+}
+
 func TestCustomLimits(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
 		"RAN_TRAPS":        "ssh",

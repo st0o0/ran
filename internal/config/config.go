@@ -65,11 +65,15 @@ type Config struct {
 
 	ProxyProtocol bool
 
-	CrowdSec            bool
-	CrowdSecURL         string
-	CrowdSecMachineID   string
-	CrowdSecPassword    string
-	CrowdSecBanDuration time.Duration
+	CrowdSec              bool
+	CrowdSecURL           string
+	CrowdSecMachineID     string
+	CrowdSecPassword      string
+	CrowdSecBanDuration   time.Duration
+	CrowdSecDedupWindow   time.Duration
+	CrowdSecBatchInterval time.Duration
+	CrowdSecBatchSize     int
+	CrowdSecDecisionCache bool
 }
 
 func (c *Config) EnabledTraps() []string {
@@ -118,7 +122,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		CrowdSecURL:         e.str("RAN_CROWDSEC_URL", ""),
 		CrowdSecMachineID:   e.str("RAN_CROWDSEC_MACHINE_ID", ""),
 		CrowdSecPassword:    e.str("RAN_CROWDSEC_PASSWORD", ""),
-		CrowdSecBanDuration: e.banDuration("RAN_CROWDSEC_BAN_DURATION", 4*time.Hour),
+		CrowdSecBanDuration:   e.banDuration("RAN_CROWDSEC_BAN_DURATION", 4*time.Hour),
+		CrowdSecDedupWindow:   e.duration("RAN_CROWDSEC_DEDUP_WINDOW", 5*time.Minute),
+		CrowdSecBatchInterval: e.duration("RAN_CROWDSEC_BATCH_INTERVAL", 10*time.Second),
+		CrowdSecBatchSize:     e.intMin("RAN_CROWDSEC_BATCH_SIZE", 50, 1),
+		CrowdSecDecisionCache: e.boolean("RAN_CROWDSEC_DECISION_CACHE", true),
 	}
 	if e.err != nil {
 		return nil, e.err
