@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/st0o0/ran/compare/v0.3.4...v0.3.5) (2026-08-19)
+
+
+### Features
+
+* add CrowdSec alert deduplication, batching, and decision cache ([78eaac6](https://github.com/st0o0/ran/commit/78eaac6c1f966737bccd4871569d12b54852eebe))
+
 ## [0.3.4](https://github.com/st0o0/ran/compare/v0.3.3...v0.3.4) (2026-08-17)
 
 
