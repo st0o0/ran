@@ -2,8 +2,8 @@ package trap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"net"
 	"strconv"
 
 	"github.com/st0o0/ran/internal/alert"
@@ -24,8 +24,9 @@ func NewNTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 	return NewUDP("ntp", cfg.TrapAddrs("ntp"), logger, m, limiter, alerter, handler)
 }
 
-func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
+func (h *ntpHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
 	if len(data) < 48 {
+		sess.LogError("parse_failed", fmt.Errorf("packet too short: %d bytes", len(data)))
 		return
 	}
 
@@ -33,17 +34,17 @@ func (h *ntpHandler) HandlePacket(ctx context.Context, src net.Addr, destPort in
 	mode := int(data[0] & 0x07)
 
 	if mode == 7 {
+		sess.LogError("parse_failed", fmt.Errorf("monlist mode 7 rejected"))
 		return
 	}
 
 	if mode != 3 {
+		sess.LogError("parse_failed", fmt.Errorf("unexpected NTP mode: %d", mode))
 		return
 	}
 
-	host, port := ParseAddr(src.String())
-	sess := NewSession("ntp", host, port, destPort, h.logger)
 	sess.LogPayload("ntp_request", slog.Int("version", version), slog.Int("mode", mode))
-	h.alerter.Alert(ctx, host, "ntp", map[string]string{"version": strconv.Itoa(version), "mode": strconv.Itoa(mode)})
+	h.alerter.Alert(ctx, sess.SourceIP, "ntp", map[string]string{"version": strconv.Itoa(version), "mode": strconv.Itoa(mode)})
 
 	resp := make([]byte, 48)
 	resp[0] = byte((3 << 6) | (version << 3) | 4)

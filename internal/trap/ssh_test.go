@@ -38,7 +38,7 @@ func testConfig(t *testing.T) *config.Config {
 func TestSSHTrapCaptures(t *testing.T) {
 	cfg := testConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 	logger := slog.Default()
 
@@ -87,7 +87,7 @@ func TestSSHHostKeyGeneration(t *testing.T) {
 func TestSSHBanner(t *testing.T) {
 	cfg := testConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 	logger := slog.Default()
 

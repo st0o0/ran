@@ -50,7 +50,7 @@ func TestIntegrationAllTraps(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 	noop := alert.NoopAlerter{}
 
@@ -174,7 +174,7 @@ func TestIntegrationMultiPort(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	tr := trap.NewFTP(cfg, logger, m, limiter, alert.NoopAlerter{})
@@ -231,7 +231,7 @@ func TestIntegrationFTP(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	tr := trap.NewFTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -271,7 +271,7 @@ func TestIntegrationTelnet(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	tr := trap.NewTelnet(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -312,7 +312,7 @@ func TestIntegrationRedis(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	tr := trap.NewRedis(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

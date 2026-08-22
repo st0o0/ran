@@ -1,23 +1,27 @@
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"runtime"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+)
 
 type Metrics struct {
 	Connections         *prometheus.CounterVec
 	CredentialsCaptured *prometheus.CounterVec
 	ActiveSessions      *prometheus.GaugeVec
 	SessionDuration     *prometheus.HistogramVec
-	CrowdSecAlerts  *prometheus.CounterVec
-	CrowdSecDeduped *prometheus.CounterVec
-	CrowdSecCached  *prometheus.CounterVec
+	CrowdSecPipeline    *prometheus.CounterVec
+	CrowdSecDropped     *prometheus.CounterVec
 }
 
-func New(reg prometheus.Registerer) *Metrics {
+func New(reg prometheus.Registerer, version string) *Metrics {
 	m := &Metrics{
 		Connections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ran_connections_total",
 			Help: "Total number of trap connections.",
-		}, []string{"protocol"}),
+		}, []string{"protocol", "outcome"}),
 		CredentialsCaptured: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ran_credentials_captured_total",
 			Help: "Total number of captured credential attempts.",
@@ -31,19 +35,24 @@ func New(reg prometheus.Registerer) *Metrics {
 			Help:    "Duration of trap sessions in seconds.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"protocol"}),
-		CrowdSecAlerts: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "ran_crowdsec_alerts_total",
-			Help: "Total number of CrowdSec alert pushes.",
-		}, []string{"protocol", "status"}),
-		CrowdSecDeduped: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "ran_crowdsec_alerts_deduplicated_total",
-			Help: "Total number of CrowdSec alerts suppressed by deduplication.",
-		}, []string{"protocol"}),
-		CrowdSecCached: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "ran_crowdsec_alerts_cached_total",
-			Help: "Total number of CrowdSec alerts suppressed by decision cache.",
+		CrowdSecPipeline: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "ran_crowdsec_pipeline_total",
+			Help: "Total number of CrowdSec alert pipeline events.",
+		}, []string{"protocol", "stage"}),
+		CrowdSecDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "ran_crowdsec_alerts_dropped_total",
+			Help: "Total number of CrowdSec alerts dropped due to full channel.",
 		}, []string{"protocol"}),
 	}
-	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecAlerts, m.CrowdSecDeduped, m.CrowdSecCached)
+
+	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ran_build_info",
+		Help: "Build information for ran.",
+	}, []string{"version", "goversion"})
+	buildInfo.WithLabelValues(version, runtime.Version()).Set(1)
+
+	reg.MustRegister(collectors.NewGoCollector())
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, buildInfo)
 	return m
 }

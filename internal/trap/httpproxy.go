@@ -69,10 +69,10 @@ func (t *HTTPProxyTrap) Stop(ctx context.Context) error {
 func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, port := ParseAddr(r.RemoteAddr)
 	destPort := DestPortFromContext(r.Context())
-	sess := NewSession("httpproxy", host, port, destPort, t.logger)
+	sess := NewSession("httpproxy", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "httpproxy", "tcp", destPort, host, "rate_limit")
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 type PacketHandler interface {
-	HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte))
+	HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte))
 }
 
 type UDPTrap struct {
@@ -82,11 +82,11 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 
 		host, port := ParseAddr(addr.String())
 		if !t.limiter.Acquire(host) {
-			t.logger.Warn("packet rejected", "source_ip", host, "reason", "limit_exceeded")
+			LogRejected(t.logger, t.protocol, "udp", destPort, host, "rate_limit")
 			continue
 		}
 
-		sess := NewSession(t.protocol, host, port, destPort, t.logger)
+		sess := NewSession(t.protocol, "udp", host, port, destPort, t.logger)
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 
@@ -102,7 +102,8 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 			defer t.wg.Done()
 			defer t.limiter.Release(host)
 			defer sess.RecordEnd(t.metrics)
-			t.handler.HandlePacket(ctx, addr, destPort, data, respond)
+			defer sess.LogDisconnect()
+			t.handler.HandlePacket(ctx, sess, data, respond)
 		}()
 	}
 }

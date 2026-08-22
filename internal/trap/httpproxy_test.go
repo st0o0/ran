@@ -38,7 +38,7 @@ func startProxy(t *testing.T) string {
 	t.Helper()
 	cfg, addr := proxyTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewHTTPProxy(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

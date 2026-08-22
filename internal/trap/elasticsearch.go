@@ -82,10 +82,10 @@ func (t *ElasticsearchTrap) setHeaders(w http.ResponseWriter) {
 func (t *ElasticsearchTrap) withSession(w http.ResponseWriter, r *http.Request) (*Session, bool) {
 	host, port := ParseAddr(r.RemoteAddr)
 	destPort := DestPortFromContext(r.Context())
-	sess := NewSession("elasticsearch", host, port, destPort, t.logger)
+	sess := NewSession("elasticsearch", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "elasticsearch", "tcp", destPort, host, "rate_limit")
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return nil, false
 	}

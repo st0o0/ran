@@ -75,7 +75,7 @@ func TestBuildTNSPacket(t *testing.T) {
 func TestOracleTrapConnection(t *testing.T) {
 	cfg := oracleTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewOracle(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

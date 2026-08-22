@@ -110,23 +110,28 @@ func NewCrowdSec(cfg CrowdSecConfig, logger *slog.Logger, m *metrics.Metrics) (*
 }
 
 func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string, meta map[string]string) {
+	a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "received").Inc()
+
 	if a.decisionCache.IsBanned(ip) {
-		a.logger.Debug("alert skipped, ip banned", "ip", ip, "protocol", protocol)
-		a.metrics.CrowdSecCached.WithLabelValues(protocol).Inc()
+		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "cached")
+		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "cached").Inc()
 		return
 	}
 
 	scenario := "custom/ran-" + protocol + "-trap"
 	if !a.dedup.Allow(ip + "|" + scenario) {
-		a.logger.Debug("alert deduplicated", "ip", ip, "protocol", protocol)
-		a.metrics.CrowdSecDeduped.WithLabelValues(protocol).Inc()
+		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "deduplicated")
+		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "deduplicated").Inc()
 		return
 	}
 
 	select {
 	case a.ch <- alertMsg{IP: ip, Protocol: protocol, Meta: meta}:
+		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "queued").Inc()
 	default:
-		a.logger.Warn("alert channel full, dropping", "ip", ip, "protocol", protocol)
+		a.logger.Warn("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "dropped")
+		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "dropped").Inc()
+		a.metrics.CrowdSecDropped.WithLabelValues(protocol).Inc()
 	}
 }
 
@@ -367,7 +372,7 @@ func (a *CrowdSecAlerter) flush(batch []alertMsg) {
 	if err != nil {
 		a.logger.Error("marshal alert", "error", err)
 		for _, msg := range batch {
-			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+			a.metrics.CrowdSecPipeline.WithLabelValues(msg.Protocol, "failed").Inc()
 		}
 		return
 	}
@@ -379,7 +384,7 @@ func (a *CrowdSecAlerter) flush(batch []alertMsg) {
 			a.mu.Unlock()
 			a.logger.Warn("re-login after 401 failed", "error", err)
 			for _, msg := range batch {
-				a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+				a.metrics.CrowdSecPipeline.WithLabelValues(msg.Protocol, "failed").Inc()
 			}
 			return
 		}
@@ -389,14 +394,14 @@ func (a *CrowdSecAlerter) flush(batch []alertMsg) {
 
 	if status >= 200 && status < 300 {
 		for _, msg := range batch {
-			a.logger.Debug("alert pushed", "ip", msg.IP, "protocol", msg.Protocol)
-			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "success").Inc()
+			a.logger.Debug("alert sent", "source_ip", msg.IP, "protocol", msg.Protocol, "stage", "sent")
+			a.metrics.CrowdSecPipeline.WithLabelValues(msg.Protocol, "sent").Inc()
 			a.decisionCache.MarkBanned(msg.IP, a.banDurationRaw)
 		}
 	} else {
 		a.logger.Warn("push alert batch rejected", "status", status, "count", len(batch))
 		for _, msg := range batch {
-			a.metrics.CrowdSecAlerts.WithLabelValues(msg.Protocol, "failure").Inc()
+			a.metrics.CrowdSecPipeline.WithLabelValues(msg.Protocol, "failed").Inc()
 		}
 	}
 }

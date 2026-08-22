@@ -53,7 +53,7 @@ func (t *MemcachedTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "memcached", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -76,10 +76,10 @@ func (t *MemcachedTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("memcached", host, port, destPort, t.logger)
+	sess := NewSession("memcached", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "memcached", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -101,5 +101,12 @@ func (t *MemcachedTrap) handle(ctx context.Context, conn net.Conn) {
 		}
 		sess.LogCommand(line)
 		fmt.Fprint(conn, "ERROR\r\n")
+	}
+	if err := scanner.Err(); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 	}
 }

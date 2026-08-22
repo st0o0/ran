@@ -54,13 +54,13 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 	switch state {
 	case http.StateNew:
 		host, port := ParseAddr(addr)
+		_, destPort := ParseAddr(conn.LocalAddr().String())
 		if !t.limiter.Acquire(host) {
-			t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+			LogRejected(t.logger, "http", "tcp", destPort, host, "rate_limit")
 			conn.Close()
 			return
 		}
-		_, destPort := ParseAddr(conn.LocalAddr().String())
-		sess := NewSession("http", host, port, destPort, t.logger)
+		sess := NewSession("http", "tcp", host, port, destPort, t.logger)
 		t.sessions.Store(addr, sess)
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)

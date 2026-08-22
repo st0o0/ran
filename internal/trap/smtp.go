@@ -55,7 +55,7 @@ func (t *SMTPTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "smtp", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -78,10 +78,10 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("smtp", host, port, destPort, t.logger)
+	sess := NewSession("smtp", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "smtp", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -94,6 +94,11 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn) {
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	if _, err := fmt.Fprintf(conn, "220 mail.example.com ESMTP ready\r\n"); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 
@@ -123,6 +128,13 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn) {
 			fmt.Fprintf(conn, "250 OK\r\n")
 		default:
 			fmt.Fprintf(conn, "502 5.5.2 Command not recognized\r\n")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
 		}
 	}
 }

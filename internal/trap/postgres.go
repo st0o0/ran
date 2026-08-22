@@ -53,7 +53,7 @@ func (t *PostgresTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "postgres", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -76,10 +76,10 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("postgres", host, port, destPort, t.logger)
+	sess := NewSession("postgres", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "postgres", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -91,8 +91,17 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	startup, err := readPgStartupMessage(conn)
 	if err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
@@ -100,6 +109,7 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 		_, _ = conn.Write([]byte{'N'})
 		startup, err = readPgStartupMessage(conn)
 		if err != nil {
+			setOutcomeFromErr(err)
 			return
 		}
 	}
@@ -111,11 +121,13 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 	binary.BigEndian.PutUint32(auth[1:5], 8)
 	binary.BigEndian.PutUint32(auth[5:9], 3)
 	if _, err := conn.Write(auth[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	password, err := readPgPasswordMessage(conn)
 	if err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 

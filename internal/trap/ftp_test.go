@@ -34,7 +34,7 @@ func TestFTPTrapConnection(t *testing.T) {
 
 	cfg := testFTPConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewFTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

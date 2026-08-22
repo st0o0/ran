@@ -56,7 +56,7 @@ func readLine(t *testing.T, r *bufio.Reader) string {
 func TestSMTPBanner(t *testing.T) {
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -81,7 +81,7 @@ func TestSMTPBanner(t *testing.T) {
 func TestSMTPEHLO(t *testing.T) {
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -118,7 +118,7 @@ func TestSMTPEHLO(t *testing.T) {
 func TestSMTPAuthLogin(t *testing.T) {
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -169,7 +169,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 func TestSMTPAuthPlain(t *testing.T) {
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -204,7 +204,7 @@ func TestSMTPAuthPlain(t *testing.T) {
 func TestSMTPMailFromWithoutAuth(t *testing.T) {
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

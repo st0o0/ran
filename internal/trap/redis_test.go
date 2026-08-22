@@ -34,7 +34,7 @@ func TestRedisTrapInlineAuth(t *testing.T) {
 
 	cfg := testRedisConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewRedis(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -94,7 +94,7 @@ func TestRedisTrapRESPAuth(t *testing.T) {
 
 	cfg := testRedisConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewRedis(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

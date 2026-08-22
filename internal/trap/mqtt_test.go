@@ -103,7 +103,7 @@ func TestMQTTTrapConnect31(t *testing.T) {
 
 	cfg := testMQTTConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewMQTT(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -157,7 +157,7 @@ func TestMQTTTrapConnectV5(t *testing.T) {
 
 	cfg := testMQTTConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewMQTT(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -208,7 +208,7 @@ func TestMQTTTrapNonConnect(t *testing.T) {
 
 	cfg := testMQTTConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewMQTT(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -248,7 +248,7 @@ func TestMQTTTrapMQIsdpProtocol(t *testing.T) {
 
 	cfg := testMQTTConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewMQTT(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

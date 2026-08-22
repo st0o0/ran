@@ -2,7 +2,6 @@ package trap
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -19,30 +18,39 @@ type Trap interface {
 }
 
 type Session struct {
-	ID       string
-	Protocol string
-	SourceIP string
-	Port     int
-	DestPort int
-	Start    time.Time
-	Logger   *slog.Logger
+	ID        string
+	Protocol  string
+	Transport string
+	SourceIP  string
+	Port      int
+	DestPort  int
+	Start     time.Time
+	Logger    *slog.Logger
+	Outcome   string
 
 	authAttempts int
 	commands     int
 	payloads     int
 }
 
-func NewSession(protocol, sourceIP string, port, destPort int, logger *slog.Logger) *Session {
+func (s *Session) SetOutcome(outcome string) {
+	s.Outcome = outcome
+}
+
+func NewSession(protocol, transport, sourceIP string, port, destPort int, logger *slog.Logger) *Session {
 	s := &Session{
-		ID:       uuid.NewString(),
-		Protocol: protocol,
-		SourceIP: sourceIP,
-		Port:     port,
-		DestPort: destPort,
-		Start:    time.Now(),
+		ID:        uuid.NewString(),
+		Protocol:  protocol,
+		Transport: transport,
+		SourceIP:  sourceIP,
+		Port:      port,
+		DestPort:  destPort,
+		Start:     time.Now(),
+		Outcome:   "completed",
 	}
 	s.Logger = logger.With(
 		"protocol", protocol,
+		"transport", transport,
 		"session_id", s.ID,
 		"source_ip", sourceIP,
 		"source_port", port,
@@ -51,64 +59,47 @@ func NewSession(protocol, sourceIP string, port, destPort int, logger *slog.Logg
 	return s
 }
 
-func (s *Session) addr() string {
-	return net.JoinHostPort(s.SourceIP, strconv.Itoa(s.Port))
-}
-
 func (s *Session) LogConnect() {
-	s.Logger.Debug(
-		fmt.Sprintf("%s connect from %s", s.Protocol, s.addr()),
-		"action", "connect",
-	)
+	s.Logger.Info("session started", "action", "connect")
 }
 
 func (s *Session) LogAuthAttempt(attrs ...slog.Attr) {
 	s.authAttempts++
-	msg := fmt.Sprintf("%s auth from %s", s.Protocol, s.addr())
-	for _, a := range attrs {
-		if a.Key == "username" {
-			msg += fmt.Sprintf(" user=%s", a.Value.String())
-			break
-		}
-	}
 	args := make([]any, 0, 1+len(attrs))
 	args = append(args, slog.String("action", "auth_attempt"))
 	for _, a := range attrs {
 		args = append(args, a)
 	}
-	s.Logger.Info(msg, args...)
+	s.Logger.Info("credentials captured", args...)
 }
 
 func (s *Session) LogCommand(command string, attrs ...slog.Attr) {
 	s.commands++
-	msg := fmt.Sprintf("%s command from %s cmd=%s", s.Protocol, s.addr(), command)
 	args := make([]any, 0, 2+len(attrs))
 	args = append(args, slog.String("action", "command"))
 	args = append(args, slog.String("command", command))
 	for _, a := range attrs {
 		args = append(args, a)
 	}
-	s.Logger.Info(msg, args...)
+	s.Logger.Info("command received", args...)
 }
 
 func (s *Session) LogPayload(payloadType string, attrs ...slog.Attr) {
 	s.payloads++
-	msg := fmt.Sprintf("%s payload from %s type=%s", s.Protocol, s.addr(), payloadType)
 	args := make([]any, 0, 2+len(attrs))
 	args = append(args, slog.String("action", "payload"))
 	args = append(args, slog.String("payload_type", payloadType))
 	for _, a := range attrs {
 		args = append(args, a)
 	}
-	s.Logger.Info(msg, args...)
+	s.Logger.Info("payload received", args...)
 }
 
 func (s *Session) LogDisconnect() {
 	dur := time.Since(s.Start)
-	s.Logger.Info(
-		fmt.Sprintf("%s disconnect from %s duration=%dms auth=%d cmd=%d",
-			s.Protocol, s.addr(), dur.Milliseconds(), s.authAttempts, s.commands),
+	s.Logger.Info("session ended",
 		"action", "disconnect",
+		"outcome", s.Outcome,
 		"duration_ms", dur.Milliseconds(),
 		"auth_attempts", s.authAttempts,
 		"commands", s.commands,
@@ -116,13 +107,41 @@ func (s *Session) LogDisconnect() {
 	)
 }
 
+func LogRejected(logger *slog.Logger, protocol, transport string, destPort int, sourceIP, reason string) {
+	logger.Warn("connection rejected",
+		"action", "rejected",
+		"protocol", protocol,
+		"transport", transport,
+		"dest_port", destPort,
+		"source_ip", sourceIP,
+		"reason", reason,
+	)
+}
+
+func (s *Session) LogError(errorType string, err error) {
+	s.Logger.Error("internal error",
+		"action", "error",
+		"error_type", errorType,
+		"error", err.Error(),
+	)
+}
+
+func LogErrorStandalone(logger *slog.Logger, protocol, errorType string, err error) {
+	logger.Error("internal error",
+		"action", "error",
+		"protocol", protocol,
+		"error_type", errorType,
+		"error", err.Error(),
+	)
+}
+
 func (s *Session) RecordStart(m *metrics.Metrics) {
-	m.Connections.WithLabelValues(s.Protocol).Inc()
 	m.ActiveSessions.WithLabelValues(s.Protocol).Inc()
 }
 
 func (s *Session) RecordEnd(m *metrics.Metrics) {
 	m.ActiveSessions.WithLabelValues(s.Protocol).Dec()
+	m.Connections.WithLabelValues(s.Protocol, s.Outcome).Inc()
 	m.SessionDuration.WithLabelValues(s.Protocol).Observe(time.Since(s.Start).Seconds())
 }
 

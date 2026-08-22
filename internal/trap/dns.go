@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
-	"net"
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
@@ -25,8 +24,9 @@ func NewDNS(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 	return NewUDP("dns", cfg.TrapAddrs("dns"), logger, m, limiter, alerter, handler)
 }
 
-func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
+func (h *dnsHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
 	if len(data) < 12 {
+		sess.LogError("parse_failed", fmt.Errorf("packet too short: %d bytes", len(data)))
 		return
 	}
 
@@ -34,21 +34,21 @@ func (h *dnsHandler) HandlePacket(ctx context.Context, src net.Addr, destPort in
 	qdcount := binary.BigEndian.Uint16(data[4:6])
 
 	if qdcount == 0 {
+		sess.LogError("parse_failed", fmt.Errorf("no questions in DNS packet"))
 		return
 	}
 
 	domain, qEnd, ok := parseDNSName(data, 12)
 	if !ok || qEnd+4 > len(data) {
+		sess.LogError("parse_failed", fmt.Errorf("malformed DNS name"))
 		return
 	}
 
 	qtype := binary.BigEndian.Uint16(data[qEnd : qEnd+2])
 	qtypeStr := dnsTypeName(qtype)
 
-	host, port := ParseAddr(src.String())
-	sess := NewSession("dns", host, port, destPort, h.logger)
 	sess.LogPayload("dns_query", slog.String("domain", domain), slog.String("qtype", qtypeStr))
-	h.alerter.Alert(ctx, host, "dns", map[string]string{"domain": domain, "qtype": qtypeStr})
+	h.alerter.Alert(ctx, sess.SourceIP, "dns", map[string]string{"domain": domain, "qtype": qtypeStr})
 
 	questionLen := qEnd + 4 - 12
 	resp := make([]byte, 12+questionLen)

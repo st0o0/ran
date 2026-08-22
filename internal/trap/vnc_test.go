@@ -36,7 +36,7 @@ func vncTestConfig(t *testing.T) *config.Config {
 func TestVNCTrapHandshake(t *testing.T) {
 	cfg := vncTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewVNC(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -133,7 +133,7 @@ func TestVNCTrapHandshake(t *testing.T) {
 func TestVNCTrapVersion(t *testing.T) {
 	cfg := vncTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewVNC(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

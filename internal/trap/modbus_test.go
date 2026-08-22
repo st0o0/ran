@@ -46,7 +46,7 @@ func TestModbusTrapReadCoils(t *testing.T) {
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewModbus(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -113,7 +113,7 @@ func TestModbusTrapWriteSingleRegister(t *testing.T) {
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewModbus(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -169,7 +169,7 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewModbus(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -217,7 +217,7 @@ func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewModbus(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

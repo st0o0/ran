@@ -19,7 +19,7 @@ import (
 
 func testMetrics(t *testing.T) *metrics.Metrics {
 	t.Helper()
-	return metrics.New(prometheus.NewRegistry())
+	return metrics.New(prometheus.NewRegistry(), "test")
 }
 
 func testConfig(url string) CrowdSecConfig {
@@ -325,7 +325,7 @@ func TestCrowdSecFailureMetrics(t *testing.T) {
 	defer srv.Close()
 
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	a, err := NewCrowdSec(testConfig(srv.URL), slog.Default(), m)
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)

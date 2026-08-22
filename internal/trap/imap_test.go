@@ -34,7 +34,7 @@ func TestIMAPTrapConnection(t *testing.T) {
 
 	cfg := testIMAPConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewIMAP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

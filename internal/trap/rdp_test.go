@@ -60,7 +60,7 @@ func buildRDPConnectionRequest(cookie string) []byte {
 func TestRDPTrapWithCookie(t *testing.T) {
 	cfg := rdpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewRDP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -126,7 +126,7 @@ func TestRDPTrapWithCookie(t *testing.T) {
 func TestRDPTrapNoCookie(t *testing.T) {
 	cfg := rdpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewRDP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

@@ -53,7 +53,7 @@ func (t *SOCKS5Trap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "socks5", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -76,10 +76,10 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("socks5", host, port, destPort, t.logger)
+	sess := NewSession("socks5", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "socks5", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -91,22 +91,34 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	// Read greeting
 	var ver [1]byte
 	if _, err := io.ReadFull(conn, ver[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	if ver[0] != 0x05 {
+		sess.SetOutcome("error")
 		return
 	}
 
 	var nmethods [1]byte
 	if _, err := io.ReadFull(conn, nmethods[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	methods := make([]byte, nmethods[0])
 	if _, err := io.ReadFull(conn, methods); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
@@ -136,26 +148,39 @@ func (t *SOCKS5Trap) handle(ctx context.Context, conn net.Conn) {
 }
 
 func (t *SOCKS5Trap) handleUserPassAuth(ctx context.Context, conn net.Conn, host string, sess *Session) {
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	var authVer [1]byte
 	if _, err := io.ReadFull(conn, authVer[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	var ulen [1]byte
 	if _, err := io.ReadFull(conn, ulen[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	username := make([]byte, ulen[0])
 	if _, err := io.ReadFull(conn, username); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	var plen [1]byte
 	if _, err := io.ReadFull(conn, plen[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	password := make([]byte, plen[0])
 	if _, err := io.ReadFull(conn, password); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
@@ -171,9 +196,18 @@ func (t *SOCKS5Trap) handleUserPassAuth(ctx context.Context, conn net.Conn, host
 }
 
 func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host string, sess *Session) {
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	// Read connect request
 	var hdr [4]byte
 	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	if hdr[0] != 0x05 {
@@ -185,22 +219,26 @@ func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host strin
 	case 0x01: // IPv4
 		var ip [4]byte
 		if _, err := io.ReadFull(conn, ip[:]); err != nil {
+			setOutcomeFromErr(err)
 			return
 		}
 		targetAddr = net.IP(ip[:]).String()
 	case 0x03: // Domain
 		var dlen [1]byte
 		if _, err := io.ReadFull(conn, dlen[:]); err != nil {
+			setOutcomeFromErr(err)
 			return
 		}
 		domain := make([]byte, dlen[0])
 		if _, err := io.ReadFull(conn, domain); err != nil {
+			setOutcomeFromErr(err)
 			return
 		}
 		targetAddr = string(domain)
 	case 0x04: // IPv6
 		var ip [16]byte
 		if _, err := io.ReadFull(conn, ip[:]); err != nil {
+			setOutcomeFromErr(err)
 			return
 		}
 		targetAddr = net.IP(ip[:]).String()
@@ -210,6 +248,7 @@ func (t *SOCKS5Trap) handleNoAuth(ctx context.Context, conn net.Conn, host strin
 
 	var portBytes [2]byte
 	if _, err := io.ReadFull(conn, portBytes[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	targetPort := binary.BigEndian.Uint16(portBytes[:])

@@ -76,7 +76,7 @@ func TestPgErrorResponse(t *testing.T) {
 func TestPostgresTrapConnection(t *testing.T) {
 	cfg := postgresTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewPostgres(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -158,7 +158,7 @@ func TestPostgresTrapConnection(t *testing.T) {
 func TestPostgresTrapConnectionNoSSL(t *testing.T) {
 	cfg := postgresTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewPostgres(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

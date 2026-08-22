@@ -56,7 +56,7 @@ func (t *MySQLTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "mysql", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -79,10 +79,10 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("mysql", host, port, destPort, t.logger)
+	sess := NewSession("mysql", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "mysql", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -100,11 +100,21 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
 	connID := t.connID.Add(1)
 	greeting := buildGreeting(connID, challenge)
 	if _, err := conn.Write(greeting); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 
 	response, err := readMySQLPacket(conn)
 	if err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 

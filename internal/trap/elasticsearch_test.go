@@ -39,7 +39,7 @@ func startES(t *testing.T) string {
 	t.Helper()
 	cfg, addr := esTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewElasticsearch(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

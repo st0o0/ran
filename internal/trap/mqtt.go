@@ -53,7 +53,7 @@ func (t *MQTTTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "mqtt", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -76,10 +76,10 @@ func (t *MQTTTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("mqtt", host, port, destPort, t.logger)
+	sess := NewSession("mqtt", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "mqtt", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -93,15 +93,22 @@ func (t *MQTTTrap) handle(ctx context.Context, conn net.Conn) {
 
 	packetType, payload, err := readMQTTPacket(conn)
 	if err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 
 	if packetType != 1 {
+		sess.SetOutcome("error")
 		return
 	}
 
 	clientID, username, password, protocolLevel, err := parseMQTTConnect(payload)
 	if err != nil {
+		sess.SetOutcome("error")
 		return
 	}
 

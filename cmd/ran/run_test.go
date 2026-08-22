@@ -54,7 +54,7 @@ func testSetup(t *testing.T, trapNames []string, factories map[string]trap.Facto
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	m := metrics.New(prometheus.NewRegistry())
+	m := metrics.New(prometheus.NewRegistry(), "test")
 	return cfg, logger, m, &buf
 }
 

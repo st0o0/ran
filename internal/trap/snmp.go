@@ -2,8 +2,8 @@ package trap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"net"
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
@@ -23,38 +23,41 @@ func NewSNMP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 	return NewUDP("snmp", cfg.TrapAddrs("snmp"), logger, m, limiter, alerter, handler)
 }
 
-func (h *snmpHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
+func (h *snmpHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
 	tag, _, value, _, ok := readTLV(data, 0)
 	if !ok || tag != 0x30 {
+		sess.LogError("parse_failed", fmt.Errorf("invalid SNMP sequence tag"))
 		return
 	}
 	seq := value
 
 	tag, _, value, next, ok := readTLV(seq, 0)
 	if !ok || tag != 0x02 || len(value) == 0 {
+		sess.LogError("parse_failed", fmt.Errorf("invalid SNMP version field"))
 		return
 	}
 	version := value[0]
 	if version >= 3 {
+		sess.LogError("parse_failed", fmt.Errorf("unsupported SNMP version: %d", version))
 		return
 	}
 
 	tag, _, value, next, ok = readTLV(seq, next)
 	if !ok || tag != 0x04 {
+		sess.LogError("parse_failed", fmt.Errorf("invalid SNMP community field"))
 		return
 	}
 	community := string(value)
 
 	tag, _, value, _, ok = readTLV(seq, next)
 	if !ok || (tag != 0xA0 && tag != 0xA1) {
+		sess.LogError("parse_failed", fmt.Errorf("invalid SNMP PDU tag: 0x%02x", tag))
 		return
 	}
 	pdu := value
 
-	host, port := ParseAddr(src.String())
-	sess := NewSession("snmp", host, port, destPort, h.logger)
 	sess.LogPayload("snmp_request", slog.String("community", community), slog.Int("version", int(version)))
-	h.alerter.Alert(ctx, host, "snmp", map[string]string{"community": community})
+	h.alerter.Alert(ctx, sess.SourceIP, "snmp", map[string]string{"community": community})
 
 	reqTag, _, reqIDValue, _, ok := readTLV(pdu, 0)
 	if !ok || reqTag != 0x02 {

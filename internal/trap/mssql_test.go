@@ -121,7 +121,7 @@ func TestParseTDSLogin7(t *testing.T) {
 func TestMSSQLTrapConnection(t *testing.T) {
 	cfg := mssqlTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewMSSQL(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

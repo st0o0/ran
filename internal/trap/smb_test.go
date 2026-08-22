@@ -138,7 +138,7 @@ func TestSMBTrapNegotiate(t *testing.T) {
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMB(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -184,7 +184,7 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMB(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -245,7 +245,7 @@ func TestSMB1Negotiate(t *testing.T) {
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSMB(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

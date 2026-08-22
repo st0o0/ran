@@ -53,7 +53,7 @@ func (t *IRCTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "irc", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -76,10 +76,10 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("irc", host, port, destPort, t.logger)
+	sess := NewSession("irc", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "irc", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -143,6 +143,13 @@ func (t *IRCTrap) handle(ctx context.Context, conn net.Conn) {
 
 		default:
 			sess.LogCommand(line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
 		}
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"net"
 	"strings"
 
 	"github.com/st0o0/ran/internal/alert"
@@ -27,7 +26,7 @@ func NewSIP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 	return NewUDP("sip", cfg.TrapAddrs("sip"), logger, m, limiter, alerter, handler)
 }
 
-func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, destPort int, data []byte, respond func([]byte)) {
+func (h *sipHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
 	msg := string(data)
 	var lines []string
 	if strings.Contains(msg, "\r\n") {
@@ -37,11 +36,13 @@ func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, destPort in
 	}
 
 	if len(lines) == 0 {
+		sess.LogError("parse_failed", fmt.Errorf("empty SIP message"))
 		return
 	}
 
 	parts := strings.SplitN(lines[0], " ", 3)
 	if len(parts) < 3 {
+		sess.LogError("parse_failed", fmt.Errorf("malformed SIP request line"))
 		return
 	}
 	method := parts[0]
@@ -66,17 +67,15 @@ func (h *sipHandler) HandlePacket(ctx context.Context, src net.Addr, destPort in
 	callID := headers["call-id"]
 	authorization := headers["authorization"]
 
-	host, port := ParseAddr(src.String())
-	sess := NewSession("sip", host, port, destPort, h.logger)
 	sess.LogPayload("sip_request", slog.String("method", method), slog.String("from", from), slog.String("to", to))
 
 	if authorization != "" {
 		if username := extractSIPUsername(authorization); username != "" {
-			sess.LogPayload("auth_attempt", slog.String("username", username))
+			sess.LogAuthAttempt(slog.String("username", username))
 		}
 	}
 
-	h.alerter.Alert(ctx, host, "sip", map[string]string{"method": method, "from": from, "to": to})
+	h.alerter.Alert(ctx, sess.SourceIP, "sip", map[string]string{"method": method, "from": from, "to": to})
 
 	nonce := generateNonce()
 	response := fmt.Sprintf("SIP/2.0 401 Unauthorized\r\nVia: %s\r\nFrom: %s\r\nTo: %s\r\nCall-ID: %s\r\nWWW-Authenticate: Digest realm=\"ran\",nonce=\"%s\"\r\nContent-Length: 0\r\n\r\n",

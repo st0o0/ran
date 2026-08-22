@@ -51,7 +51,7 @@ func TestParseAddrIPv6(t *testing.T) {
 
 func TestNewSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	sess := NewSession("ssh", "10.0.0.1", 4321, 22, logger)
+	sess := NewSession("ssh", "tcp", "10.0.0.1", 4321, 22, logger)
 	if sess.Protocol != "ssh" {
 		t.Errorf("Protocol = %q, want ssh", sess.Protocol)
 	}

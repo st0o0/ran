@@ -38,7 +38,7 @@ func httpTestConfig(t *testing.T) *config.Config {
 func TestHTTPLoginPage(t *testing.T) {
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewHTTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -66,7 +66,7 @@ func TestHTTPLoginPage(t *testing.T) {
 func TestHTTPCredentialCapture(t *testing.T) {
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewHTTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -94,7 +94,7 @@ func TestHTTPCredentialCapture(t *testing.T) {
 func TestHTTPAdminPage(t *testing.T) {
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewHTTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -123,7 +123,7 @@ func TestHTTPAdminPage(t *testing.T) {
 func TestHTTPResponseHeaders(t *testing.T) {
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewHTTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

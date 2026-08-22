@@ -31,7 +31,7 @@ func TestDNSTrap(t *testing.T) {
 	conn.Close()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m := metrics.New(prometheus.NewRegistry())
+	m := metrics.New(prometheus.NewRegistry(), "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 	alerter := alert.NoopAlerter{}
 

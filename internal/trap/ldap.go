@@ -52,7 +52,7 @@ func (t *LDAPTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "ldap", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -75,10 +75,10 @@ func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("ldap", host, port, destPort, t.logger)
+	sess := NewSession("ldap", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "ldap", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -90,26 +90,39 @@ func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	for {
 		tag, msgBytes, err := berReadElement(conn)
 		if err != nil {
+			setOutcomeFromErr(err)
 			return
 		}
 		if tag != 0x30 {
+			sess.SetOutcome("error")
 			return
 		}
 
 		msgID, rest, err := berReadInteger(msgBytes)
 		if err != nil {
+			sess.SetOutcome("error")
 			return
 		}
 
 		if len(rest) == 0 {
+			sess.SetOutcome("error")
 			return
 		}
 		opTag := rest[0]
 		_, opValue, err := berReadTLV(rest)
 		if err != nil {
+			sess.SetOutcome("error")
 			return
 		}
 

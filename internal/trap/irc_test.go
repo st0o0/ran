@@ -34,7 +34,7 @@ func TestIRCTrapConnection(t *testing.T) {
 
 	cfg := testIRCConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewIRC(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

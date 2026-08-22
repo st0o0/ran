@@ -53,7 +53,7 @@ func (t *IMAPTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "imap", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -76,10 +76,10 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("imap", host, port, destPort, t.logger)
+	sess := NewSession("imap", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "imap", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -92,6 +92,11 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
 	if _, err := fmt.Fprint(conn, "* OK IMAP4rev1 Server Ready\r\n"); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 
@@ -142,6 +147,13 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 		default:
 			sess.LogCommand(line)
 			fmt.Fprintf(conn, "%s BAD Unknown command\r\n", tag)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
 		}
 	}
 }

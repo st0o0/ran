@@ -34,7 +34,7 @@ func TestTelnetTrapConnection(t *testing.T) {
 
 	cfg := testTelnetConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewTelnet(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

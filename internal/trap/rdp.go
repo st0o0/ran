@@ -55,7 +55,7 @@ func (t *RDPTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "rdp", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -78,10 +78,10 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("rdp", host, port, destPort, t.logger)
+	sess := NewSession("rdp", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "rdp", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -96,6 +96,11 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 	// Read TPKT header (4 bytes)
 	var tpkt [4]byte
 	if _, err := io.ReadFull(conn, tpkt[:]); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 	if tpkt[0] != 3 || tpkt[1] != 0 {
@@ -109,6 +114,11 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 	// Read X.224 Connection Request payload
 	payload := make([]byte, tpktLen-4)
 	if _, err := io.ReadFull(conn, payload); err != nil {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
 		return
 	}
 

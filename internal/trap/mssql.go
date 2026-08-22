@@ -54,7 +54,7 @@ func (t *MSSQLTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "mssql", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -77,10 +77,10 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("mssql", host, port, destPort, t.logger)
+	sess := NewSession("mssql", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "mssql", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -92,39 +92,56 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(conn, header); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	if header[0] != 0x12 {
+		sess.SetOutcome("error")
 		return
 	}
 	pktLen := int(binary.BigEndian.Uint16(header[2:4]))
 	if pktLen < 8 || pktLen > 1<<20 {
+		sess.SetOutcome("error")
 		return
 	}
 	payload := make([]byte, pktLen-8)
 	if _, err := io.ReadFull(conn, payload); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	preloginResp := buildTDSPreloginResponse()
 	if _, err := conn.Write(preloginResp); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	if _, err := io.ReadFull(conn, header); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	if header[0] != 0x10 {
+		sess.SetOutcome("error")
 		return
 	}
 	loginLen := int(binary.BigEndian.Uint16(header[2:4]))
 	if loginLen < 8 || loginLen > 1<<20 {
+		sess.SetOutcome("error")
 		return
 	}
 	body := make([]byte, loginLen-8)
 	if _, err := io.ReadFull(conn, body); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 

@@ -55,7 +55,7 @@ func (t *VNCTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "vnc", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -78,10 +78,10 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("vnc", host, port, destPort, t.logger)
+	sess := NewSession("vnc", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "vnc", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -93,40 +93,55 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn) {
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	// Send server RFB version
 	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	// Read client RFB version
 	var clientVersion [12]byte
 	if _, err := io.ReadFull(conn, clientVersion[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	// Send security types: 1 type available, type 2 (VNC Authentication)
 	if _, err := conn.Write([]byte{1, 2}); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	// Read client security type selection (1 byte)
 	var secType [1]byte
 	if _, err := io.ReadFull(conn, secType[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	// Send 16-byte random challenge
 	var challenge [16]byte
 	if _, err := rand.Read(challenge[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 	if _, err := conn.Write(challenge[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	// Read 16-byte DES-encrypted response
 	var response [16]byte
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 

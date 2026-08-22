@@ -32,7 +32,7 @@ func TestSOCKS5TrapUserPassAuth(t *testing.T) {
 
 	cfg := testSOCKS5Config(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSOCKS5(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -91,7 +91,7 @@ func TestSOCKS5TrapNoAuth(t *testing.T) {
 
 	cfg := testSOCKS5Config(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSOCKS5(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -149,7 +149,7 @@ func TestSOCKS5TrapDomainConnect(t *testing.T) {
 
 	cfg := testSOCKS5Config(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSOCKS5(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -207,7 +207,7 @@ func TestSOCKS5TrapPrefersUserPass(t *testing.T) {
 
 	cfg := testSOCKS5Config(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewSOCKS5(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

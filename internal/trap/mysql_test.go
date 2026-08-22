@@ -104,7 +104,7 @@ func TestMySQLErrPacket(t *testing.T) {
 func TestMySQLTrapConnection(t *testing.T) {
 	cfg := mysqlTestConfig(t)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewMySQL(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

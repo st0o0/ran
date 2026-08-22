@@ -67,7 +67,7 @@ func TestLDAPTrapBindRequest(t *testing.T) {
 
 	cfg := testLDAPConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewLDAP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -139,7 +139,7 @@ func TestLDAPTrapSearchRequest(t *testing.T) {
 
 	cfg := testLDAPConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewLDAP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
@@ -191,7 +191,7 @@ func TestLDAPTrapUnbind(t *testing.T) {
 
 	cfg := testLDAPConfig(addr)
 	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
+	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	trap := NewLDAP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})

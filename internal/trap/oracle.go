@@ -54,7 +54,7 @@ func (t *OracleTrap) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			t.logger.Debug("accept error", "error", err)
+			LogErrorStandalone(t.logger, "oracle", "accept_failed", err)
 			continue
 		}
 		t.wg.Add(1)
@@ -77,10 +77,10 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 
 	host, port := ParseAddr(conn.RemoteAddr().String())
 	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("oracle", host, port, destPort, t.logger)
+	sess := NewSession("oracle", "tcp", host, port, destPort, t.logger)
 
 	if !t.limiter.Acquire(host) {
-		t.logger.Warn("connection rejected", "source_ip", host, "reason", "limit_exceeded")
+		LogRejected(t.logger, "oracle", "tcp", destPort, host, "rate_limit")
 		return
 	}
 	defer t.limiter.Release(host)
@@ -92,12 +92,22 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 
 	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
 
+	setOutcomeFromErr := func(err error) {
+		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+			sess.SetOutcome("timeout")
+		} else {
+			sess.SetOutcome("error")
+		}
+	}
+
 	pktType, payload, err := readTNSPacket(conn)
 	if err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
 	if pktType != 1 {
+		sess.SetOutcome("error")
 		return
 	}
 
@@ -110,6 +120,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 	binary.BigEndian.PutUint16(acceptPayload[4:6], 0x0800)
 	binary.BigEndian.PutUint16(acceptPayload[6:8], 0x0800)
 	if _, err := conn.Write(buildTNSPacket(2, acceptPayload)); err != nil {
+		setOutcomeFromErr(err)
 		return
 	}
 
