@@ -1,51 +1,4 @@
-## Purpose
-
-Prometheus metrics instrumentation for monitoring honeypot connections, credential captures, active sessions, and session durations.
-
-## Requirements
-
-### Requirement: Prometheus metrics endpoint
-The metrics server SHALL serve Prometheus metrics on `RAN_METRICS_ADDR` (default `:9550`) at `/metrics`.
-
-#### Scenario: Scrape endpoint
-- **WHEN** Alloy/Prometheus scrapes `GET /metrics`
-- **THEN** all registered metrics are returned in Prometheus exposition format
-
-### Requirement: Connection counter
-`ran_connections_total{protocol, outcome}` SHALL be a counter incremented on each connection with the session's outcome. Outcome labels: `completed`, `timeout`, `error`, `rejected`.
-
-#### Scenario: Completed SSH connection
-- **WHEN** an SSH connection completes normally
-- **THEN** `ran_connections_total{protocol="ssh", outcome="completed"}` is incremented
-
-#### Scenario: Timed-out connection
-- **WHEN** a session exceeds its deadline
-- **THEN** `ran_connections_total{protocol="ssh", outcome="timeout"}` is incremented
-
-#### Scenario: Rejected connection
-- **WHEN** a connection is rejected by the rate limiter
-- **THEN** `ran_connections_total{protocol="ssh", outcome="rejected"}` is incremented
-
-### Requirement: Credential counter
-`ran_credentials_captured_total{protocol}` SHALL be a counter incremented when credentials are captured from an auth attempt.
-
-#### Scenario: HTTP credential capture
-- **WHEN** credentials are extracted from an HTTP POST
-- **THEN** `ran_credentials_captured_total{protocol="http"}` is incremented by 1
-
-### Requirement: Active sessions gauge
-`ran_active_sessions{protocol}` SHALL be a gauge tracking currently active sessions.
-
-#### Scenario: Session lifecycle
-- **WHEN** a session starts
-- **THEN** the gauge increments; when the session ends, it decrements
-
-### Requirement: Session duration histogram
-`ran_session_duration_seconds{protocol}` SHALL be a histogram observing session durations.
-
-#### Scenario: Short session
-- **WHEN** a 2-second SSH session ends
-- **THEN** `2.0` is observed in the histogram
+## ADDED Requirements
 
 ### Requirement: Go and Process collectors
 The custom Prometheus registry SHALL register `collectors.NewGoCollector()` and `collectors.NewProcessCollector()`, exposing standard `go_*` and `process_*` metrics including `process_start_time_seconds`.
@@ -90,3 +43,26 @@ The custom Prometheus registry SHALL register `collectors.NewGoCollector()` and 
 #### Scenario: Funnel arithmetic
 - **WHEN** querying delivery rate
 - **THEN** `rate(ran_crowdsec_pipeline_total{stage="sent"}[5m]) / rate(ran_crowdsec_pipeline_total{stage="received"}[5m])` gives the delivery ratio
+
+## MODIFIED Requirements
+
+### Requirement: Connection counter
+`ran_connections_total{protocol, outcome}` SHALL be a counter incremented on each connection with the session's outcome. Outcome labels: `completed`, `timeout`, `error`, `rejected`.
+
+#### Scenario: Completed SSH connection
+- **WHEN** an SSH connection completes normally
+- **THEN** `ran_connections_total{protocol="ssh", outcome="completed"}` is incremented
+
+#### Scenario: Timed-out connection
+- **WHEN** a session exceeds its deadline
+- **THEN** `ran_connections_total{protocol="ssh", outcome="timeout"}` is incremented
+
+#### Scenario: Rejected connection
+- **WHEN** a connection is rejected by the rate limiter
+- **THEN** `ran_connections_total{protocol="ssh", outcome="rejected"}` is incremented
+
+## REMOVED Requirements
+
+### Requirement: CrowdSec alert counter
+**Reason**: Replaced by `ran_crowdsec_pipeline_total{stage="sent"|"failed"}` which provides the same data plus funnel context.
+**Migration**: Replace `ran_crowdsec_alerts_total{status="success"}` with `ran_crowdsec_pipeline_total{stage="sent"}`. Replace `ran_crowdsec_alerts_total{status="failure"}` with `ran_crowdsec_pipeline_total{stage="failed"}`.
