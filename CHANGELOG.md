@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6](https://github.com/st0o0/ran/compare/v0.3.5...v0.3.6) (2026-08-22)
+
+
+### Features
+
+* overhaul observability with structured logging, outcome tracking, and pipeline metrics ([6d439b0](https://github.com/st0o0/ran/commit/6d439b0102a58ff177d5eb06da84d39672d8aced))
+
 ## [0.3.5](https://github.com/st0o0/ran/compare/v0.3.4...v0.3.5) (2026-08-19)
 
 
