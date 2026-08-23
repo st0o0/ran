@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.7](https://github.com/st0o0/ran/compare/v0.3.6...v0.3.7) (2026-08-23)
+
+
+### Features
+
+* add multi-auth retries, escalating delay, SSH tarpit, and probe outcome classification ([77780ef](https://github.com/st0o0/ran/commit/77780ef06eb7624a3693c2ec0dcfd9d9528667ad))
+
+
+### Bug Fixes
+
+* handle errcheck violations in trap test files ([a610b9b](https://github.com/st0o0/ran/commit/a610b9bce751b0d77908239a30ee26f551f68522))
+
 ## [0.3.6](https://github.com/st0o0/ran/compare/v0.3.5...v0.3.6) (2026-08-22)
 
 
