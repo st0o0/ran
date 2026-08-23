@@ -1,8 +1,4 @@
-## Purpose
-
-Connection outcome tracking to distinguish normal disconnects from timeouts and errors, enabling outcome-based metrics and log queries.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Outcome field on disconnect
 `LogDisconnect()` SHALL include an `outcome` field with one of these bounded values: `completed`, `timeout`, `error`, `probe`.
@@ -23,18 +19,6 @@ Connection outcome tracking to distinguish normal disconnects from timeouts and 
 - **WHEN** a connection sends data that does not match the expected protocol (e.g., non-TDS data on MSSQL port, non-SMB data on SMB port)
 - **THEN** the disconnect log has `"outcome": "probe"`
 
-### Requirement: Outcome settable on Session
-The `Session` struct SHALL have a method to set the outcome. The default outcome SHALL be `"completed"`. Code paths that detect timeouts or errors SHALL set the appropriate outcome before `LogDisconnect()` is called.
-
-#### Scenario: Timeout detection
-- **WHEN** a `net.Error` with `Timeout() == true` is returned from a read/write
-- **THEN** the trap handler calls `sess.SetOutcome("timeout")`
-- **AND** the deferred `LogDisconnect()` includes `"outcome": "timeout"`
-
-#### Scenario: Default outcome
-- **WHEN** no explicit outcome is set
-- **THEN** `LogDisconnect()` uses `"outcome": "completed"`
-
 ### Requirement: Outcome label on connections metric
 `ran_connections_total` SHALL include an `outcome` label with values `completed`, `timeout`, `error`, `rejected`, `probe`.
 
@@ -53,10 +37,3 @@ The `Session` struct SHALL have a method to set the outcome. The default outcome
 #### Scenario: Probe connection
 - **WHEN** a scanner connects to the MSSQL port and sends non-TDS data
 - **THEN** `ran_connections_total{protocol="mssql", outcome="probe"}` is incremented
-
-### Requirement: Outcome passed to RecordEnd
-`RecordEnd()` SHALL accept an outcome string parameter and use it as the `outcome` label value when observing the session duration histogram and decrementing active sessions.
-
-#### Scenario: RecordEnd with timeout
-- **WHEN** `RecordEnd("timeout")` is called
-- **THEN** the session duration is observed and `ran_connections_total{outcome="timeout"}` reflects the outcome

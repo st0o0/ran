@@ -18,9 +18,11 @@ import (
 func testSMBConfig(addr string) *config.Config {
 	return &config.Config{
 		Addrs:          map[string]string{"smb": addr},
+		PerProto:       make(map[string]config.ProtoConfig),
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
+		MaxAuthRetries: 3,
 	}
 }
 
@@ -293,4 +295,68 @@ func TestSMB1Negotiate(t *testing.T) {
 
 	cancel()
 	_ = trap.Stop(context.Background())
+}
+
+func TestSMBProbeOutcome(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	cfg := testSMBConfig(addr)
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg, "test")
+	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+
+	smbTrap := NewSMB(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = smbTrap.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Send non-SMB data via NetBIOS framing
+	garbage := []byte("NOT-SMB-DATA-HERE")
+	var hdr [4]byte
+	hdr[1] = byte(len(garbage) >> 16)
+	hdr[2] = byte(len(garbage) >> 8)
+	hdr[3] = byte(len(garbage))
+	conn.Write(hdr[:])
+	conn.Write(garbage)
+	conn.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	families, _ := reg.Gather()
+	found := false
+	for _, f := range families {
+		if f.GetName() == "ran_connections_total" {
+			for _, met := range f.GetMetric() {
+				var proto, outcome string
+				for _, l := range met.GetLabel() {
+					switch l.GetName() {
+					case "protocol":
+						proto = l.GetValue()
+					case "outcome":
+						outcome = l.GetValue()
+					}
+				}
+				if proto == "smb" && outcome == "probe" && met.GetCounter().GetValue() >= 1 {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected ran_connections_total{protocol=smb,outcome=probe} >= 1")
+	}
+
+	cancel()
+	_ = smbTrap.Stop(context.Background())
 }

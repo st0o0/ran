@@ -90,7 +90,7 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect()
 
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.ResolveSessionTimeout("mssql")))
 
 	setOutcomeFromErr := func(err error) {
 		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
@@ -106,12 +106,12 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 	if header[0] != 0x12 {
-		sess.SetOutcome("error")
+		sess.SetOutcome("probe")
 		return
 	}
 	pktLen := int(binary.BigEndian.Uint16(header[2:4]))
 	if pktLen < 8 || pktLen > 1<<20 {
-		sess.SetOutcome("error")
+		sess.SetOutcome("probe")
 		return
 	}
 	payload := make([]byte, pktLen-8)
@@ -126,34 +126,56 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	if _, err := io.ReadFull(conn, header); err != nil {
-		setOutcomeFromErr(err)
-		return
-	}
-	if header[0] != 0x10 {
-		sess.SetOutcome("error")
-		return
-	}
-	loginLen := int(binary.BigEndian.Uint16(header[2:4]))
-	if loginLen < 8 || loginLen > 1<<20 {
-		sess.SetOutcome("error")
-		return
-	}
-	body := make([]byte, loginLen-8)
-	if _, err := io.ReadFull(conn, body); err != nil {
-		setOutcomeFromErr(err)
-		return
-	}
+	maxRetries := t.cfg.ResolveMaxAuthRetries("mssql")
+	authDelay := t.cfg.ResolveAuthDelay("mssql")
 
-	username, password := parseTDSLogin7(body)
-	sess.LogAuthAttempt(
-		slog.String("username", username),
-		slog.String("password", password),
-	)
-	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "mssql", map[string]string{"username": username, "password": password})
+	for attempt := 0; maxRetries == 0 || attempt < maxRetries; attempt++ {
+		if _, err := io.ReadFull(conn, header); err != nil {
+			if sess.authAttempts > 0 {
+				return
+			}
+			setOutcomeFromErr(err)
+			return
+		}
+		if header[0] != 0x10 {
+			if sess.authAttempts == 0 {
+				sess.SetOutcome("probe")
+			}
+			return
+		}
+		loginLen := int(binary.BigEndian.Uint16(header[2:4]))
+		if loginLen < 8 || loginLen > 1<<20 {
+			if sess.authAttempts == 0 {
+				sess.SetOutcome("probe")
+			}
+			return
+		}
+		body := make([]byte, loginLen-8)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			if sess.authAttempts > 0 {
+				return
+			}
+			setOutcomeFromErr(err)
+			return
+		}
 
-	_, _ = conn.Write(buildTDSErrorResponse())
+		username, password := parseTDSLogin7(body)
+		sess.LogAuthAttempt(
+			slog.String("username", username),
+			slog.String("password", password),
+		)
+		sess.RecordCredentials(t.metrics)
+		t.alerter.Alert(ctx, host, "mssql", map[string]string{"username": username, "password": password})
+
+		if authDelay > 0 {
+			if err := authSleep(ctx, authDelay, attempt); err != nil {
+				sess.SetOutcome("timeout")
+				return
+			}
+		}
+
+		_, _ = conn.Write(buildTDSErrorResponse())
+	}
 }
 
 func buildTDSPreloginResponse() []byte {

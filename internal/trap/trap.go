@@ -251,6 +251,25 @@ func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool) (*Mult
 	return ml, nil
 }
 
+func authSleep(ctx context.Context, baseDelay time.Duration, attempt int) error {
+	if baseDelay <= 0 {
+		return nil
+	}
+	multiplier := 1 << attempt
+	if multiplier > 4 {
+		multiplier = 4
+	}
+	delay := baseDelay * time.Duration(multiplier)
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func deadlineFromContext(ctx context.Context, timeout time.Duration) time.Time {
 	if dl, ok := ctx.Deadline(); ok && dl.Before(time.Now().Add(timeout)) {
 		return dl

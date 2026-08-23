@@ -28,10 +28,12 @@ func testConfig(t *testing.T) *config.Config {
 	return &config.Config{
 		Traps:          []string{"ssh"},
 		Addrs:          map[string]string{"ssh": addr},
+		PerProto:       make(map[string]config.ProtoConfig),
 		SSHHostKeyPath: "",
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
+		MaxAuthRetries: 3,
 	}
 }
 
@@ -121,4 +123,126 @@ func TestSSHBanner(t *testing.T) {
 
 	cancel()
 	_ = trap.Stop(context.Background())
+}
+
+func TestSSHOutcomeCompletedAfterAuth(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MaxAuthRetries = 3
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg, "test")
+	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+	logger := slog.Default()
+
+	sshTrap, err := NewSSH(cfg, logger, m, limiter, alert.NoopAlerter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = sshTrap.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	clientCfg := &gossh.ClientConfig{
+		User:            "root",
+		Auth:            []gossh.AuthMethod{gossh.Password("test123")},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		Timeout:         2 * time.Second,
+	}
+
+	conn, err := gossh.Dial("tcp", cfg.TrapAddr("ssh"), clientCfg)
+	if err == nil {
+		conn.Close()
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	families, _ := reg.Gather()
+	found := false
+	for _, f := range families {
+		if f.GetName() == "ran_connections_total" {
+			for _, m := range f.GetMetric() {
+				var proto, outcome string
+				for _, l := range m.GetLabel() {
+					switch l.GetName() {
+					case "protocol":
+						proto = l.GetValue()
+					case "outcome":
+						outcome = l.GetValue()
+					}
+				}
+				if proto == "ssh" && outcome == "completed" && m.GetCounter().GetValue() >= 1 {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected ran_connections_total{protocol=ssh,outcome=completed} >= 1")
+	}
+
+	cancel()
+	_ = sshTrap.Stop(context.Background())
+}
+
+func TestSSHMultiAuth(t *testing.T) {
+	cfg := testConfig(t)
+	six := 6
+	cfg.PerProto["ssh"] = config.ProtoConfig{MaxAuthRetries: &six}
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg, "test")
+	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+	logger := slog.Default()
+
+	sshTrap, err := NewSSH(cfg, logger, m, limiter, alert.NoopAlerter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = sshTrap.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	passwords := []string{"pass1", "pass2", "pass3"}
+	idx := 0
+	clientCfg := &gossh.ClientConfig{
+		User: "root",
+		Auth: []gossh.AuthMethod{
+			gossh.RetryableAuthMethod(gossh.PasswordCallback(func() (string, error) {
+				p := passwords[idx%len(passwords)]
+				idx++
+				return p, nil
+			}), 3),
+		},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		Timeout:         2 * time.Second,
+	}
+
+	conn, err := gossh.Dial("tcp", cfg.TrapAddr("ssh"), clientCfg)
+	if err == nil {
+		conn.Close()
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	families, _ := reg.Gather()
+	for _, f := range families {
+		if f.GetName() == "ran_credentials_captured_total" {
+			for _, met := range f.GetMetric() {
+				for _, l := range met.GetLabel() {
+					if l.GetName() == "protocol" && l.GetValue() == "ssh" {
+						if met.GetCounter().GetValue() < 3 {
+							t.Errorf("credentials captured = %v, want >= 3", met.GetCounter().GetValue())
+						}
+					}
+				}
+			}
+		}
+	}
+
+	cancel()
+	_ = sshTrap.Stop(context.Background())
 }

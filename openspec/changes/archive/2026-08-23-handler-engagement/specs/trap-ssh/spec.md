@@ -1,8 +1,4 @@
-## Purpose
-
-SSH honeypot trap emulating an OpenSSH server to capture credentials from brute-force attacks and scanners.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: SSH server emulation
 The SSH trap SHALL use `golang.org/x/crypto/ssh` with a `ServerConfig` that accepts password authentication via a callback. The `ServerConfig.MaxAuthTries` SHALL be set to the resolved max auth retries value for SSH. The PasswordCallback SHALL capture credentials on each attempt. After `NewServerConn` returns, the outcome SHALL be `"completed"` if at least one auth attempt was processed, or classified by error type otherwise.
@@ -19,24 +15,6 @@ The SSH trap SHALL use `golang.org/x/crypto/ssh` with a `ServerConfig` that acce
 - **WHEN** a client connects but sends no data until the session deadline expires
 - **THEN** the trap sets outcome `"timeout"`
 
-### Requirement: Host key management
-The trap SHALL generate an Ed25519 host key at startup. If `/data/ssh_host_key` exists, it SHALL be loaded instead. If `/data/` is writable and no key file exists, the generated key SHALL be persisted there.
-
-#### Scenario: Fresh start without volume
-- **WHEN** `/data/` does not exist or is not writable
-- **THEN** an ephemeral Ed25519 key is generated and used for the session
-
-#### Scenario: Persistent key
-- **WHEN** `/data/ssh_host_key` exists
-- **THEN** the key is loaded from disk and reused across restarts
-
-### Requirement: Session logging
-Each SSH connection SHALL be logged with: session_id, source_ip, source_port, protocol (`ssh`), and action (`connect`, `auth_attempt`, `disconnect`). Auth attempts SHALL include username and password.
-
-#### Scenario: Log output
-- **WHEN** an attacker connects from 1.2.3.4:54321 and tries `root`/`password`
-- **THEN** three log entries are emitted: connect, auth_attempt (with credentials), disconnect
-
 ### Requirement: Session timeout
 Connections SHALL be closed after the resolved session timeout for SSH (default `RAN_SESSION_TIMEOUT`, overridable by `RAN_SSH_SESSION_TIMEOUT`) regardless of client activity.
 
@@ -47,13 +25,6 @@ Connections SHALL be closed after the resolved session timeout for SSH (default 
 #### Scenario: Extended timeout for tarpit
 - **WHEN** `RAN_SSH_SESSION_TIMEOUT=120s` is set
 - **THEN** the SSH session deadline SHALL be 120s, allowing time for tarpit + auth phases
-
-### Requirement: Banner
-The SSH trap SHALL present a realistic server banner (e.g. `SSH-2.0-OpenSSH_9.6`).
-
-#### Scenario: Banner exchange
-- **WHEN** a client connects
-- **THEN** the server sends an OpenSSH-style banner string
 
 ### Requirement: CrowdSec alert on auth attempt
 The SSH trap SHALL call `alerter.Alert()` with the source IP and protocol `ssh` on every auth_attempt. With multi-auth enabled, this SHALL fire once per attempt.
@@ -66,12 +37,14 @@ The SSH trap SHALL call `alerter.Alert()` with the source IP and protocol `ssh` 
 - **WHEN** an attacker makes 6 password attempts in one session
 - **THEN** `alerter.Alert()` SHALL be called 6 times
 
+## ADDED Requirements
+
 ### Requirement: SSH auth delay
 The SSH handler SHALL apply the resolved auth delay for SSH between password attempts. The delay SHALL be applied within the PasswordCallback before returning the auth failure, using the shared `authSleep` helper.
 
 #### Scenario: Delay between SSH attempts
 - **WHEN** `RAN_SSH_AUTH_DELAY=3s` is set and a client makes 3 attempts
-- **THEN** the delays before each rejection SHALL be: 3s, 6s, 12s (capped at 4x base = 12s)
+- **THEN** the delays before each rejection SHALL be: 3s, 6s, 12s (capped at 4× base = 12s)
 
 #### Scenario: No delay when disabled
 - **WHEN** `RAN_SSH_AUTH_DELAY` is not set (default 0s)

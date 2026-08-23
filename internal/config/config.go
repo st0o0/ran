@@ -48,6 +48,12 @@ var ValidTraps = func() map[string]bool {
 	return m
 }()
 
+type ProtoConfig struct {
+	MaxAuthRetries *int
+	AuthDelay      *time.Duration
+	SessionTimeout *time.Duration
+}
+
 type Config struct {
 	Traps []string
 	Addrs map[string]string
@@ -62,6 +68,13 @@ type Config struct {
 	SessionTimeout time.Duration
 	MaxSessions    int
 	MaxPerIP       int
+
+	MaxAuthRetries   int
+	AuthDelay        time.Duration
+	SSHTarpit        bool
+	SSHTarpitDuration time.Duration
+
+	PerProto map[string]ProtoConfig
 
 	ProxyProtocol bool
 
@@ -105,11 +118,33 @@ func (c *Config) TrapAddrs(name string) []string {
 	return addrs
 }
 
+func (c *Config) ResolveMaxAuthRetries(proto string) int {
+	if pc, ok := c.PerProto[proto]; ok && pc.MaxAuthRetries != nil {
+		return *pc.MaxAuthRetries
+	}
+	return c.MaxAuthRetries
+}
+
+func (c *Config) ResolveAuthDelay(proto string) time.Duration {
+	if pc, ok := c.PerProto[proto]; ok && pc.AuthDelay != nil {
+		return *pc.AuthDelay
+	}
+	return c.AuthDelay
+}
+
+func (c *Config) ResolveSessionTimeout(proto string) time.Duration {
+	if pc, ok := c.PerProto[proto]; ok && pc.SessionTimeout != nil {
+		return *pc.SessionTimeout
+	}
+	return c.SessionTimeout
+}
+
 func Load(getenv func(string) string) (*Config, error) {
 	e := &envReader{getenv: getenv}
 
 	c := &Config{
 		Addrs:               make(map[string]string),
+		PerProto:            make(map[string]ProtoConfig),
 		SSHHostKeyPath:      e.str("RAN_SSH_HOST_KEY_PATH", "/data/ssh_host_key"),
 		LogLevel:            e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
 		LogFormat:           e.logFormat("RAN_LOG_FORMAT", "json"),
@@ -117,6 +152,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		SessionTimeout:      e.duration("RAN_SESSION_TIMEOUT", 30*time.Second),
 		MaxSessions:         e.intMin("RAN_MAX_SESSIONS", 500, 1),
 		MaxPerIP:            e.intMin("RAN_MAX_PER_IP", 10, 1),
+		MaxAuthRetries:      e.intMin("RAN_MAX_AUTH_RETRIES", 3, 0),
+		AuthDelay:           e.duration("RAN_AUTH_DELAY", 0),
+		SSHTarpit:           e.boolean("RAN_SSH_TARPIT", false),
+		SSHTarpitDuration:   e.duration("RAN_SSH_TARPIT_DURATION", 30*time.Second),
 		ProxyProtocol:       e.boolean("RAN_PROXY_PROTOCOL", false),
 		CrowdSec:            e.boolean("RAN_CROWDSEC", false),
 		CrowdSecURL:         e.str("RAN_CROWDSEC_URL", ""),
@@ -162,6 +201,36 @@ func Load(getenv func(string) string) (*Config, error) {
 			c.Addrs[name] = addr
 		} else {
 			c.Addrs[name] = DefaultPorts[name]
+		}
+	}
+
+	// Load per-protocol config overrides
+	for _, name := range c.Traps {
+		upper := strings.ToUpper(name)
+		pc := ProtoConfig{}
+		if v := strings.TrimSpace(getenv("RAN_" + upper + "_MAX_AUTH_RETRIES")); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("RAN_%s_MAX_AUTH_RETRIES must be an integer >= 0, got %q", upper, v)
+			}
+			pc.MaxAuthRetries = &n
+		}
+		if v := strings.TrimSpace(getenv("RAN_" + upper + "_AUTH_DELAY")); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return nil, fmt.Errorf("RAN_%s_AUTH_DELAY must be a valid Go duration, got %q", upper, v)
+			}
+			pc.AuthDelay = &d
+		}
+		if v := strings.TrimSpace(getenv("RAN_" + upper + "_SESSION_TIMEOUT")); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return nil, fmt.Errorf("RAN_%s_SESSION_TIMEOUT must be a valid Go duration, got %q", upper, v)
+			}
+			pc.SessionTimeout = &d
+		}
+		if pc.MaxAuthRetries != nil || pc.AuthDelay != nil || pc.SessionTimeout != nil {
+			c.PerProto[name] = pc
 		}
 	}
 

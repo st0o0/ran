@@ -1,8 +1,4 @@
-## Purpose
-
-SMB honeypot trap that simulates an SMB file sharing server to capture unauthorized access attempts and NTLM authentication harvesting.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: SMB negotiate and session setup capture
 The SMB trap SHALL listen on TCP, handle SMB/SMB2 Negotiate, respond with a Negotiate response, then accept Session Setup requests in a loop up to the resolved max auth retries, logging each authentication attempt and responding with STATUS_LOGON_FAILURE. Connections that do not send a valid SMB message (no `0xFF SMB` or `0xFE SMB` header after NetBIOS framing) SHALL be classified with outcome `"probe"`.
@@ -26,6 +22,8 @@ The SMB trap SHALL listen on TCP, handle SMB/SMB2 Negotiate, respond with a Nego
 #### Scenario: Non-SMB connection (scanner probe)
 - **WHEN** a client connects and sends data that does not contain a valid SMB header
 - **THEN** the trap SHALL set outcome `"probe"` and close the connection
+
+## ADDED Requirements
 
 ### Requirement: SMB auth delay
 The SMB handler SHALL apply the resolved auth delay for SMB before sending STATUS_LOGON_FAILURE on each Session Setup attempt, using the shared `authSleep` helper with escalating backoff.

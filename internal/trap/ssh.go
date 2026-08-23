@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"crypto/x509"
 
@@ -102,17 +103,47 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect()
 
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	timeout := t.cfg.ResolveSessionTimeout("ssh")
+	_ = conn.SetDeadline(deadlineFromContext(ctx, timeout))
+
+	if t.cfg.SSHTarpit {
+		tarpitCtx, tarpitCancel := context.WithTimeout(ctx, t.cfg.SSHTarpitDuration)
+		err := sshTarpit(tarpitCtx, conn, t.cfg.SSHTarpitDuration)
+		tarpitCancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				sess.SetOutcome("timeout")
+			} else {
+				sess.SetOutcome("error")
+			}
+			return
+		}
+		_ = conn.SetDeadline(deadlineFromContext(ctx, timeout))
+	}
+
+	var authSeen bool
+	var attempt int
+	authDelay := t.cfg.ResolveAuthDelay("ssh")
+	maxRetries := t.cfg.ResolveMaxAuthRetries("ssh")
 
 	sshCfg := &gossh.ServerConfig{
 		ServerVersion: "SSH-2.0-OpenSSH_9.6",
+		MaxAuthTries:  maxRetries,
 		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
+			authSeen = true
 			sess.LogAuthAttempt(
 				slog.String("username", c.User()),
 				slog.String("password", string(pass)),
 			)
 			sess.RecordCredentials(t.metrics)
 			t.alerter.Alert(ctx, host, "ssh", map[string]string{"username": c.User(), "password": string(pass)})
+			if authDelay > 0 {
+				if err := authSleep(ctx, authDelay, attempt); err != nil {
+					attempt++
+					return nil, errors.New("access denied")
+				}
+			}
+			attempt++
 			return nil, errors.New("access denied")
 		},
 	}
@@ -120,15 +151,55 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn) {
 
 	sshConn, _, _, err := gossh.NewServerConn(conn, sshCfg)
 	if err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+		if authSeen {
+			sess.SetOutcome("completed")
+		} else if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
 			sess.SetOutcome("timeout")
 		} else {
 			sess.SetOutcome("error")
 		}
-		sess.LogError("handshake_failed", err)
+		if !authSeen {
+			sess.LogError("handshake_failed", err)
+		}
 		return
 	}
 	sshConn.Close()
+}
+
+func sshTarpit(ctx context.Context, conn net.Conn, duration time.Duration) error {
+	deadline := time.After(duration)
+	for {
+		select {
+		case <-deadline:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		line := make([]byte, 32)
+		randBytes := make([]byte, 32)
+		_, _ = rand.Read(randBytes)
+		for i := range line {
+			line[i] = '!' + randBytes[i]%('~'-'!'+1)
+		}
+		if line[0] == 'S' && len(line) > 3 && line[1] == 'S' && line[2] == 'H' && line[3] == '-' {
+			line[0] = 'X'
+		}
+		line = append(line, '\r', '\n')
+		if _, err := conn.Write(line); err != nil {
+			return err
+		}
+		wait := time.NewTimer(10 * time.Second)
+		select {
+		case <-deadline:
+			wait.Stop()
+			return nil
+		case <-ctx.Done():
+			wait.Stop()
+			return ctx.Err()
+		case <-wait.C:
+		}
+	}
 }
 
 func loadOrGenerateHostKey(path string, logger *slog.Logger) (gossh.Signer, error) {

@@ -89,40 +89,51 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect()
 
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.ResolveSessionTimeout("telnet")))
 
 	reader := bufio.NewReaderSize(conn, 4096)
+	maxRetries := t.cfg.ResolveMaxAuthRetries("telnet")
+	authDelay := t.cfg.ResolveAuthDelay("telnet")
 
-	fmt.Fprint(conn, "\r\nLogin: ")
-	userLine, err := reader.ReadString('\n')
-	if err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
+	for attempt := 0; maxRetries == 0 || attempt < maxRetries; attempt++ {
+		fmt.Fprint(conn, "\r\nLogin: ")
+		userLine, err := reader.ReadString('\n')
+		if err != nil {
+			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+				sess.SetOutcome("timeout")
+			} else if sess.authAttempts == 0 {
+				sess.SetOutcome("error")
+			}
+			return
 		}
-		return
-	}
-	username := strings.TrimSpace(userLine)
+		username := strings.TrimSpace(userLine)
 
-	fmt.Fprint(conn, "Password: ")
-	passLine, err := reader.ReadString('\n')
-	if err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
+		fmt.Fprint(conn, "Password: ")
+		passLine, err := reader.ReadString('\n')
+		if err != nil {
+			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+				sess.SetOutcome("timeout")
+			} else if sess.authAttempts == 0 {
+				sess.SetOutcome("error")
+			}
+			return
 		}
-		return
+		password := strings.TrimSpace(passLine)
+
+		sess.LogAuthAttempt(
+			slog.String("username", username),
+			slog.String("password", password),
+		)
+		sess.RecordCredentials(t.metrics)
+		t.alerter.Alert(ctx, host, "telnet", map[string]string{"username": username, "password": password})
+
+		if authDelay > 0 {
+			if err := authSleep(ctx, authDelay, attempt); err != nil {
+				sess.SetOutcome("timeout")
+				return
+			}
+		}
+
+		fmt.Fprint(conn, "\r\nLogin incorrect\r\n")
 	}
-	password := strings.TrimSpace(passLine)
-
-	sess.LogAuthAttempt(
-		slog.String("username", username),
-		slog.String("password", password),
-	)
-	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "telnet", map[string]string{"username": username, "password": password})
-
-	fmt.Fprint(conn, "\r\nLogin incorrect\r\n")
 }

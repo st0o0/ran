@@ -90,20 +90,27 @@ func (t *SMBTrap) handle(ctx context.Context, conn net.Conn) {
 	defer sess.RecordEnd(t.metrics)
 	defer sess.LogDisconnect()
 
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
+	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.ResolveSessionTimeout("smb")))
+
+	maxRetries := t.cfg.ResolveMaxAuthRetries("smb")
+	authDelay := t.cfg.ResolveAuthDelay("smb")
+	authAttempt := 0
 
 	for {
 		payload, err := smbReadMessage(conn)
 		if err != nil {
 			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
 				sess.SetOutcome("timeout")
-			} else {
+			} else if sess.authAttempts == 0 {
 				sess.SetOutcome("error")
 			}
 			return
 		}
 
 		if len(payload) < 4 {
+			if sess.authAttempts == 0 {
+				sess.SetOutcome("probe")
+			}
 			return
 		}
 
@@ -114,6 +121,9 @@ func (t *SMBTrap) handle(ctx context.Context, conn net.Conn) {
 
 		if payload[0] == 0xFE && payload[1] == 'S' && payload[2] == 'M' && payload[3] == 'B' {
 			if len(payload) < 16 {
+				if sess.authAttempts == 0 {
+					sess.SetOutcome("probe")
+				}
 				return
 			}
 			command := binary.LittleEndian.Uint16(payload[12:14])
@@ -124,10 +134,24 @@ func (t *SMBTrap) handle(ctx context.Context, conn net.Conn) {
 				}
 			case 0x0001: // Session Setup
 				t.handleSMB2SessionSetup(ctx, conn, host, sess, payload)
-				return
+				authAttempt++
+				if maxRetries > 0 && authAttempt >= maxRetries {
+					return
+				}
+				if authDelay > 0 {
+					if err := authSleep(ctx, authDelay, authAttempt-1); err != nil {
+						sess.SetOutcome("timeout")
+						return
+					}
+				}
 			default:
 				return
 			}
+		} else {
+			if sess.authAttempts == 0 {
+				sess.SetOutcome("probe")
+			}
+			return
 		}
 	}
 }

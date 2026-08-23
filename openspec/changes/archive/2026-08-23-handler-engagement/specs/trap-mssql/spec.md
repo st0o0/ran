@@ -1,8 +1,4 @@
-## Purpose
-
-MSSQL honeypot trap that simulates a Microsoft SQL Server TDS endpoint to capture unauthorized access attempts.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: MSSQL TDS credential capture
 The MSSQL trap SHALL listen on TCP, handle the TDS prelogin handshake, then accept TDS Login7 packets in a loop up to the resolved max auth retries, extracting credentials and responding with a TDS error token after each attempt. Connections that do not send a valid TDS prelogin as the first packet SHALL be classified with outcome `"probe"`.
@@ -26,6 +22,8 @@ The MSSQL trap SHALL listen on TCP, handle the TDS prelogin handshake, then acce
 #### Scenario: Invalid packet length (scanner probe)
 - **WHEN** a client sends a packet with an invalid TDS length (< 8 or > 1MB)
 - **THEN** the trap SHALL set outcome `"probe"` and close the connection
+
+## ADDED Requirements
 
 ### Requirement: MSSQL auth delay
 The MSSQL handler SHALL apply the resolved auth delay for MSSQL before sending the TDS error response on each attempt, using the shared `authSleep` helper with escalating backoff.

@@ -1,8 +1,4 @@
-## Purpose
-
-Telnet honeypot trap that simulates a Telnet login service to capture unauthorized access attempts and credential harvesting.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Telnet login prompt and credential capture
 The Telnet trap SHALL listen on TCP, present a login prompt, capture username and password, log the credentials, display "Login incorrect", and repeat up to the resolved max auth retries. The session timeout SHALL use the resolved value for Telnet (global default or `RAN_TELNET_SESSION_TIMEOUT` override).
@@ -23,9 +19,7 @@ The Telnet trap SHALL listen on TCP, present a login prompt, capture username an
 - **WHEN** a client disconnects after 1 of 3 allowed attempts
 - **THEN** the trap SHALL end the session with outcome `"completed"` and 1 auth_attempt logged
 
-#### Scenario: Banner display
-- **WHEN** a client connects
-- **THEN** the trap SHALL send a system banner (e.g., hostname/OS identification) followed by a `login:` prompt
+## ADDED Requirements
 
 ### Requirement: Telnet auth delay
 The Telnet handler SHALL apply the resolved auth delay for Telnet before sending "Login incorrect" on each attempt, using the shared `authSleep` helper with escalating backoff.

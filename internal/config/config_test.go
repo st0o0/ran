@@ -412,3 +412,149 @@ func TestMinecraftTrapValid(t *testing.T) {
 		t.Errorf("TrapAddr(minecraft) = %q, want :25565", c.TrapAddr("minecraft"))
 	}
 }
+
+func TestMaxAuthRetriesDefault(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if c.MaxAuthRetries != 3 {
+		t.Errorf("MaxAuthRetries = %d, want 3", c.MaxAuthRetries)
+	}
+	if c.ResolveMaxAuthRetries("ssh") != 3 {
+		t.Errorf("ResolveMaxAuthRetries(ssh) = %d, want 3", c.ResolveMaxAuthRetries("ssh"))
+	}
+}
+
+func TestMaxAuthRetriesGlobal(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":            "ssh",
+		"RAN_MAX_AUTH_RETRIES": "5",
+	}))
+	if c.ResolveMaxAuthRetries("ssh") != 5 {
+		t.Errorf("ResolveMaxAuthRetries(ssh) = %d, want 5", c.ResolveMaxAuthRetries("ssh"))
+	}
+}
+
+func TestMaxAuthRetriesPerProto(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                  "ssh,telnet",
+		"RAN_MAX_AUTH_RETRIES":       "3",
+		"RAN_SSH_MAX_AUTH_RETRIES":   "6",
+	}))
+	if c.ResolveMaxAuthRetries("ssh") != 6 {
+		t.Errorf("ResolveMaxAuthRetries(ssh) = %d, want 6", c.ResolveMaxAuthRetries("ssh"))
+	}
+	if c.ResolveMaxAuthRetries("telnet") != 3 {
+		t.Errorf("ResolveMaxAuthRetries(telnet) = %d, want 3", c.ResolveMaxAuthRetries("telnet"))
+	}
+}
+
+func TestMaxAuthRetriesUnlimited(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                    "mssql",
+		"RAN_MSSQL_MAX_AUTH_RETRIES":   "0",
+	}))
+	if c.ResolveMaxAuthRetries("mssql") != 0 {
+		t.Errorf("ResolveMaxAuthRetries(mssql) = %d, want 0", c.ResolveMaxAuthRetries("mssql"))
+	}
+}
+
+func TestMaxAuthRetriesInvalid(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":            "ssh",
+		"RAN_MAX_AUTH_RETRIES": "banana",
+	}))
+	if err == nil {
+		t.Fatal("expected error for invalid max auth retries")
+	}
+}
+
+func TestMaxAuthRetriesPerProtoInvalid(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                 "ssh",
+		"RAN_SSH_MAX_AUTH_RETRIES":  "-1",
+	}))
+	if err == nil {
+		t.Fatal("expected error for negative per-proto max auth retries")
+	}
+}
+
+func TestAuthDelayDefault(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if c.AuthDelay != 0 {
+		t.Errorf("AuthDelay = %v, want 0", c.AuthDelay)
+	}
+	if c.ResolveAuthDelay("ssh") != 0 {
+		t.Errorf("ResolveAuthDelay(ssh) = %v, want 0", c.ResolveAuthDelay("ssh"))
+	}
+}
+
+func TestAuthDelayPerProto(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":          "ssh,telnet",
+		"RAN_AUTH_DELAY":     "1s",
+		"RAN_SSH_AUTH_DELAY": "3s",
+	}))
+	if c.ResolveAuthDelay("ssh") != 3*time.Second {
+		t.Errorf("ResolveAuthDelay(ssh) = %v, want 3s", c.ResolveAuthDelay("ssh"))
+	}
+	if c.ResolveAuthDelay("telnet") != 1*time.Second {
+		t.Errorf("ResolveAuthDelay(telnet) = %v, want 1s", c.ResolveAuthDelay("telnet"))
+	}
+}
+
+func TestAuthDelayInvalid(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":          "ssh",
+		"RAN_SSH_AUTH_DELAY": "notaduration",
+	}))
+	if err == nil {
+		t.Fatal("expected error for invalid per-proto auth delay")
+	}
+}
+
+func TestSSHTarpitDefault(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if c.SSHTarpit {
+		t.Error("SSHTarpit should default to false")
+	}
+	if c.SSHTarpitDuration != 30*time.Second {
+		t.Errorf("SSHTarpitDuration = %v, want 30s", c.SSHTarpitDuration)
+	}
+}
+
+func TestSSHTarpitEnabled(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_SSH_TARPIT":          "on",
+		"RAN_SSH_TARPIT_DURATION": "1m",
+	}))
+	if !c.SSHTarpit {
+		t.Error("SSHTarpit should be true")
+	}
+	if c.SSHTarpitDuration != time.Minute {
+		t.Errorf("SSHTarpitDuration = %v, want 1m", c.SSHTarpitDuration)
+	}
+}
+
+func TestPerProtoSessionTimeout(t *testing.T) {
+	c, _ := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh,telnet",
+		"RAN_SESSION_TIMEOUT":     "30s",
+		"RAN_SSH_SESSION_TIMEOUT": "120s",
+	}))
+	if c.ResolveSessionTimeout("ssh") != 120*time.Second {
+		t.Errorf("ResolveSessionTimeout(ssh) = %v, want 120s", c.ResolveSessionTimeout("ssh"))
+	}
+	if c.ResolveSessionTimeout("telnet") != 30*time.Second {
+		t.Errorf("ResolveSessionTimeout(telnet) = %v, want 30s", c.ResolveSessionTimeout("telnet"))
+	}
+}
+
+func TestPerProtoSessionTimeoutInvalid(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_SSH_SESSION_TIMEOUT": "notvalid",
+	}))
+	if err == nil {
+		t.Fatal("expected error for invalid per-proto session timeout")
+	}
+}

@@ -26,9 +26,11 @@ func mssqlTestConfig(t *testing.T) *config.Config {
 
 	return &config.Config{
 		Addrs:          map[string]string{"mssql": addr},
+		PerProto:       make(map[string]config.ProtoConfig),
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
+		MaxAuthRetries: 3,
 	}
 }
 
@@ -201,4 +203,55 @@ func TestMSSQLTrapConnection(t *testing.T) {
 
 	cancel()
 	_ = trap.Stop(context.Background())
+}
+
+func TestMSSQLProbeOutcome(t *testing.T) {
+	cfg := mssqlTestConfig(t)
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg, "test")
+	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
+
+	mssqlTrap := NewMSSQL(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = mssqlTrap.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", cfg.Addrs["mssql"], 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Send non-TDS data
+	conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	conn.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	families, _ := reg.Gather()
+	found := false
+	for _, f := range families {
+		if f.GetName() == "ran_connections_total" {
+			for _, met := range f.GetMetric() {
+				var proto, outcome string
+				for _, l := range met.GetLabel() {
+					switch l.GetName() {
+					case "protocol":
+						proto = l.GetValue()
+					case "outcome":
+						outcome = l.GetValue()
+					}
+				}
+				if proto == "mssql" && outcome == "probe" && met.GetCounter().GetValue() >= 1 {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected ran_connections_total{protocol=mssql,outcome=probe} >= 1")
+	}
+
+	cancel()
+	_ = mssqlTrap.Stop(context.Background())
 }

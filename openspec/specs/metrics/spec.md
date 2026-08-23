@@ -12,7 +12,7 @@ The metrics server SHALL serve Prometheus metrics on `RAN_METRICS_ADDR` (default
 - **THEN** all registered metrics are returned in Prometheus exposition format
 
 ### Requirement: Connection counter
-`ran_connections_total{protocol, outcome}` SHALL be a counter incremented on each connection with the session's outcome. Outcome labels: `completed`, `timeout`, `error`, `rejected`.
+`ran_connections_total{protocol, outcome}` SHALL be a counter incremented on each connection with the session's outcome. Outcome labels: `completed`, `timeout`, `error`, `rejected`, `probe`.
 
 #### Scenario: Completed SSH connection
 - **WHEN** an SSH connection completes normally
@@ -25,6 +25,10 @@ The metrics server SHALL serve Prometheus metrics on `RAN_METRICS_ADDR` (default
 #### Scenario: Rejected connection
 - **WHEN** a connection is rejected by the rate limiter
 - **THEN** `ran_connections_total{protocol="ssh", outcome="rejected"}` is incremented
+
+#### Scenario: Probe connection
+- **WHEN** a scanner connects to the MSSQL port and sends non-TDS data
+- **THEN** `ran_connections_total{protocol="mssql", outcome="probe"}` is incremented
 
 ### Requirement: Credential counter
 `ran_credentials_captured_total{protocol}` SHALL be a counter incremented when credentials are captured from an auth attempt.
