@@ -327,8 +327,8 @@ func TestSMBProbeOutcome(t *testing.T) {
 	hdr[1] = byte(len(garbage) >> 16)
 	hdr[2] = byte(len(garbage) >> 8)
 	hdr[3] = byte(len(garbage))
-	conn.Write(hdr[:])
-	conn.Write(garbage)
+	_, _ = conn.Write(hdr[:])
+	_, _ = conn.Write(garbage)
 	conn.Close()
 
 	time.Sleep(200 * time.Millisecond)

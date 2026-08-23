@@ -223,7 +223,7 @@ func TestMSSQLProbeOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Send non-TDS data
-	conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	_, _ = conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
 	conn.Close()
 
 	time.Sleep(200 * time.Millisecond)
