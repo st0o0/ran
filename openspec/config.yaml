@@ -1,20 +1,38 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Project: rán — a multi-protocol honeypot with Prometheus metrics and CrowdSec integration
+  Binary: ran (module github.com/st0o0/ran)
+  Language: Go 1.26+, stdlib + golang.org/x/crypto (SSH)
+  Build: CGO_ENABLED=0, multi-stage Docker (scratch), ldflags version injection
+  Config: environment variables with RAN_ prefix, loaded via getenv function for testability
+  Metrics: prometheus/client_golang, custom registry, exposed on :9550/metrics
+  Logging: log/slog, JSON (default) or text format
+  Linting: golangci-lint v2
+  Container: ghcr.io, scratch base, built-in healthcheck
+  CI: GitHub Actions (ci.yml), semantic versioning releases
+  Domain: honeypot that emulates 25+ network protocols to capture attacker credentials and behavior
+  Architecture: cmd/ran (entrypoint) + internal/ (config, metrics, trap, alert)
+  Traps: ssh, http, mysql, ftp, telnet, smtp, dns, pop3, imap, ldap, smb, modbus, socks5, mssql, oracle, mqtt, rdp, postgres, sip, vnc, redis, irc, httpproxy, elasticsearch, memcached, ntp, snmp, adb, minecraft
+  Alerting: CrowdSec LAPI integration with dedup, caching, and pipeline metrics
+  Conventions:
+    - Single-line git commit messages, no body, no Co-Authored-By
+    - No comments unless the WHY is non-obvious
+    - Env vars: RAN_ prefix with per-protocol overrides (RAN_<PROTO>_*)
+    - Feature toggles: on/off string values
+    - Errors wrapped with fmt.Errorf and %w
+    - Context propagation via context.Context
+    - Graceful shutdown via signal.NotifyContext (SIGTERM, SIGINT)
+    - Per-trap isolation: each trap in its own package under internal/trap/
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - Keep proposals concise, under 500 words
+    - Always include a "Non-goals" section
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Each task must be independently testable
+  specs:
+    - Use WHEN/THEN scenario format for all requirements
+    - One spec per capability (config, metrics, lifecycle, each trap, alerting)
+    - Prefix metric names with ran_
