@@ -23,5 +23,5 @@ export default {
     "footer-max-line-length": [0, "always"],
     "subject-case": [0, "always"],
   },
-  ignores: [(message) => message.includes("dependabot[bot]")],
+  ignores: [(message) => message.includes("renovate[bot]")],
 };
