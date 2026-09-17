@@ -1,19 +1,34 @@
-# Local design/plan docs — never committed
+# Go build output
+/ran
+*.exe
+
+# Coverage
+*_cov.out
+coverage/
+
+# Design docs (local only)
 docs/
 
 # Claude Code
 .claude/
+
+# Worktrees
+.worktrees/
 
 # Editor / OS
 .idea/
 .vscode/
 .DS_Store
 *.swp
+*.swo
+*~
 
 # Test artifacts
 tests/tmp/
 *.log
 
-# Go build output
-/ran
-/ran.exe
+# Environment files
+**.env
+
+# Secrets
+.secrets/

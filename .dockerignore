@@ -6,3 +6,13 @@ openspec
 tests
 *.md
 !LICENSE.md
+.hadolint.yaml
+.trivyignore
+.golangci.yml
+.release-please-manifest.json
+release-please-config.json
+commitlint.config.mjs
+renovate.json
+package.json
+docker-compose*.yml
+*.exe
