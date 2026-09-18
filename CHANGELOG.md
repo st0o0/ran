@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.8](https://github.com/st0o0/ran/compare/v0.3.7...v0.3.8) (2026-09-18)
+
+
+### Features
+
+* decouple release-please from build workflow ([0d1d25d](https://github.com/st0o0/ran/commit/0d1d25d7e3f3b304621d301bfcfcc131277fef41))
+* extend docker preset for base image digest pinning + automerge ([81946bd](https://github.com/st0o0/ran/commit/81946bdc09b84510df8ba38ef92c57e59a9047fb))
+* migrate to modular build and docker workflows ([e4ecb28](https://github.com/st0o0/ran/commit/e4ecb286749674c4577c1dda838a43b9d69418ca))
+* migrate to multi-stage Dockerfile ([05c800f](https://github.com/st0o0/ran/commit/05c800f3237788ac626295ed099c35ae04306d63))
+
+
+### Bug Fixes
+
+* add id-token permission for cosign signing in dev builds ([533344a](https://github.com/st0o0/ran/commit/533344a4d7ac000194e7c1d08b7961b836a20107))
+* grant contents:read and drop paths filter in dev-build docker job ([e251287](https://github.com/st0o0/ran/commit/e251287d3400d75d5a1e22219568a7ae29783984))
+
+
+### Documentation
+
+* align README badges ([0983504](https://github.com/st0o0/ran/commit/0983504e203aa68ba8f55e83d46c74e26505f29c))
+* update project context and rules ([8753d04](https://github.com/st0o0/ran/commit/8753d047d53d423aacf12c4eb0fd3004f3555aa3))
+
+
+### Refactoring
+
+* migrate to shared reusable workflows ([598ef59](https://github.com/st0o0/ran/commit/598ef5982dc11755169d76019583bb9a907e2148))
+* rename CI jobs for cleaner GitHub check names ([97e13dd](https://github.com/st0o0/ran/commit/97e13dd31c676ccd1726e2db78c55a442da999a0))
+
+
+### Dependencies
+
+* bump golang from 1.26.6-alpine to 1.27.0-alpine ([1003d8d](https://github.com/st0o0/ran/commit/1003d8d22d70c92a4980b1ed917890bf4f7370ed))
+* bump golang from 1.27.0-alpine to 1.27.1-alpine ([7a8a5bb](https://github.com/st0o0/ran/commit/7a8a5bb5bc52fa91990e04cf9ad328ec1ef6001a))
+* bump golang.org/x/crypto from 0.55.0 to 0.56.0 in the go-all group ([67d1388](https://github.com/st0o0/ran/commit/67d1388e7c87fb2877a234fc79a5ae0d8c07c175))
+* bump hadolint/hadolint-action in the actions-all group ([29d3a3f](https://github.com/st0o0/ran/commit/29d3a3f8c508e9e85a3d8bfaf59062f5ef66b4c2))
+
 ## [0.3.7](https://github.com/st0o0/ran/compare/v0.3.6...v0.3.7) (2026-08-23)
 
 
