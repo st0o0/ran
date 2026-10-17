@@ -36,10 +36,10 @@ services:
 
 There are already good honeypots out there. The reason I built rán:
 
-- **T-Pot** is excellent if you have a dedicated server — but it's 31 Docker
-  containers, an ELK stack, and 8+ GB RAM. Way too heavy for running alongside
+- **T-Pot** is excellent if you have a dedicated server, but it's 31 Docker
+  containers, an ELK stack, and 8+ GB RAM. Too heavy for running alongside
   production services.
-- **qeeqbox/honeypots** has great protocol coverage in Python, but it needs a
+- **qeeqbox/honeypots** has broad protocol coverage in Python, but it needs a
   Python runtime and pip, and doesn't integrate with CrowdSec.
 
 rán does one thing: catch probes, log them, ban the source. Single static Go
@@ -87,7 +87,7 @@ attacker connects ──▶ protocol handshake ──▶ credential / command / 
 
 Each trap emulates just enough protocol to complete the handshake, grab the
 interesting data, and return a plausible error. No interactive sessions,
-no filesystem emulation — minimal attack surface on the honeypot itself.
+no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 
 ## Traps
 
@@ -95,44 +95,44 @@ no filesystem emulation — minimal attack surface on the honeypot itself.
 
 | Name | Port | Captures |
 |---|---|---|
-| `ssh` | `:2222` | Credentials — OpenSSH banner, password auth |
-| `rdp` | `:3389` | Username — X.224 cookie extraction |
-| `vnc` | `:5900` | Auth challenge/response — VNC Authentication |
-| `telnet` | `:23` | Credentials — login/password prompts |
+| `ssh` | `:2222` | Credentials (OpenSSH banner, password auth) |
+| `rdp` | `:3389` | Username (X.224 cookie extraction) |
+| `vnc` | `:5900` | Auth challenge/response (VNC Authentication) |
+| `telnet` | `:23` | Credentials (login/password prompts) |
 
 ### Web & proxy
 
 | Name | Port | Captures |
 |---|---|---|
-| `http` | `:8081` | Credentials — WordPress + admin login pages |
+| `http` | `:8081` | Credentials (WordPress + admin login pages) |
 | `httpproxy` | `:8080` | Proxy targets + Proxy-Authorization credentials |
-| `elasticsearch` | `:9200` | API requests — fake cluster responses |
+| `elasticsearch` | `:9200` | API requests (fake cluster responses) |
 
 ### Databases
 
 | Name | Port | Captures |
 |---|---|---|
-| `mysql` | `:3307` | Credentials — wire protocol, cleartext password |
-| `postgres` | `:5432` | Credentials — cleartext password auth |
-| `mssql` | `:1433` | Credentials — TDS Login7 with password decode |
-| `oracle` | `:1521` | Credentials — TNS connect descriptor |
+| `mysql` | `:3307` | Credentials (wire protocol, cleartext password) |
+| `postgres` | `:5432` | Credentials (cleartext password auth) |
+| `mssql` | `:1433` | Credentials (TDS Login7 with password decode) |
+| `oracle` | `:1521` | Credentials (TNS connect descriptor) |
 | `redis` | `:6379` | AUTH credentials + RESP command logging |
-| `memcached` | `:11211` | Command logging — text protocol |
+| `memcached` | `:11211` | Command logging (text protocol) |
 
 ### Mail
 
 | Name | Port | Captures |
 |---|---|---|
-| `smtp` | `:25` | Credentials — AUTH LOGIN / PLAIN |
-| `pop3` | `:110` | Credentials — USER / PASS |
-| `imap` | `:143` | Credentials — LOGIN command |
+| `smtp` | `:25` | Credentials (AUTH LOGIN / PLAIN) |
+| `pop3` | `:110` | Credentials (USER / PASS) |
+| `imap` | `:143` | Credentials (LOGIN command) |
 
 ### Directory & network
 
 | Name | Port | Captures |
 |---|---|---|
-| `ldap` | `:389` | Credentials — simple bind DN + password |
-| `smb` | `:445` | Credentials — NTLMSSP domain\user + workstation |
+| `ldap` | `:389` | Credentials (simple bind DN + password) |
+| `smb` | `:445` | Credentials (NTLMSSP domain\user + workstation) |
 | `socks5` | `:1080` | Credentials + proxy target addresses |
 | `irc` | `:6667` | PASS credentials + NICK/USER/JOIN commands |
 
@@ -140,19 +140,19 @@ no filesystem emulation — minimal attack surface on the honeypot itself.
 
 | Name | Port | Captures |
 |---|---|---|
-| `mqtt` | `:1883` | Credentials — CONNECT client ID + user/pass |
-| `modbus` | `:502` | ICS payloads — function codes + registers |
-| `adb` | `:5555` | ADB CNXN system identity — AUTH token challenge |
+| `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass) |
+| `modbus` | `:502` | ICS payloads (function codes + registers) |
+| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge) |
 | `minecraft` | `:25565` | Handshake metadata + player names from login attempts |
 
 ### UDP
 
 | Name | Port | Captures |
 |---|---|---|
-| `dns` | `:53` | Query domains + types — responds REFUSED |
-| `snmp` | `:161` | Community strings — v1/v2c GetRequest |
+| `dns` | `:53` | Query domains + types (responds REFUSED) |
+| `snmp` | `:161` | Community strings (v1/v2c GetRequest) |
 | `sip` | `:5060` | SIP URIs + digest credentials |
-| `ntp` | `:123` | Request metadata — drops monlist amplification |
+| `ntp` | `:123` | Request metadata (drops monlist amplification) |
 
 ## Configuration
 
@@ -199,13 +199,13 @@ takes precedence when set.
 
 Exposed metrics:
 
-- `ran_connections_total{protocol}` — connection counter
-- `ran_credentials_captured_total{protocol}` — credential capture counter
-- `ran_active_sessions{protocol}` — active session gauge
-- `ran_session_duration_seconds{protocol}` — session duration histogram
-- `ran_crowdsec_alerts_total{protocol,status}` — CrowdSec alert push counter
-- `ran_crowdsec_alerts_deduplicated_total{protocol}` — alerts suppressed by dedup
-- `ran_crowdsec_alerts_cached_total{protocol}` — alerts suppressed by decision cache
+- `ran_connections_total{protocol}`: connection counter
+- `ran_credentials_captured_total{protocol}`: credential capture counter
+- `ran_active_sessions{protocol}`: active session gauge
+- `ran_session_duration_seconds{protocol}`: session duration histogram
+- `ran_crowdsec_alerts_total{protocol,status}`: CrowdSec alert push counter
+- `ran_crowdsec_alerts_deduplicated_total{protocol}`: alerts suppressed by dedup
+- `ran_crowdsec_alerts_cached_total{protocol}`: alerts suppressed by decision cache
 
 ### CrowdSec
 
@@ -230,7 +230,7 @@ cscli machines add -m ran-honeypot -p <password>
 rán authenticates via machine-login (`POST /v1/watchers/login`) and
 automatically refreshes the JWT token in the background. Scenario names
 follow the pattern `custom/ran-<protocol>-trap`. Each alert includes a
-self-contained ban decision — CrowdSec forwards it directly to bouncers
+self-contained ban decision, so CrowdSec forwards it directly to bouncers
 without needing a local scenario.
 
 #### Alert Pipeline
@@ -241,9 +241,9 @@ Alerts pass through three filters before reaching CrowdSec LAPI:
 Alert(ip, protocol) → Decision Cache → Dedup Filter → Batch Queue → POST /v1/alerts
 ```
 
-1. **Decision Cache** — if the IP was already banned by a prior alert, skip.
-2. **Dedup Filter** — if the same IP+scenario was reported within the dedup window, skip.
-3. **Batch Queue** — collect alerts and flush as a single POST on timer or batch-size threshold.
+1. **Decision Cache**: if the IP was already banned by a prior alert, skip.
+2. **Dedup Filter**: if the same IP+scenario was reported within the dedup window, skip.
+3. **Batch Queue**: collect alerts and flush as a single POST on timer or batch-size threshold.
 
 After a successful POST, each IP in the batch is added to the decision cache
 with the configured ban duration.
@@ -269,12 +269,12 @@ services:
 
 By default every attacker gets the same ban duration (`RAN_CROWDSEC_BAN_DURATION`,
 default `4h`). CrowdSec Profiles can override this with dynamic escalation
-based on how many times an IP has been banned before — no changes to rán
+based on how many times an IP has been banned before, with no changes to rán
 required.
 
 > **Prerequisite:** `duration_expr` requires CrowdSec ≥ 1.4.
 
-Add the following to your CrowdSec `profiles.yaml`. **Order matters** —
+Add the following to your CrowdSec `profiles.yaml`. Order matters:
 CrowdSec evaluates profiles top-to-bottom and stops at the first
 `on_success: break`. Place the permanent-ban profile before the escalation
 profile.
@@ -308,8 +308,8 @@ on_success: break
 | 5th | 4 | 324h (13.5 days) |
 | 6th+ | ≥ 5 | 8760h (permanent) |
 
-Without these profiles, rán's embedded default decision applies unchanged —
-existing deployments are not affected.
+Without these profiles, rán's embedded default decision applies unchanged,
+so existing deployments are not affected.
 
 Verify escalation is working:
 
@@ -318,7 +318,7 @@ cscli decisions list -o json
 ```
 
 > **Note:** `GetDecisionsCount()` queries CrowdSec's decision database.
-> Expired decisions are purged based on `db_config.flush.max_age` — if the
+> Expired decisions are purged based on `db_config.flush.max_age`. If the
 > retention window is shorter than your escalation window, counters reset
 > early. Check your retention settings with `cscli config show`.
 
@@ -345,19 +345,19 @@ Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`.
 
 ## Troubleshooting
 
-**`at least one trap must be enabled`** — set `RAN_TRAPS` or at least one
+**`at least one trap must be enabled`**: set `RAN_TRAPS` or at least one
 `RAN_<PROTO>=on` variable.
 
-**Port already in use** — another service is on the default port. Override
+**Port already in use**: another service is on the default port. Override
 with `RAN_<PROTO>_ADDR=:<port>`.
 
-**CrowdSec alerts not arriving** — verify `RAN_CROWDSEC_URL` is reachable
+**CrowdSec alerts not arriving**: verify `RAN_CROWDSEC_URL` is reachable
 from the container and the machine is registered (`cscli machines list`).
 
-**UDP traps not receiving packets** — Docker needs explicit UDP port mapping:
+**UDP traps not receiving packets**: Docker needs explicit UDP port mapping:
 `-p 53:53/udp`, not just `-p 53:53`.
 
-**High connection volume causing drops** — increase `RAN_MAX_SESSIONS` and
+**High connection volume causing drops**: increase `RAN_MAX_SESSIONS` and
 `RAN_MAX_PER_IP`, or enable only the traps you need.
 
 ## Development
@@ -380,4 +380,4 @@ Architectures: `linux/amd64`, `linux/arm64`.
 
 ## License
 
-MIT — see [`LICENSE.md`](LICENSE.md).
+MIT, see [`LICENSE.md`](LICENSE.md).
