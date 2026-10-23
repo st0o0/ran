@@ -9,7 +9,7 @@ The SNMP trap SHALL listen on UDP, parse SNMPv1/v2c GetRequest packets (BER-enco
 
 #### Scenario: Community string capture
 - **WHEN** a UDP packet contains an SNMP GetRequest with community string "public"
-- **THEN** the trap SHALL log a payload event with community="public" and oid requested, alert CrowdSec, and respond with GetResponse containing error-status noSuchName
+- **THEN** the trap SHALL log a payload event with community="public" and oid requested, not alert CrowdSec (UDP source IPs are spoofable), and respond with GetResponse containing error-status noSuchName
 
 #### Scenario: SNMPv3 packet
 - **WHEN** a packet appears to be SNMPv3 (version field = 3)

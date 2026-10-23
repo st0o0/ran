@@ -9,7 +9,7 @@ The DNS trap SHALL listen on UDP, parse incoming DNS query packets, log the quer
 
 #### Scenario: A record query
 - **WHEN** a UDP packet contains a DNS query for `example.com` type A
-- **THEN** the trap SHALL log a payload event with domain="example.com", qtype="A", alert CrowdSec, and respond with the same query ID and RCODE=5 (REFUSED)
+- **THEN** the trap SHALL log a payload event with domain="example.com", qtype="A", not alert CrowdSec (UDP source IPs are spoofable), and respond with the same query ID and RCODE=5 (REFUSED)
 
 #### Scenario: ANY query (amplification probe)
 - **WHEN** a DNS query with qtype=ANY arrives

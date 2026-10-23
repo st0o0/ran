@@ -9,7 +9,7 @@ The SIP trap SHALL listen on UDP, parse SIP messages, log REGISTER and INVITE re
 
 #### Scenario: REGISTER request
 - **WHEN** a SIP REGISTER request arrives with From header containing a SIP URI
-- **THEN** the trap SHALL log the From URI, To URI, Contact, and Call-ID, alert CrowdSec, and respond with `401 Unauthorized` including a WWW-Authenticate header
+- **THEN** the trap SHALL log the From URI, To URI, Contact, and Call-ID, not alert CrowdSec (UDP source IPs are spoofable), and respond with `401 Unauthorized` including a WWW-Authenticate header
 
 #### Scenario: INVITE request
 - **WHEN** a SIP INVITE request arrives
