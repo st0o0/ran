@@ -106,3 +106,10 @@ The UDP read loop SHALL apply a per-source token bucket (default 20 pkt/s, burst
 - **WHEN** `RAN_UDP_RATE_BURST` is smaller than `RAN_UDP_RATE_PER_SOURCE`
 - **THEN** configuration loading fails with an error naming `RAN_UDP_RATE_BURST`
 
+### Requirement: UDP Stop honours its context
+`Stop(ctx)` on a UDP trap SHALL close all sockets and wait for in-flight packet handlers, and SHALL return `ctx.Err()` when the context ends before they finish.
+
+#### Scenario: Handler stuck at shutdown
+- **WHEN** a packet handler does not return before the `Stop` context deadline
+- **THEN** `Stop` returns the context error at the deadline
+

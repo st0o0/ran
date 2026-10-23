@@ -77,20 +77,24 @@ The custom Prometheus registry SHALL register `collectors.NewGoCollector()` and 
 - **THEN** `ran_crowdsec_alerts_dropped_total{protocol="sip"}` is incremented
 
 ### Requirement: CrowdSec pipeline funnel metric
-`ran_crowdsec_pipeline_total{protocol, stage}` SHALL be a counter tracking each stage of the alert pipeline. Stage values: `received`, `cached`, `deduplicated`, `queued`, `sent`, `failed`, `dropped`.
+`ran_crowdsec_pipeline_total{protocol, stage}` SHALL be a counter. Stage values: `received`, `filtered`, `cooldown`, `queued`, `sent`, `failed`, `dropped`, `invalid`, `closed`. The stages `cached` and `deduplicated` SHALL no longer be emitted. All other `ran_*` metrics SHALL keep their names and labels.
 
 #### Scenario: Full pipeline success
-- **WHEN** an alert is received, passes cache and dedup checks, is queued, and pushed successfully
-- **THEN** `ran_crowdsec_pipeline_total{stage="received"}`, `{stage="queued"}`, and `{stage="sent"}` are each incremented
+- **WHEN** an alert is received, passes the class filter and cooldown, is queued and pushed
+- **THEN** `received`, `queued` and `sent` are each incremented
 
-#### Scenario: Alert cached
-- **WHEN** an alert is received for an IP already in the decision cache
-- **THEN** `ran_crowdsec_pipeline_total{stage="received"}` and `{stage="cached"}` are incremented
+#### Scenario: Alert filtered by class
+- **WHEN** a session's class is not in `RAN_BAN_ON`
+- **THEN** `received` and `filtered` are incremented
 
-#### Scenario: Alert deduplicated
-- **WHEN** an alert is received for an IP+scenario seen within the dedup window
-- **THEN** `ran_crowdsec_pipeline_total{stage="received"}` and `{stage="deduplicated"}` are incremented
+#### Scenario: Alert in cooldown
+- **WHEN** an alert for the same IP and class is within `RAN_ALERT_COOLDOWN`
+- **THEN** `received` and `cooldown` are incremented
 
 #### Scenario: Funnel arithmetic
 - **WHEN** querying delivery rate
-- **THEN** `rate(ran_crowdsec_pipeline_total{stage="sent"}[5m]) / rate(ran_crowdsec_pipeline_total{stage="received"}[5m])` gives the delivery ratio
+- **THEN** `rate(ran_crowdsec_pipeline_total{stage="sent"}[5m]) / rate(ran_crowdsec_pipeline_total{stage="queued"}[5m])` gives the delivery ratio
+
+#### Scenario: Existing dashboards
+- **WHEN** a dashboard queries `ran_connections_total{protocol}` or `ran_credentials_captured_total{protocol}`
+- **THEN** it keeps working unchanged

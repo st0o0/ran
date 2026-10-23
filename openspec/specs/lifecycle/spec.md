@@ -1,9 +1,7 @@
 ## Purpose
 
 Process lifecycle management including entrypoint, signal handling, graceful shutdown, subcommands, connection limiting, and session tracking.
-
 ## Requirements
-
 ### Requirement: Trap startup registration
 The system SHALL start all traps listed in `EnabledTraps()` by looking up their factory function in a registry map. Each trap SHALL be started in its own goroutine.
 
@@ -16,11 +14,11 @@ The system SHALL start all traps listed in `EnabledTraps()` by looking up their 
 - **THEN** the system SHALL return an error before starting any traps
 
 ### Requirement: Entrypoint with signal handling
-The main function SHALL parse config, start all enabled traps as goroutines, and block until SIGTERM or SIGINT is received. On signal, all traps SHALL be stopped gracefully via context cancellation.
+The main function SHALL parse config, start all enabled traps as goroutines, and block until SIGTERM or SIGINT is received. On signal, all traps SHALL be stopped via context cancellation and `Stop`, which closes active sessions, bounded by the shutdown timeout.
 
 #### Scenario: Graceful shutdown
 - **WHEN** SIGTERM is sent to the process
-- **THEN** all trap listeners stop accepting new connections, active sessions drain (up to a timeout), and the process exits 0
+- **THEN** all trap listeners stop accepting new connections, active sessions are closed immediately, traps stop within the shutdown timeout, and the process exits 0
 
 #### Scenario: No traps enabled
 - **WHEN** the binary is run without any `RAN_*` env vars (no traps enabled)
@@ -65,3 +63,4 @@ Every connection SHALL be assigned a UUID v4 as `session_id`, included in all lo
 #### Scenario: Correlated logs
 - **WHEN** an SSH connection produces connect, auth_attempt, and disconnect events
 - **THEN** all three log entries share the same `session_id`
+
