@@ -6,22 +6,21 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type dnsHandler struct {
-	logger  *slog.Logger
-	alerter alert.Alerter
+	logger *slog.Logger
 }
 
-func NewDNS(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
+// NewDNS takes no alerter: UDP source addresses are spoofable, so a UDP handler
+// must not be able to raise alerts at all.
+func NewDNS(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter) *UDPTrap {
 	handler := &dnsHandler{
-		logger:  logger,
-		alerter: alerter,
+		logger: logger,
 	}
-	return NewUDP("dns", cfg.TrapAddrs("dns"), logger, m, limiter, alerter, handler)
+	return NewUDP("dns", cfg.TrapAddrs("dns"), logger, m, limiter, newUDPRateLimiter(cfg), handler)
 }
 
 func (h *dnsHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
@@ -48,7 +47,6 @@ func (h *dnsHandler) HandlePacket(ctx context.Context, sess *Session, data []byt
 	qtypeStr := dnsTypeName(qtype)
 
 	sess.LogPayload("dns_query", slog.String("domain", domain), slog.String("qtype", qtypeStr))
-	h.alerter.Alert(ctx, sess.SourceIP, "dns", map[string]string{"domain": domain, "qtype": qtypeStr})
 
 	questionLen := qEnd + 4 - 12
 	resp := make([]byte, 12+questionLen)

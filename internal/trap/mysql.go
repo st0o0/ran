@@ -38,7 +38,7 @@ func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 }
 
 func (t *MySQLTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("mysql"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("mysql"), t.cfg.ProxyProtocol, t.logger, t.metrics, "mysql")
 	if err != nil {
 		return fmt.Errorf("mysql listen: %w", err)
 	}
@@ -60,7 +60,7 @@ func (t *MySQLTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "mysql", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

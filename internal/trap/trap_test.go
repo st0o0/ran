@@ -97,7 +97,7 @@ func TestDeadlineFromContextEarlier(t *testing.T) {
 
 func TestMultiListenerSingle(t *testing.T) {
 	ctx := context.Background()
-	ml, err := ListenMultiTCP(ctx, []string{":0"}, false)
+	ml, err := ListenMultiTCP(ctx, []string{":0"}, false, nil, nil, "test")
 	if err != nil {
 		t.Fatalf("ListenMultiTCP: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestMultiListenerSingle(t *testing.T) {
 
 func TestMultiListenerMultiple(t *testing.T) {
 	ctx := context.Background()
-	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false)
+	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false, nil, nil, "test")
 	if err != nil {
 		t.Fatalf("ListenMultiTCP: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestMultiListenerMultiple(t *testing.T) {
 
 func TestMultiListenerClose(t *testing.T) {
 	ctx := context.Background()
-	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false)
+	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false, nil, nil, "test")
 	if err != nil {
 		t.Fatalf("ListenMultiTCP: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestMultiListenerClose(t *testing.T) {
 
 func TestMultiListenerAddr(t *testing.T) {
 	ctx := context.Background()
-	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false)
+	ml, err := ListenMultiTCP(ctx, []string{":0", ":0"}, false, nil, nil, "test")
 	if err != nil {
 		t.Fatalf("ListenMultiTCP: %v", err)
 	}

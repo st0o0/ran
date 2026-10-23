@@ -35,7 +35,7 @@ func NewTelnet(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *TelnetTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("telnet"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("telnet"), t.cfg.ProxyProtocol, t.logger, t.metrics, "telnet")
 	if err != nil {
 		return fmt.Errorf("telnet listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *TelnetTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "telnet", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }
@@ -97,7 +97,7 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 
 	for attempt := 0; maxRetries == 0 || attempt < maxRetries; attempt++ {
 		fmt.Fprint(conn, "\r\nLogin: ")
-		userLine, err := reader.ReadString('\n')
+		userLine, err := readLineLimited(reader, maxLineLen)
 		if err != nil {
 			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
 				sess.SetOutcome("timeout")
@@ -109,7 +109,7 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 		username := strings.TrimSpace(userLine)
 
 		fmt.Fprint(conn, "Password: ")
-		passLine, err := reader.ReadString('\n')
+		passLine, err := readLineLimited(reader, maxLineLen)
 		if err != nil {
 			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
 				sess.SetOutcome("timeout")

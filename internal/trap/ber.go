@@ -20,17 +20,15 @@ func berLength(length int) []byte {
 }
 
 func berInteger(tag byte, val int64) []byte {
+	// Minimal two's complement encoding, so negative values (e.g. a client
+	// supplied message ID that is echoed back) are valid too.
 	var valBytes []byte
-	if val == 0 {
-		valBytes = []byte{0}
-	} else {
-		tmp := val
-		for tmp > 0 {
-			valBytes = append([]byte{byte(tmp & 0xff)}, valBytes...)
-			tmp >>= 8
-		}
-		if valBytes[0]&0x80 != 0 {
-			valBytes = append([]byte{0}, valBytes...)
+	tmp := val
+	for {
+		valBytes = append([]byte{byte(tmp & 0xff)}, valBytes...)
+		tmp >>= 8
+		if (tmp == 0 && valBytes[0]&0x80 == 0) || (tmp == -1 && valBytes[0]&0x80 != 0) {
+			break
 		}
 	}
 	result := []byte{tag}

@@ -41,7 +41,7 @@ func NewADB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *ADBTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("adb"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("adb"), t.cfg.ProxyProtocol, t.logger, t.metrics, "adb")
 	if err != nil {
 		return fmt.Errorf("adb listen: %w", err)
 	}
@@ -63,7 +63,7 @@ func (t *ADBTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "adb", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

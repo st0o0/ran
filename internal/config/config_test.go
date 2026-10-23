@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -556,5 +557,86 @@ func TestPerProtoSessionTimeoutInvalid(t *testing.T) {
 	}))
 	if err == nil {
 		t.Fatal("expected error for invalid per-proto session timeout")
+	}
+}
+
+func TestLogPasswordsDefaultAndValues(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LogPasswords != "off" {
+		t.Errorf("LogPasswords = %q, want off", c.LogPasswords)
+	}
+	for _, v := range []string{"off", "mask", "on", "MASK", " on "} {
+		c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_LOG_PASSWORDS": v}))
+		if err != nil {
+			t.Fatalf("RAN_LOG_PASSWORDS=%q: %v", v, err)
+		}
+		if want := strings.ToLower(strings.TrimSpace(v)); c.LogPasswords != want {
+			t.Errorf("RAN_LOG_PASSWORDS=%q: LogPasswords = %q, want %q", v, c.LogPasswords, want)
+		}
+	}
+}
+
+func TestLogPasswordsInvalid(t *testing.T) {
+	for _, v := range []string{"yes", "true", "1", "clear"} {
+		if _, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_LOG_PASSWORDS": v})); err == nil {
+			t.Errorf("RAN_LOG_PASSWORDS=%q should fail config loading", v)
+		}
+	}
+}
+
+func TestHardeningDefaults(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.CrowdSecMaxTracked != 100000 {
+		t.Errorf("CrowdSecMaxTracked = %d, want 100000", c.CrowdSecMaxTracked)
+	}
+	if c.UDPRatePerSource != 20 || c.UDPRateBurst != 40 || c.UDPRateGlobal != 2000 {
+		t.Errorf("UDP rates = %d/%d/%d, want 20/40/2000", c.UDPRatePerSource, c.UDPRateBurst, c.UDPRateGlobal)
+	}
+}
+
+func TestHardeningOverridesAndValidation(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                "ssh",
+		"RAN_CROWDSEC_MAX_TRACKED": "500",
+		"RAN_UDP_RATE_PER_SOURCE":  "5",
+		"RAN_UDP_RATE_BURST":       "10",
+		"RAN_UDP_RATE_GLOBAL":      "100",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.CrowdSecMaxTracked != 500 || c.UDPRatePerSource != 5 || c.UDPRateBurst != 10 || c.UDPRateGlobal != 100 {
+		t.Errorf("overrides not applied: %+v", c)
+	}
+	for _, k := range []string{"RAN_CROWDSEC_MAX_TRACKED", "RAN_UDP_RATE_PER_SOURCE", "RAN_UDP_RATE_BURST", "RAN_UDP_RATE_GLOBAL"} {
+		for _, v := range []string{"0", "-1", "abc"} {
+			if _, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", k: v})); err == nil {
+				t.Errorf("%s=%q should fail", k, v)
+			}
+		}
+	}
+}
+
+func TestUDPRateBurstSmallerThanPerSourceRejected(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_UDP_RATE_PER_SOURCE": "50",
+		"RAN_UDP_RATE_BURST":      "10",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "RAN_UDP_RATE_BURST") {
+		t.Fatalf("err = %v, want RAN_UDP_RATE_BURST error", err)
+	}
+	if _, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_UDP_RATE_PER_SOURCE": "10",
+		"RAN_UDP_RATE_BURST":      "10",
+	})); err != nil {
+		t.Errorf("burst equal to rate should be accepted: %v", err)
 	}
 }

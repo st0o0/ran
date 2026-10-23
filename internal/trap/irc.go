@@ -35,7 +35,7 @@ func NewIRC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *IRCTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("irc"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("irc"), t.cfg.ProxyProtocol, t.logger, t.metrics, "irc")
 	if err != nil {
 		return fmt.Errorf("irc listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *IRCTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "irc", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

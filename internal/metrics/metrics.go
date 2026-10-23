@@ -14,6 +14,9 @@ type Metrics struct {
 	SessionDuration     *prometheus.HistogramVec
 	CrowdSecPipeline    *prometheus.CounterVec
 	CrowdSecDropped     *prometheus.CounterVec
+	PanicsRecovered     *prometheus.CounterVec
+	ProxyDropped        *prometheus.CounterVec
+	UDPRateLimited      *prometheus.CounterVec
 }
 
 func New(reg prometheus.Registerer, version string) *Metrics {
@@ -45,6 +48,21 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 		}, []string{"protocol"}),
 	}
 
+	m.PanicsRecovered = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_panics_recovered_total",
+		Help: "Total number of panics recovered at connection and packet boundaries.",
+	}, []string{"protocol"})
+
+	m.ProxyDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_proxy_protocol_dropped_total",
+		Help: "Total number of connections dropped by the PROXY protocol listener (no valid header, deadline, or handshake limit).",
+	}, []string{"protocol"})
+
+	m.UDPRateLimited = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_udp_rate_limited_total",
+		Help: "Total number of UDP packets dropped by the packet rate limiter.",
+	}, []string{"protocol"})
+
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ran_build_info",
 		Help: "Build information for ran.",
@@ -53,6 +71,6 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, buildInfo)
+	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, buildInfo)
 	return m
 }

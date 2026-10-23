@@ -42,7 +42,7 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 	mux.HandleFunc("DELETE /", t.handleCatchAll)
 
 	t.srv = &http.Server{
-		Handler:      mux,
+		Handler:      recoverHandler(logger, m, "elasticsearch", mux),
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
 		ConnContext:  ConnContextWithDestPort,
@@ -51,7 +51,7 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 }
 
 func (t *ElasticsearchTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("elasticsearch"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("elasticsearch"), t.cfg.ProxyProtocol, t.logger, t.metrics, "elasticsearch")
 	if err != nil {
 		return fmt.Errorf("elasticsearch listen: %w", err)
 	}

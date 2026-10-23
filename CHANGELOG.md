@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.3.8](https://github.com/st0o0/ran/compare/v0.3.7...v0.3.8)
+
+
+### Security
+
+* HTTP trap no longer uses client IP headers for alerts; the validated header value is logged as `claimed_client_ip` and the connection source is used instead
+* UDP traps (dns, ntp, snmp, sip) no longer alert CrowdSec because UDP source addresses are spoofable
+* UDP traps are rate limited per source and globally (`RAN_UDP_RATE_PER_SOURCE`, `RAN_UDP_RATE_BURST`, `RAN_UDP_RATE_GLOBAL`)
+* bounded reads for redis, ldap, telnet, http and PROXY protocol parsing (argument counts, bulk and BER lengths, line lengths, body size)
+* panic isolation per handler, accept loop and UDP packet, counted in `ran_panics_recovered_total`
+* alerts for non-global addresses are rejected via an explicit IP denylist
+* dedup map and decision cache are capped (`RAN_CROWDSEC_MAX_TRACKED`)
+* passwords are no longer sent to CrowdSec; logging them is controlled by `RAN_LOG_PASSWORDS` (`off` default, `mask`, `on`)
+
+
+### Changed
+
+* **BREAKING:** with `RAN_PROXY_PROTOCOL` enabled a valid PROXY v1/v2 header is now required; connections without one are closed and counted
+* dedup slots are only recorded after a successful enqueue
+* PROXY headers are parsed off the accept path under a deadline with a bounded number of pending handshakes
+* `RAN_UDP_RATE_BURST` below `RAN_UDP_RATE_PER_SOURCE` is rejected at startup
+
+
+### Added
+
+* metric `ran_proxy_protocol_dropped_total`
+* metric `ran_udp_rate_limited_total{protocol}`
+* metric `ran_panics_recovered_total`
+* pipeline stages `invalid` and `closed` for alerts dropped before enqueue or after the alerter was closed
+
 ## [0.3.7](https://github.com/st0o0/ran/compare/v0.3.6...v0.3.7) (2026-08-23)
 
 

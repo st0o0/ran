@@ -154,29 +154,28 @@ func TestProxyV2Local(t *testing.T) {
 	}
 }
 
-func TestNoProxyProtocol(t *testing.T) {
+func TestNoProxyHeaderRejected(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
+	defer server.Close()
 
 	go func() {
 		_, _ = client.Write([]byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"))
 	}()
 
-	pc, err := newProxyConn(server)
-	if err != nil {
-		t.Fatal(err)
+	if pc, err := newProxyConn(server); err == nil {
+		t.Fatalf("plain bytes must be rejected, got conn %v", pc)
 	}
-	defer pc.Close()
+}
 
-	if pc.RemoteAddr().String() != server.RemoteAddr().String() {
-		t.Error("no PROXY header should use original RemoteAddr")
-	}
-
-	buf := make([]byte, 3)
-	if _, err := io.ReadFull(pc, buf); err != nil {
-		t.Fatal(err)
-	}
-	if string(buf) != "GET" {
-		t.Errorf("payload = %q, want GET", buf)
+func TestShortOrEmptyInputRejected(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	go func() {
+		_, _ = client.Write([]byte("PROXY"))
+		client.Close()
+	}()
+	if _, err := newProxyConn(server); err == nil {
+		t.Fatal("EOF before a full header must be rejected")
 	}
 }

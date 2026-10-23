@@ -154,6 +154,10 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 | `sip` | `:5060` | SIP URIs + digest credentials |
 | `ntp` | `:123` | Request metadata (drops monlist amplification) |
 
+UDP source addresses are spoofable, so UDP traps log and count metrics only.
+They never raise CrowdSec alerts (the UDP constructors take no alerter at all).
+Inbound packets are rate limited per source and globally (see [Limits](#limits)).
+
 ## Configuration
 
 ### Trap selection
@@ -182,6 +186,9 @@ takes precedence when set.
 |---|---|---|
 | `RAN_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
 | `RAN_LOG_FORMAT` | `json` | Log format: json, text |
+| `RAN_LOG_PASSWORDS` | `off` | Password field in credential logs: `off` (omitted), `mask` (`*** (<length>)`), `on` (cleartext) |
+
+Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
 ### Limits
 
@@ -190,6 +197,18 @@ takes precedence when set.
 | `RAN_SESSION_TIMEOUT` | `30s` | Max session duration (Go duration) |
 | `RAN_MAX_SESSIONS` | `500` | Global concurrent session limit |
 | `RAN_MAX_PER_IP` | `10` | Per-IP concurrent session limit |
+| `RAN_UDP_RATE_PER_SOURCE` | `20` | UDP packets per second allowed per source address |
+| `RAN_UDP_RATE_BURST` | `40` | UDP per-source burst size (must be at least `RAN_UDP_RATE_PER_SOURCE`, otherwise startup fails) |
+| `RAN_UDP_RATE_GLOBAL` | `2000` | UDP packets per second allowed across all sources |
+
+Excess UDP packets are dropped before a session is created (logged at debug only,
+counted in `ran_udp_rate_limited_total`).
+The limiter is per UDP trap, so "global" means per protocol: each of `dns`,
+`ntp`, `snmp` and `sip` has its own global bucket. Per-source state is capped
+at 100000 sources; once the cap is reached, packets from untracked sources are
+only subject to the global bucket.
+Request bodies are capped at 16 KiB (HTTP) and RESP, LDAP and line-based
+protocols enforce fixed input limits.
 
 ### Metrics
 
@@ -206,6 +225,10 @@ Exposed metrics:
 - `ran_crowdsec_alerts_total{protocol,status}`: CrowdSec alert push counter
 - `ran_crowdsec_alerts_deduplicated_total{protocol}`: alerts suppressed by dedup
 - `ran_crowdsec_alerts_cached_total{protocol}`: alerts suppressed by decision cache
+- `ran_panics_recovered_total{protocol}`: panics recovered at connection and packet boundaries
+- `ran_proxy_protocol_dropped_total{protocol}`: connections closed by the PROXY protocol listener (no valid header, deadline, handshake limit, stalled consumer)
+- `ran_udp_rate_limited_total{protocol}`: UDP packets dropped by the packet rate limiter
+- `ran_crowdsec_pipeline_total{protocol,stage}`: CrowdSec alert pipeline events; stage `invalid` counts rejected source addresses, `closed` counts alerts raised after the alerter was shut down
 
 ### CrowdSec
 
@@ -220,6 +243,34 @@ Exposed metrics:
 | `RAN_CROWDSEC_BATCH_INTERVAL` | `10s` | Batch flush interval (`0s` = immediate, no batching) |
 | `RAN_CROWDSEC_BATCH_SIZE` | `50` | Max alerts per batch POST |
 | `RAN_CROWDSEC_DECISION_CACHE` | `on` | Cache own ban decisions to suppress redundant alerts |
+| `RAN_CROWDSEC_MAX_TRACKED` | `100000` | Max entries in the dedup map and in the decision cache (about 12 MB each at the default) |
+
+Only the TCP peer address is used as alert identity. The HTTP trap logs
+`X-Real-IP` / `X-Forwarded-For` as `claimed_client_ip` but never bans on it
+(behind a trusted proxy, use `RAN_PROXY_PROTOCOL`). Alerts are accepted only
+for publicly routable addresses. Private (RFC 1918, ULA), CGNAT (100.64.0.0/10),
+loopback, link-local, unspecified, multicast, reserved, documentation, benchmark,
+6to4, NAT64 (including 64:ff9b:1::/48), IETF protocol assignment (2001::/23), 3fff::/20, 5f00::/16 and IPv4-compatible sources are dropped (pipeline stage `invalid`), so
+LAN-only deployments produce no CrowdSec alerts.
+
+When the dedup map or the decision cache is full, the oldest entries are
+evicted. Evicted entries are alerted again, so a full map means more LAPI traffic.
+
+With `RAN_PROXY_PROTOCOL`, the PROXY v1 or v2 header is required. A connection
+must send a valid header within 3 seconds; a connection that sends other bytes,
+closes early or stays silent is closed and counted in
+`ran_proxy_protocol_dropped_total`, never handled as a plain connection. A
+silent peer does not block other clients. At most 1024 connections may be
+waiting for a header (or for the trap to take them) at once; further ones are
+closed immediately and counted too. Only enable this mode when ran is reachable
+solely from a trusted proxy or tunnel: any peer that can connect directly can
+forge a header and choose its own source address. A source allowlist for
+trusted proxies is a possible future change.
+
+Upgrading from 0.3.7: UDP traps (`dns`, `ntp`, `snmp`, `sip`) no longer raise
+alerts, so the `custom/ran-{dns,ntp,snmp,sip}-trap` scenarios stop appearing.
+The HTTP log field `client_ip` is now `claimed_client_ip`. The `password` log
+field is omitted unless `RAN_LOG_PASSWORDS` is `mask` or `on`.
 
 Register the machine before starting rán:
 
@@ -235,15 +286,17 @@ without needing a local scenario.
 
 #### Alert Pipeline
 
-Alerts pass through three filters before reaching CrowdSec LAPI:
+Alerts pass through four filters before reaching CrowdSec LAPI:
 
 ```
-Alert(ip, protocol) → Decision Cache → Dedup Filter → Batch Queue → POST /v1/alerts
+Alert(ip, protocol) → IP Validation → Decision Cache → Dedup Filter → Batch Queue → POST /v1/alerts
 ```
 
-1. **Decision Cache**: if the IP was already banned by a prior alert, skip.
-2. **Dedup Filter**: if the same IP+scenario was reported within the dedup window, skip.
-3. **Batch Queue**: collect alerts and flush as a single POST on timer or batch-size threshold.
+1. **IP Validation**: drop anything that is not a global unicast, non-private address.
+2. **Decision Cache**: if the IP was already banned by a prior alert, skip.
+3. **Dedup Filter**: if the same IP+scenario was reported within the dedup window, skip.
+   The slot is only consumed when the alert is queued; if the queue is full the alert is dropped and may be retried.
+4. **Batch Queue**: collect alerts and flush as a single POST on timer or batch-size threshold.
 
 After a successful POST, each IP in the batch is added to the decision cache
 with the configured ban duration.

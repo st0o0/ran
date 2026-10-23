@@ -35,7 +35,7 @@ func NewIMAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *IMAPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("imap"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("imap"), t.cfg.ProxyProtocol, t.logger, t.metrics, "imap")
 	if err != nil {
 		return fmt.Errorf("imap listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *IMAPTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "imap", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

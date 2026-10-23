@@ -5,22 +5,21 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type snmpHandler struct {
-	logger  *slog.Logger
-	alerter alert.Alerter
+	logger *slog.Logger
 }
 
-func NewSNMP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
+// NewSNMP takes no alerter: UDP source addresses are spoofable, so a UDP handler
+// must not be able to raise alerts at all.
+func NewSNMP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter) *UDPTrap {
 	handler := &snmpHandler{
-		logger:  logger,
-		alerter: alerter,
+		logger: logger,
 	}
-	return NewUDP("snmp", cfg.TrapAddrs("snmp"), logger, m, limiter, alerter, handler)
+	return NewUDP("snmp", cfg.TrapAddrs("snmp"), logger, m, limiter, newUDPRateLimiter(cfg), handler)
 }
 
 func (h *snmpHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
@@ -57,7 +56,6 @@ func (h *snmpHandler) HandlePacket(ctx context.Context, sess *Session, data []by
 	pdu := value
 
 	sess.LogPayload("snmp_request", slog.String("community", community), slog.Int("version", int(version)))
-	h.alerter.Alert(ctx, sess.SourceIP, "snmp", map[string]string{"community": community})
 
 	reqTag, _, reqIDValue, _, ok := readTLV(pdu, 0)
 	if !ok || reqTag != 0x02 {

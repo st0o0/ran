@@ -8,12 +8,16 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/st0o0/ran/internal/metrics"
 )
+
+// defaultMaxTracked bounds the dedup map and the local decision cache.
+const defaultMaxTracked = 100000
 
 type alertMsg struct {
 	IP       string
@@ -30,6 +34,7 @@ type CrowdSecConfig struct {
 	BatchInterval time.Duration
 	BatchSize     int
 	DecisionCache bool
+	MaxTracked    int
 }
 
 type CrowdSecAlerter struct {
@@ -55,6 +60,10 @@ type CrowdSecAlerter struct {
 	ch     chan alertMsg
 	stopCh chan struct{}
 	wg     sync.WaitGroup
+
+	// closeMu keeps Alert from sending on ch after Close has closed it.
+	closeMu sync.RWMutex
+	closed  bool
 }
 
 type loginRequest struct {
@@ -68,9 +77,14 @@ type loginResponse struct {
 }
 
 func NewCrowdSec(cfg CrowdSecConfig, logger *slog.Logger, m *metrics.Metrics) (*CrowdSecAlerter, error) {
+	maxTracked := cfg.MaxTracked
+	if maxTracked <= 0 {
+		maxTracked = defaultMaxTracked
+	}
+
 	var dc DecisionCache
 	if cfg.DecisionCache {
-		dc = newLocalDecisionCache()
+		dc = newLocalDecisionCache(maxTracked)
 	} else {
 		dc = noopDecisionCache{}
 	}
@@ -90,7 +104,7 @@ func NewCrowdSec(cfg CrowdSecConfig, logger *slog.Logger, m *metrics.Metrics) (*
 		logger:         logger.With("component", "crowdsec"),
 		metrics:        m,
 		client:         &http.Client{Timeout: 10 * time.Second},
-		dedup:          newDedupFilter(cfg.DedupWindow),
+		dedup:          newDedupFilter(cfg.DedupWindow, maxTracked),
 		decisionCache:  dc,
 		batchInterval:  cfg.BatchInterval,
 		batchSize:      batchSize,
@@ -112,6 +126,23 @@ func NewCrowdSec(cfg CrowdSecConfig, logger *slog.Logger, m *metrics.Metrics) (*
 func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string, meta map[string]string) {
 	a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "received").Inc()
 
+	// Only publicly routable addresses may be banned; validate before the cache
+	// and dedup so junk never enters the maps.
+	addr, ok := parseBannableIP(ip)
+	if !ok {
+		a.rejectInvalid(ip, protocol)
+		return
+	}
+	ip = addr.String()
+
+	a.closeMu.RLock()
+	defer a.closeMu.RUnlock()
+	if a.closed {
+		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "closed")
+		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "closed").Inc()
+		return
+	}
+
 	if a.decisionCache.IsBanned(ip) {
 		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "cached")
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "cached").Inc()
@@ -119,7 +150,9 @@ func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string, m
 	}
 
 	scenario := "custom/ran-" + protocol + "-trap"
-	if !a.dedup.Allow(ip + "|" + scenario) {
+	dedupKey := ip + "|" + scenario
+	slot, ok := a.dedup.Allow(dedupKey)
+	if !ok {
 		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "deduplicated")
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "deduplicated").Inc()
 		return
@@ -129,15 +162,65 @@ func (a *CrowdSecAlerter) Alert(_ context.Context, ip string, protocol string, m
 	case a.ch <- alertMsg{IP: ip, Protocol: protocol, Meta: meta}:
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "queued").Inc()
 	default:
+		// Release the dedup slot so a retry is not suppressed.
+		a.dedup.Release(dedupKey, slot)
 		a.logger.Warn("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "dropped")
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "dropped").Inc()
 		a.metrics.CrowdSecDropped.WithLabelValues(protocol).Inc()
 	}
 }
 
+// nonGlobalPrefixes lists ranges that are never legitimate scanner sources:
+// private, loopback, link-local, multicast, reserved, documentation, CGNAT and
+// transition ranges. Spoofed packets and misrouted traffic land here, so they
+// must not be banned or pushed to CAPI.
+var nonGlobalPrefixes = mustPrefixes(
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+	"172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16",
+	"198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+	"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32",
+	"2002::/16", "3fff::/20", "5f00::/16", "fc00::/7", "fe80::/10", "ff00::/8", "::/96",
+)
+
+func mustPrefixes(cidrs ...string) []netip.Prefix {
+	out := make([]netip.Prefix, len(cidrs))
+	for i, c := range cidrs {
+		out[i] = netip.MustParsePrefix(c)
+	}
+	return out
+}
+
+// parseBannableIP parses ip, unmaps IPv4-mapped IPv6 and rejects zoned
+// addresses and everything in nonGlobalPrefixes.
+func parseBannableIP(ip string) (netip.Addr, bool) {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || addr.Zone() != "" {
+		return netip.Addr{}, false
+	}
+	addr = addr.Unmap()
+	for _, p := range nonGlobalPrefixes {
+		if p.Contains(addr) {
+			return netip.Addr{}, false
+		}
+	}
+	return addr, true
+}
+
+func (a *CrowdSecAlerter) rejectInvalid(ip, protocol string) {
+	a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "invalid")
+	a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "invalid").Inc()
+}
+
 func (a *CrowdSecAlerter) Close() {
+	a.closeMu.Lock()
+	if a.closed {
+		a.closeMu.Unlock()
+		return
+	}
+	a.closed = true
 	close(a.stopCh)
 	close(a.ch)
+	a.closeMu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		a.wg.Wait()
@@ -319,6 +402,10 @@ func buildEventMeta(meta map[string]string) []csMeta {
 	}
 	keys := make([]string, 0, len(meta))
 	for k := range meta {
+		// Passwords never leave the host, regardless of RAN_LOG_PASSWORDS.
+		if k == "password" {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)

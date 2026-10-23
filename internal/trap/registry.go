@@ -81,17 +81,17 @@ var Registry = map[string]Factory{
 	"httpproxy": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
 		return NewHTTPProxy(cfg, logger, m, limiter, alerter), nil
 	},
-	"dns": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
-		return NewDNS(cfg, logger, m, limiter, alerter), nil
+	"dns": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, _ alert.Alerter) (Trap, error) {
+		return NewDNS(cfg, logger, m, limiter), nil
 	},
-	"snmp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
-		return NewSNMP(cfg, logger, m, limiter, alerter), nil
+	"snmp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, _ alert.Alerter) (Trap, error) {
+		return NewSNMP(cfg, logger, m, limiter), nil
 	},
-	"sip": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
-		return NewSIP(cfg, logger, m, limiter, alerter), nil
+	"sip": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, _ alert.Alerter) (Trap, error) {
+		return NewSIP(cfg, logger, m, limiter), nil
 	},
-	"ntp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
-		return NewNTP(cfg, logger, m, limiter, alerter), nil
+	"ntp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, _ alert.Alerter) (Trap, error) {
+		return NewNTP(cfg, logger, m, limiter), nil
 	},
 	"adb": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) (Trap, error) {
 		return NewADB(cfg, logger, m, limiter, alerter), nil

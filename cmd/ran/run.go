@@ -13,6 +13,8 @@ import (
 )
 
 func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metrics.Metrics) error {
+	trap.SetPasswordLogMode(cfg.LogPasswords)
+
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
 
 	var alerter alert.Alerter
@@ -26,6 +28,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 			BatchInterval: cfg.CrowdSecBatchInterval,
 			BatchSize:     cfg.CrowdSecBatchSize,
 			DecisionCache: cfg.CrowdSecDecisionCache,
+			MaxTracked:    cfg.CrowdSecMaxTracked,
 		}, logger, m)
 		if err != nil {
 			return fmt.Errorf("crowdsec: %w", err)

@@ -37,7 +37,7 @@ func NewVNC(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *VNCTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("vnc"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("vnc"), t.cfg.ProxyProtocol, t.logger, t.metrics, "vnc")
 	if err != nil {
 		return fmt.Errorf("vnc listen: %w", err)
 	}
@@ -59,7 +59,7 @@ func (t *VNCTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "vnc", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

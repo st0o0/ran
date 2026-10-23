@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
@@ -33,9 +32,8 @@ func TestDNSTrap(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
-	alerter := alert.NoopAlerter{}
 
-	tr := NewDNS(cfg, logger, m, limiter, alerter)
+	tr := NewDNS(cfg, logger, m, limiter)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

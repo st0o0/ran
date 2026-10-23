@@ -6,7 +6,7 @@ import (
 )
 
 func TestLocalCacheMarkAndCheck(t *testing.T) {
-	c := newLocalDecisionCache()
+	c := newLocalDecisionCache(defaultMaxTracked)
 	c.MarkBanned("1.2.3.4", 4*time.Hour)
 	if !c.IsBanned("1.2.3.4") {
 		t.Error("expected IP to be banned")
@@ -14,7 +14,7 @@ func TestLocalCacheMarkAndCheck(t *testing.T) {
 }
 
 func TestLocalCacheNotBanned(t *testing.T) {
-	c := newLocalDecisionCache()
+	c := newLocalDecisionCache(defaultMaxTracked)
 	if c.IsBanned("1.2.3.4") {
 		t.Error("expected unknown IP to not be banned")
 	}
@@ -22,7 +22,7 @@ func TestLocalCacheNotBanned(t *testing.T) {
 
 func TestLocalCacheExpiry(t *testing.T) {
 	now := time.Now()
-	c := newLocalDecisionCache()
+	c := newLocalDecisionCache(defaultMaxTracked)
 	c.nowFunc = func() time.Time { return now }
 
 	c.MarkBanned("1.2.3.4", 1*time.Hour)
@@ -35,7 +35,7 @@ func TestLocalCacheExpiry(t *testing.T) {
 
 func TestLocalCachePermanentBan(t *testing.T) {
 	now := time.Now()
-	c := newLocalDecisionCache()
+	c := newLocalDecisionCache(defaultMaxTracked)
 	c.nowFunc = func() time.Time { return now }
 
 	c.MarkBanned("1.2.3.4", 0)
@@ -48,7 +48,7 @@ func TestLocalCachePermanentBan(t *testing.T) {
 
 func TestLocalCacheCleanup(t *testing.T) {
 	now := time.Now()
-	c := newLocalDecisionCache()
+	c := newLocalDecisionCache(defaultMaxTracked)
 	c.nowFunc = func() time.Time { return now }
 
 	c.MarkBanned("expired", 1*time.Hour)

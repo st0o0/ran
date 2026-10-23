@@ -144,14 +144,12 @@ func TestCrowdSecAlertFormat(t *testing.T) {
 	if len(alert.Events) != 1 {
 		t.Fatalf("got %d events, want 1", len(alert.Events))
 	}
-	if len(alert.Events[0].Meta) != 2 {
-		t.Fatalf("got %d meta entries, want 2", len(alert.Events[0].Meta))
+	// password is never sent to CrowdSec
+	if len(alert.Events[0].Meta) != 1 {
+		t.Fatalf("got %d meta entries, want 1", len(alert.Events[0].Meta))
 	}
-	if alert.Events[0].Meta[0].Key != "password" || alert.Events[0].Meta[0].Value != "admin" {
-		t.Errorf("meta[0] = %+v, want {password admin}", alert.Events[0].Meta[0])
-	}
-	if alert.Events[0].Meta[1].Key != "username" || alert.Events[0].Meta[1].Value != "root" {
-		t.Errorf("meta[1] = %+v, want {username root}", alert.Events[0].Meta[1])
+	if alert.Events[0].Meta[0].Key != "username" || alert.Events[0].Meta[0].Value != "root" {
+		t.Errorf("meta[0] = %+v, want {username root}", alert.Events[0].Meta[0])
 	}
 }
 
@@ -169,7 +167,7 @@ func TestCrowdSecAlertNilMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCrowdSec failed: %v", err)
 	}
-	a.Alert(context.Background(), "10.0.0.1", "memcached", nil)
+	a.Alert(context.Background(), "8.8.4.4", "memcached", nil)
 	a.Close()
 
 	if len(received) != 1 {

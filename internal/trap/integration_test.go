@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,9 @@ func freeAddr(t *testing.T) string {
 }
 
 func TestIntegrationAllTraps(t *testing.T) {
+	trap.SetPasswordLogMode("on")
+	t.Cleanup(func() { trap.SetPasswordLogMode("off") })
+
 	sshAddr := freeAddr(t)
 	httpAddr := freeAddr(t)
 	mysqlAddr := freeAddr(t)
@@ -46,8 +50,8 @@ func TestIntegrationAllTraps(t *testing.T) {
 		MaxPerIP:       10,
 	}
 
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logBuf := &lockedBuffer{}
+	logger := slog.New(slog.NewJSONHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -171,8 +175,8 @@ func TestIntegrationMultiPort(t *testing.T) {
 		MaxPerIP:       10,
 	}
 
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logBuf := &lockedBuffer{}
+	logger := slog.New(slog.NewJSONHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
 	limiter := trap.NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
@@ -340,4 +344,22 @@ func TestIntegrationRedis(t *testing.T) {
 
 	cancel()
 	_ = tr.Stop(context.Background())
+}
+
+// lockedBuffer is a bytes.Buffer safe for a logger written by server goroutines.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

@@ -35,7 +35,7 @@ func NewPOP3(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *POP3Trap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("pop3"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("pop3"), t.cfg.ProxyProtocol, t.logger, t.metrics, "pop3")
 	if err != nil {
 		return fmt.Errorf("pop3 listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *POP3Trap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "pop3", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

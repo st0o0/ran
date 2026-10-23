@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"unicode/utf16"
@@ -36,7 +37,7 @@ func NewSMB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *SMBTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("smb"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("smb"), t.cfg.ProxyProtocol, t.logger, t.metrics, "smb")
 	if err != nil {
 		return fmt.Errorf("smb listen: %w", err)
 	}
@@ -58,7 +59,7 @@ func (t *SMBTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "smb", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }
@@ -348,8 +349,8 @@ func ntlmsspReadField(data []byte, offset int) string {
 	if offset+8 > len(data) {
 		return ""
 	}
-	bufOffset := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
-	if bufOffset+length > len(data) || length == 0 {
+	bufOffset, ok := fitsInt(binary.LittleEndian.Uint32(data[offset+4:offset+8]), math.MaxInt)
+	if !ok || length == 0 || bufOffset > len(data)-length {
 		return ""
 	}
 	field := data[bufOffset : bufOffset+length]

@@ -35,7 +35,7 @@ func NewSOCKS5(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *SOCKS5Trap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("socks5"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("socks5"), t.cfg.ProxyProtocol, t.logger, t.metrics, "socks5")
 	if err != nil {
 		return fmt.Errorf("socks5 listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *SOCKS5Trap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "socks5", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

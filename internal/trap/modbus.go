@@ -35,7 +35,7 @@ func NewModbus(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *ModbusTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("modbus"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("modbus"), t.cfg.ProxyProtocol, t.logger, t.metrics, "modbus")
 	if err != nil {
 		return fmt.Errorf("modbus listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *ModbusTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "modbus", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

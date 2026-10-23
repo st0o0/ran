@@ -49,7 +49,7 @@ func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *SSHTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ssh"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ssh"), t.cfg.ProxyProtocol, t.logger, t.metrics, "ssh")
 	if err != nil {
 		return fmt.Errorf("ssh listen: %w", err)
 	}
@@ -71,7 +71,7 @@ func (t *SSHTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "ssh", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

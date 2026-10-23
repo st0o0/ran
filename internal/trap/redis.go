@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
@@ -13,6 +14,12 @@ import (
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
+)
+
+// Limits for client-controlled RESP sizes; nothing is allocated beyond them.
+const (
+	maxRESPArgs = 128
+	maxRESPBulk = 4096
 )
 
 type RedisTrap struct {
@@ -36,7 +43,7 @@ func NewRedis(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 }
 
 func (t *RedisTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("redis"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("redis"), t.cfg.ProxyProtocol, t.logger, t.metrics, "redis")
 	if err != nil {
 		return fmt.Errorf("redis listen: %w", err)
 	}
@@ -58,7 +65,7 @@ func (t *RedisTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "redis", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }
@@ -147,7 +154,7 @@ func readRedisCommand(reader *bufio.Reader) ([]string, error) {
 }
 
 func readRESPArray(reader *bufio.Reader) ([]string, error) {
-	line, err := reader.ReadString('\n')
+	line, err := readLineLimited(reader, maxLineLen)
 	if err != nil {
 		return nil, err
 	}
@@ -158,9 +165,14 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 		return nil, fmt.Errorf("invalid RESP array count: %s", line)
 	}
 
-	args := make([]string, 0, count)
+	if count > maxRESPArgs {
+		return nil, fmt.Errorf("RESP array too large: %d", count)
+	}
+
+	// Never preallocate from the client-supplied count.
+	var args []string
 	for i := 0; i < count; i++ {
-		header, err := reader.ReadString('\n')
+		header, err := readLineLimited(reader, maxLineLen)
 		if err != nil {
 			return nil, err
 		}
@@ -169,18 +181,13 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 			return nil, fmt.Errorf("expected bulk string, got: %s", header)
 		}
 		length, err := strconv.Atoi(header[1:])
-		if err != nil || length < 0 {
+		if err != nil || length < 0 || length > maxRESPBulk {
 			return nil, fmt.Errorf("invalid bulk string length: %s", header)
 		}
 
 		data := make([]byte, length+2)
-		n := 0
-		for n < len(data) {
-			read, err := reader.Read(data[n:])
-			if err != nil {
-				return nil, err
-			}
-			n += read
+		if _, err := io.ReadFull(reader, data); err != nil {
+			return nil, err
 		}
 		args = append(args, string(data[:length]))
 	}
@@ -188,7 +195,7 @@ func readRESPArray(reader *bufio.Reader) ([]string, error) {
 }
 
 func readInlineCommand(reader *bufio.Reader) ([]string, error) {
-	line, err := reader.ReadString('\n')
+	line, err := readLineLimited(reader, maxLineLen)
 	if err != nil {
 		return nil, err
 	}

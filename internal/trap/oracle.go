@@ -36,7 +36,7 @@ func NewOracle(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 }
 
 func (t *OracleTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("oracle"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("oracle"), t.cfg.ProxyProtocol, t.logger, t.metrics, "oracle")
 	if err != nil {
 		return fmt.Errorf("oracle listen: %w", err)
 	}
@@ -58,7 +58,7 @@ func (t *OracleTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "oracle", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

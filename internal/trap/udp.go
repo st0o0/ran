@@ -6,7 +6,6 @@ import (
 	"net"
 	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -20,20 +19,20 @@ type UDPTrap struct {
 	logger   *slog.Logger
 	metrics  *metrics.Metrics
 	limiter  *Limiter
-	alerter  alert.Alerter
+	rate     *udpRateLimiter
 	handler  PacketHandler
 	conns    []net.PacketConn
 	wg       sync.WaitGroup
 }
 
-func NewUDP(protocol string, addrs []string, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter, handler PacketHandler) *UDPTrap {
+func NewUDP(protocol string, addrs []string, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, rate *udpRateLimiter, handler PacketHandler) *UDPTrap {
 	return &UDPTrap{
 		protocol: protocol,
 		addrs:    addrs,
 		logger:   logger,
 		metrics:  m,
 		limiter:  limiter,
-		alerter:  alerter,
+		rate:     rate,
 		handler:  handler,
 	}
 }
@@ -81,6 +80,15 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 		}
 
 		host, port := ParseAddr(addr.String())
+		// Drop floods before a session or goroutine exists; debug only to avoid log amplification.
+		if !t.rate.Allow(host) {
+			if t.metrics != nil {
+				t.metrics.UDPRateLimited.WithLabelValues(t.protocol).Inc()
+			}
+			t.logger.Debug("udp packet dropped", "protocol", t.protocol, "source_ip", host, "reason", "packet_rate")
+			continue
+		}
+
 		if !t.limiter.Acquire(host) {
 			LogRejected(t.logger, t.protocol, "udp", destPort, host, "rate_limit")
 			continue
@@ -103,7 +111,9 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 			defer t.limiter.Release(host)
 			defer sess.RecordEnd(t.metrics)
 			defer sess.LogDisconnect()
-			t.handler.HandlePacket(ctx, sess, data, respond)
+			safely(t.logger, t.metrics, t.protocol, func() {
+				t.handler.HandlePacket(ctx, sess, data, respond)
+			})
 		}()
 	}
 }

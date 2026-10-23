@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 
@@ -13,6 +14,9 @@ import (
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
+
+// maxHTTPBody caps request bodies and headers.
+const maxHTTPBody = 16 << 10
 
 type HTTPTrap struct {
 	cfg      *config.Config
@@ -40,11 +44,13 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 
 	t.srv = &http.Server{
 		Addr:         cfg.TrapAddr("http"),
-		Handler:      mux,
+		Handler:      recoverHandler(logger, m, "http", mux),
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
 		ConnState:    t.connState,
 		ConnContext:  ConnContextWithDestPort,
+
+		MaxHeaderBytes: maxHTTPBody,
 	}
 	return t
 }
@@ -75,7 +81,7 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 }
 
 func (t *HTTPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("http"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("http"), t.cfg.ProxyProtocol, t.logger, t.metrics, "http")
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
 	}
@@ -110,6 +116,7 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 		w.Header().Set("X-Powered-By", "PHP/8.3.6")
 
 		if r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, maxHTTPBody)
 			_ = r.ParseForm()
 			username := firstOf(r.PostForm, "username", "user", "log")
 			password := firstOf(r.PostForm, "password", "pass", "pwd")
@@ -118,16 +125,13 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 				slog.String("password", password),
 				slog.String("path", r.URL.Path),
 			}
-			if clientIP := clientIPFromHeaders(r); clientIP != "" {
-				attrs = append(attrs, slog.String("client_ip", clientIP))
+			// Headers are attacker-controlled: log them, never use them as alert identity.
+			if claimed := claimedClientIP(r); claimed != "" {
+				attrs = append(attrs, slog.String("claimed_client_ip", claimed))
 			}
 			sess.LogAuthAttempt(attrs...)
 			sess.RecordCredentials(t.metrics)
-			alertIP := sess.SourceIP
-			if ip := clientIPFromHeaders(r); ip != "" {
-				alertIP = ip
-			}
-			t.alerter.Alert(r.Context(), alertIP, "http", map[string]string{"username": username, "password": password, "path": r.URL.Path})
+			t.alerter.Alert(r.Context(), sess.SourceIP, "http", map[string]string{"username": username, "password": password, "path": r.URL.Path})
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, loginErrorPage(style))
@@ -140,18 +144,19 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 	}
 }
 
-
-func clientIPFromHeaders(r *http.Request) string {
+// claimedClientIP returns the forwarding header IP if it is syntactically valid, else "".
+func claimedClientIP(r *http.Request) string {
+	raw := ""
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
+		raw = strings.TrimSpace(ip)
+	} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		raw = strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return addr.Unmap().String()
 }
 
 func firstOf(form map[string][]string, keys ...string) string {

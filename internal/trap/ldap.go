@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 
@@ -34,7 +35,7 @@ func NewLDAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 func (t *LDAPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ldap"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ldap"), t.cfg.ProxyProtocol, t.logger, t.metrics, "ldap")
 	if err != nil {
 		return fmt.Errorf("ldap listen: %w", err)
 	}
@@ -56,7 +57,7 @@ func (t *LDAPTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "ldap", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }
@@ -176,6 +177,9 @@ func (t *LDAPTrap) handleSearch(conn net.Conn, msgID int64) {
 
 // BER encoding helpers
 
+// maxBERLen caps the length of a single BER element read from the network.
+const maxBERLen = 64 << 10
+
 func berReadElement(r io.Reader) (tag byte, value []byte, err error) {
 	var tagBuf [1]byte
 	if _, err = io.ReadFull(r, tagBuf[:]); err != nil {
@@ -209,11 +213,24 @@ func berReadLength(r io.Reader) (int, error) {
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return 0, err
 	}
-	length := 0
+	var raw uint32
 	for _, v := range buf {
-		length = (length << 8) | int(v)
+		raw = (raw << 8) | uint32(v)
+	}
+	length, ok := fitsInt(raw, math.MaxInt)
+	if !ok || length > maxBERLen {
+		return 0, fmt.Errorf("ber: length %d exceeds limit", raw)
 	}
 	return length, nil
+}
+
+// fitsInt converts v to int, reporting false if it exceeds maxInt. Callers
+// pass math.MaxInt; the parameter lets tests simulate a 32-bit int.
+func fitsInt(v uint32, maxInt uint64) (int, bool) {
+	if uint64(v) > maxInt {
+		return 0, false
+	}
+	return int(v), true
 }
 
 func berReadTLV(data []byte) (tag byte, value []byte, err error) {
@@ -233,15 +250,19 @@ func berReadTLV(data []byte) (tag byte, value []byte, err error) {
 	}
 	numBytes := int(data[offset] & 0x7f)
 	offset++
+	if numBytes > 4 {
+		return 0, nil, fmt.Errorf("ber: unsupported length encoding")
+	}
 	if offset+numBytes > len(data) {
 		return 0, nil, fmt.Errorf("ber: truncated length")
 	}
-	length := 0
+	var raw uint32
 	for i := 0; i < numBytes; i++ {
-		length = (length << 8) | int(data[offset+i])
+		raw = (raw << 8) | uint32(data[offset+i])
 	}
 	offset += numBytes
-	if offset+length > len(data) {
+	length, ok := fitsInt(raw, math.MaxInt)
+	if !ok || length > len(data)-offset {
 		return 0, nil, fmt.Errorf("ber: truncated value")
 	}
 	value = data[offset : offset+length]
@@ -253,10 +274,16 @@ func berReadInteger(data []byte) (int64, []byte, error) {
 		return 0, nil, fmt.Errorf("ber: expected INTEGER")
 	}
 	length := int(data[1])
+	if length == 0 || length > 8 {
+		return 0, nil, fmt.Errorf("ber: invalid integer length %d", length)
+	}
 	if 2+length > len(data) {
 		return 0, nil, fmt.Errorf("ber: truncated integer")
 	}
 	var val int64
+	if data[2]&0x80 != 0 {
+		val = -1 // sign-extend negative values
+	}
 	for _, b := range data[2 : 2+length] {
 		val = (val << 8) | int64(b)
 	}

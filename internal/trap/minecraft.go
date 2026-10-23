@@ -37,7 +37,7 @@ func NewMinecraft(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 }
 
 func (t *MinecraftTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("minecraft"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("minecraft"), t.cfg.ProxyProtocol, t.logger, t.metrics, "minecraft")
 	if err != nil {
 		return fmt.Errorf("minecraft listen: %w", err)
 	}
@@ -59,7 +59,7 @@ func (t *MinecraftTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "minecraft", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

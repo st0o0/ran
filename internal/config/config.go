@@ -87,6 +87,13 @@ type Config struct {
 	CrowdSecBatchInterval time.Duration
 	CrowdSecBatchSize     int
 	CrowdSecDecisionCache bool
+	CrowdSecMaxTracked    int
+
+	LogPasswords string
+
+	UDPRatePerSource int
+	UDPRateBurst     int
+	UDPRateGlobal    int
 }
 
 func (c *Config) EnabledTraps() []string {
@@ -166,9 +173,17 @@ func Load(getenv func(string) string) (*Config, error) {
 		CrowdSecBatchInterval: e.duration("RAN_CROWDSEC_BATCH_INTERVAL", 10*time.Second),
 		CrowdSecBatchSize:     e.intMin("RAN_CROWDSEC_BATCH_SIZE", 50, 1),
 		CrowdSecDecisionCache: e.boolean("RAN_CROWDSEC_DECISION_CACHE", true),
+		CrowdSecMaxTracked:    e.intMin("RAN_CROWDSEC_MAX_TRACKED", 100000, 1),
+		LogPasswords:          e.logPasswords("RAN_LOG_PASSWORDS", "off"),
+		UDPRatePerSource:      e.intMin("RAN_UDP_RATE_PER_SOURCE", 20, 1),
+		UDPRateBurst:          e.intMin("RAN_UDP_RATE_BURST", 40, 1),
+		UDPRateGlobal:         e.intMin("RAN_UDP_RATE_GLOBAL", 2000, 1),
 	}
 	if e.err != nil {
 		return nil, e.err
+	}
+	if c.UDPRateBurst < c.UDPRatePerSource {
+		return nil, fmt.Errorf("RAN_UDP_RATE_BURST (%d) must not be smaller than RAN_UDP_RATE_PER_SOURCE (%d)", c.UDPRateBurst, c.UDPRatePerSource)
 	}
 
 	// Parse trap list
@@ -340,6 +355,18 @@ func (e *envReader) logFormat(name, def string) string {
 		return strings.ToLower(strings.TrimSpace(e.getenv(name)))
 	default:
 		e.setErr(fmt.Errorf("%s must be json/text, got %q", name, e.getenv(name)))
+		return def
+	}
+}
+
+func (e *envReader) logPasswords(name, def string) string {
+	switch v := strings.ToLower(strings.TrimSpace(e.getenv(name))); v {
+	case "":
+		return def
+	case "off", "mask", "on":
+		return v
+	default:
+		e.setErr(fmt.Errorf("%s must be off/mask/on, got %q", name, e.getenv(name)))
 		return def
 	}
 }

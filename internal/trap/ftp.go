@@ -35,7 +35,7 @@ func NewFTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *FTPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ftp"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ftp"), t.cfg.ProxyProtocol, t.logger, t.metrics, "ftp")
 	if err != nil {
 		return fmt.Errorf("ftp listen: %w", err)
 	}
@@ -57,7 +57,7 @@ func (t *FTPTrap) Start(ctx context.Context) error {
 			continue
 		}
 		t.wg.Add(1)
-		go t.handle(ctx, conn)
+		go safely(t.logger, t.metrics, "ftp", func() { t.handle(ctx, conn) })
 	}
 	return nil
 }

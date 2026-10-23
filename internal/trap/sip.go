@@ -8,22 +8,21 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type sipHandler struct {
-	logger  *slog.Logger
-	alerter alert.Alerter
+	logger *slog.Logger
 }
 
-func NewSIP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *UDPTrap {
+// NewSIP takes no alerter: UDP source addresses are spoofable, so a UDP handler
+// must not be able to raise alerts at all.
+func NewSIP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter) *UDPTrap {
 	handler := &sipHandler{
-		logger:  logger,
-		alerter: alerter,
+		logger: logger,
 	}
-	return NewUDP("sip", cfg.TrapAddrs("sip"), logger, m, limiter, alerter, handler)
+	return NewUDP("sip", cfg.TrapAddrs("sip"), logger, m, limiter, newUDPRateLimiter(cfg), handler)
 }
 
 func (h *sipHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {
@@ -74,8 +73,6 @@ func (h *sipHandler) HandlePacket(ctx context.Context, sess *Session, data []byt
 			sess.LogAuthAttempt(slog.String("username", username))
 		}
 	}
-
-	h.alerter.Alert(ctx, sess.SourceIP, "sip", map[string]string{"method": method, "from": from, "to": to})
 
 	nonce := generateNonce()
 	response := fmt.Sprintf("SIP/2.0 401 Unauthorized\r\nVia: %s\r\nFrom: %s\r\nTo: %s\r\nCall-ID: %s\r\nWWW-Authenticate: Digest realm=\"ran\",nonce=\"%s\"\r\nContent-Length: 0\r\n\r\n",

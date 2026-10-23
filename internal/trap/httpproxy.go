@@ -34,7 +34,7 @@ func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 	}
 
 	t.srv = &http.Server{
-		Handler:      t,
+		Handler:      recoverHandler(logger, m, "httpproxy", t),
 		ReadTimeout:  cfg.SessionTimeout,
 		WriteTimeout: cfg.SessionTimeout,
 		ConnContext:  ConnContextWithDestPort,
@@ -43,7 +43,7 @@ func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 }
 
 func (t *HTTPProxyTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("httpproxy"), t.cfg.ProxyProtocol)
+	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("httpproxy"), t.cfg.ProxyProtocol, t.logger, t.metrics, "httpproxy")
 	if err != nil {
 		return fmt.Errorf("httpproxy listen: %w", err)
 	}

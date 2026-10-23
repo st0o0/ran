@@ -2,10 +2,12 @@ package trap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,11 +65,51 @@ func (s *Session) LogConnect() {
 	s.Logger.Info("session started", "action", "connect")
 }
 
+// Password log modes (RAN_LOG_PASSWORDS).
+const (
+	passwordsOff int32 = iota
+	passwordsMask
+	passwordsOn
+)
+
+var passwordMode atomic.Int32
+
+// SetPasswordLogMode sets how passwords appear in credential log events:
+// "off" (default, field omitted), "mask" or "on".
+func SetPasswordLogMode(mode string) {
+	switch mode {
+	case "mask":
+		passwordMode.Store(passwordsMask)
+	case "on":
+		passwordMode.Store(passwordsOn)
+	default:
+		passwordMode.Store(passwordsOff)
+	}
+}
+
+// applyPasswordMode returns the attribute to log, or false if it must be omitted.
+func applyPasswordMode(a slog.Attr) (slog.Attr, bool) {
+	switch passwordMode.Load() {
+	case passwordsOn:
+		return a, true
+	case passwordsMask:
+		return slog.String("password", fmt.Sprintf("*** (%d)", len(a.Value.String()))), true
+	default:
+		return a, false
+	}
+}
+
 func (s *Session) LogAuthAttempt(attrs ...slog.Attr) {
 	s.authAttempts++
 	args := make([]any, 0, 1+len(attrs))
 	args = append(args, slog.String("action", "auth_attempt"))
 	for _, a := range attrs {
+		if a.Key == "password" {
+			var ok bool
+			if a, ok = applyPasswordMode(a); !ok {
+				continue
+			}
+		}
 		args = append(args, a)
 	}
 	s.Logger.Info("credentials captured", args...)
@@ -206,7 +248,9 @@ func (ml *MultiListener) Addr() net.Addr {
 	return ml.listeners[0].Addr()
 }
 
-func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool) (*MultiListener, error) {
+// ListenMultiTCP listens on all addrs. logger, m and protocol are used to report
+// panics recovered in the accept goroutines; logger and m may be nil.
+func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool, logger *slog.Logger, m *metrics.Metrics, protocol string) (*MultiListener, error) {
 	var lc net.ListenConfig
 	listeners := make([]net.Listener, 0, len(addrs))
 	for _, addr := range addrs {
@@ -218,11 +262,22 @@ func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool) (*Mult
 			return nil, err
 		}
 		if proxyProto {
-			ln = &proxyListener{Listener: ln}
+			ln = newProxyListener(ln, logger, m, protocol)
 		}
 		listeners = append(listeners, ln)
 	}
 
+	return newMultiListener(listeners, logger, m, protocol), nil
+}
+
+// acceptPanicBackoffMin and acceptPanicBackoffMax bound the sleep after a
+// recovered Accept panic, so a listener that panics on every call cannot spin a CPU.
+var (
+	acceptPanicBackoffMin = 10 * time.Millisecond
+	acceptPanicBackoffMax = time.Second
+)
+
+func newMultiListener(listeners []net.Listener, logger *slog.Logger, m *metrics.Metrics, protocol string) *MultiListener {
 	ml := &MultiListener{
 		listeners: listeners,
 		connCh:    make(chan net.Conn, 64),
@@ -233,10 +288,34 @@ func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool) (*Mult
 		ml.wg.Add(1)
 		go func(l net.Listener) {
 			defer ml.wg.Done()
+			backoff := acceptPanicBackoffMin
 			for {
-				conn, err := l.Accept()
+				var conn net.Conn
+				var err error
+				panicked := true
+				// A panic while accepting (e.g. PROXY header parsing) must not end the loop.
+				safely(logger, m, protocol, func() {
+					conn, err = l.Accept()
+					panicked = false
+				})
+				if panicked {
+					// Back off (10ms doubling to 1s) so repeated panics do not spin.
+					select {
+					case <-time.After(backoff):
+					case <-ml.done:
+						return
+					}
+					if backoff *= 2; backoff > acceptPanicBackoffMax {
+						backoff = acceptPanicBackoffMax
+					}
+					continue
+				}
+				backoff = acceptPanicBackoffMin
 				if err != nil {
 					return
+				}
+				if conn == nil {
+					continue
 				}
 				select {
 				case ml.connCh <- conn:
@@ -248,7 +327,7 @@ func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool) (*Mult
 		}(ln)
 	}
 
-	return ml, nil
+	return ml
 }
 
 func authSleep(ctx context.Context, baseDelay time.Duration, attempt int) error {
