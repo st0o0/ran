@@ -1,0 +1,63 @@
+name: Extra CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extra-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-386:
+    name: GOARCH=386 build and vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Some length checks depend on the size of int.
+      - run: GOARCH=386 go build ./...
+      - run: GOARCH=386 go vet ./...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - run: govulncheck ./...
+
+  openspec:
+    name: openspec validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --global @fission-ai/openspec@1.6.0
+      - run: openspec validate --all
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fuzz every target for 20 seconds
+        run: |
+          set -eu
+          targets=$(grep -rhoE '^func Fuzz[A-Za-z0-9_]+' --include='*_test.go' internal | sed 's/^func //' | sort -u)
+          for target in $targets; do
+            pkg=$(dirname "$(grep -rlE "^func ${target}\(" --include='*_test.go' internal | head -n1)")
+            echo "== ${target} (${pkg})"
+            go test -run='^$' -fuzz="^${target}\$" -fuzztime=20s "./${pkg}"
+          done
