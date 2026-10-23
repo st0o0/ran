@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
@@ -21,89 +19,26 @@ const (
 )
 
 type ADBTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewADB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *ADBTrap {
-	return &ADBTrap{
+func NewADB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *ADBTrap {
+	t := &ADBTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("adb", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *ADBTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("adb"), t.cfg.ProxyProtocol, t.logger, t.metrics, "adb")
-	if err != nil {
-		return fmt.Errorf("adb listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("adb"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "adb", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "adb", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *ADBTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *ADBTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("adb", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "adb", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *ADBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	hdr := make([]byte, adbHdrSize)
 	if _, err := readFull(conn, hdr); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
@@ -127,7 +62,7 @@ func (t *ADBTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 
 	sess.LogPayload("adb_identity", slog.String("identity", identity))
-	t.alerter.Alert(ctx, host, "adb", map[string]string{"identity": identity})
+	sess.Alert(ctx, map[string]string{"identity": identity})
 
 	token := make([]byte, 20)
 	_, _ = rand.Read(token)

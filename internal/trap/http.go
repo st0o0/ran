@@ -19,17 +19,22 @@ import (
 const maxHTTPBody = 16 << 10
 
 type HTTPTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	srv      *http.Server
-	sessions sync.Map
+	*bound
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
+	limiter *Limiter
+	alerter Reporter
+	srv     *http.Server
+	// conns maps each accepted connection to its per-connection state. The key is
+	// the net.Conn itself, never RemoteAddr: under PROXY protocol RemoteAddr is
+	// client controlled and can collide between connections.
+	conns sync.Map
 }
 
-func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *HTTPTrap {
+func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *HTTPTrap {
 	t := &HTTPTrap{
+		bound:   newBound(),
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
@@ -45,34 +50,60 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 	t.srv = &http.Server{
 		Addr:         cfg.TrapAddr("http"),
 		Handler:      recoverHandler(logger, m, "http", mux),
-		ReadTimeout:  cfg.SessionTimeout,
-		WriteTimeout: cfg.SessionTimeout,
+		ReadTimeout:  cfg.ResolveSessionTimeout("http"),
+		WriteTimeout: cfg.ResolveSessionTimeout("http"),
 		ConnState:    t.connState,
-		ConnContext:  ConnContextWithDestPort,
+		ConnContext:  t.connContext,
 
 		MaxHeaderBytes: maxHTTPBody,
 	}
 	return t
 }
 
+// httpConn is the state of one accepted connection. sess is set in connState
+// (StateNew) before the handler can run and cleared on close.
+type httpConn struct {
+	sess *Session
+}
+
+type httpConnKey struct{}
+
+// connContext runs before connState(StateNew) for the same connection. It
+// creates the per-connection state and hands it to the handlers via the
+// request context.
+func (t *HTTPTrap) connContext(ctx context.Context, conn net.Conn) context.Context {
+	hc := &httpConn{}
+	t.conns.Store(conn, hc)
+	return context.WithValue(ConnContextWithDestPort(ctx, conn), httpConnKey{}, hc)
+}
+
 func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
-	addr := conn.RemoteAddr().String()
 	switch state {
 	case http.StateNew:
-		host, port := ParseAddr(addr)
-		_, destPort := ParseAddr(conn.LocalAddr().String())
-		if !t.limiter.Acquire(host) {
-			LogRejected(t.logger, "http", "tcp", destPort, host, "rate_limit")
+		v, ok := t.conns.Load(conn)
+		if !ok {
 			conn.Close()
 			return
 		}
-		sess := NewSession("http", "tcp", host, port, destPort, t.logger)
-		t.sessions.Store(addr, sess)
+		hc := v.(*httpConn)
+		host, port := ParseAddr(conn.RemoteAddr().String())
+		_, destPort := ParseAddr(conn.LocalAddr().String())
+		if !t.limiter.Acquire(host) {
+			LogRejected(t.logger, t.metrics, "http", alert.TransportTCP, destPort, host, "rate_limit")
+			conn.Close()
+			return
+		}
+		sess := NewSession("http", alert.TransportTCP, host, port, destPort, t.logger)
+		sess.Sensor = t.alerter
+		hc.sess = sess
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 	case http.StateClosed, http.StateHijacked:
-		if v, ok := t.sessions.LoadAndDelete(addr); ok {
-			sess := v.(*Session)
+		v, ok := t.conns.LoadAndDelete(conn)
+		if !ok {
+			return
+		}
+		if sess := v.(*httpConn).sess; sess != nil {
 			sess.LogDisconnect()
 			sess.RecordEnd(t.metrics)
 			t.limiter.Release(sess.SourceIP)
@@ -81,11 +112,13 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 }
 
 func (t *HTTPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("http"), t.cfg.ProxyProtocol, t.logger, t.metrics, "http")
+	addrs := t.cfg.TrapAddrs("http")
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyProtocol, t.logger, t.metrics, "http")
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
 	}
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("http"))
+	t.set(ln.Addr())
+	t.logger.Info("listening", "addrs", addrs)
 
 	go func() {
 		<-ctx.Done()
@@ -105,12 +138,12 @@ func (t *HTTPTrap) Stop(ctx context.Context) error {
 
 func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		v, ok := t.sessions.Load(r.RemoteAddr)
-		if !ok {
+		hc, _ := r.Context().Value(httpConnKey{}).(*httpConn)
+		if hc == nil || hc.sess == nil {
 			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		sess := v.(*Session)
+		sess := hc.sess
 
 		w.Header().Set("Server", "Apache/2.4.62")
 		w.Header().Set("X-Powered-By", "PHP/8.3.6")
@@ -131,7 +164,7 @@ func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
 			}
 			sess.LogAuthAttempt(attrs...)
 			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(r.Context(), sess.SourceIP, "http", map[string]string{"username": username, "password": password, "path": r.URL.Path})
+			sess.Alert(r.Context(), map[string]string{"username": username, "password": password, "path": r.URL.Path})
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, loginErrorPage(style))

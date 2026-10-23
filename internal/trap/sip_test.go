@@ -15,6 +15,7 @@ import (
 )
 
 func TestSIPTrap(t *testing.T) {
+	t.Parallel()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +38,7 @@ func TestSIPTrap(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	request := "REGISTER sip:example.com SIP/2.0\r\n" +
 		"Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK776\r\n" +

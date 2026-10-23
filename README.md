@@ -6,7 +6,8 @@
 
 Single-binary honeypot written in Go. Emulates 29 network services (SSH, RDP,
 Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
-pushes ban decisions to CrowdSec. No external dependencies, ~8 MB scratch image.
+pushes classified alerts to CrowdSec, whose profiles decide the bans. No external
+dependencies, ~8 MB scratch image.
 
 Named after the Norse goddess who catches sailors in her net.
 
@@ -42,7 +43,7 @@ There are already good honeypots out there. The reason I built rán:
 - **qeeqbox/honeypots** has broad protocol coverage in Python, but it needs a
   Python runtime and pip, and doesn't integrate with CrowdSec.
 
-rán does one thing: catch probes, log them, ban the source. Single static Go
+rán does one thing: catch probes, log them, report the source to CrowdSec. Single static Go
 binary, no shell, no runtime, just protocol stubs and a CrowdSec LAPI client.
 
 | | T-Pot | qeeqbox/honeypots | rán |
@@ -78,11 +79,11 @@ attacker connects ──▶ protocol handshake ──▶ credential / command / 
         │                       │                            │
         ▼                       ▼                            ▼
    rate limiter           plausible error            CrowdSec LAPI alert
-  (per-IP + global)       (access denied)            (self-contained ban)
+  (per-IP + global)       (access denied)            (class, no decision)
                                                            │
                                                            ▼
-                                                    bouncers enforce
-                                                  (Caddy, nginx, iptables)
+                                                    CrowdSec profile decides,
+                                                  bouncers enforce (Caddy, nginx)
 ```
 
 Each trap emulates just enough protocol to complete the handshake, grab the
@@ -106,7 +107,7 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 |---|---|---|
 | `http` | `:8081` | Credentials (WordPress + admin login pages) |
 | `httpproxy` | `:8080` | Proxy targets + Proxy-Authorization credentials |
-| `elasticsearch` | `:9200` | API requests (fake cluster responses) |
+| `elasticsearch` | `:9200` | API requests (fake cluster responses). A plain `GET` without a body (`/`, `/_cluster/health`, other fingerprinting GETs) is a probe; any other method, or any request with a body, counts as a command |
 
 ### Databases
 
@@ -143,7 +144,7 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 | `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass) |
 | `modbus` | `:502` | ICS payloads (function codes + registers) |
 | `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge) |
-| `minecraft` | `:25565` | Handshake metadata + player names from login attempts |
+| `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload |
 
 ### UDP
 
@@ -177,8 +178,26 @@ RAN_SSH_ADDR=:2222,:22                  # SSH on both default and standard port
 RAN_SMTP_ADDR=:25,:587                  # SMTP on standard + submission port
 ```
 
-Legacy variables `RAN_SSH=on`, `RAN_HTTP=on`, etc. still work but `RAN_TRAPS`
-takes precedence when set.
+Listen addresses are validated at startup (`host:port` or `:port`, port 1 to 65535).
+Check a configuration without starting the traps: `ran check-config` prints the
+problem and how to fix it, and exits 0 (valid) or 1 (invalid). The container
+health check (`ran healthcheck`) also exits 1 when the configuration is invalid.
+
+### Authentication behavior and PROXY protocol
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RAN_MAX_AUTH_RETRIES` | `3` | Credential attempts per session before the trap disconnects (`0` = unlimited until the session timeout) |
+| `RAN_AUTH_DELAY` | `0s` | Delay before answering a failed login; grows up to 4x per attempt |
+| `RAN_SSH_TARPIT` | `off` | Hold SSH clients in an endless banner instead of the key exchange |
+| `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection |
+| `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start, so the directory must be writable (the image declares `/data` as a volume) |
+| `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)) |
+| `RAN_<PROTO>_MAX_AUTH_RETRIES` | | Per-trap override of `RAN_MAX_AUTH_RETRIES` |
+| `RAN_<PROTO>_AUTH_DELAY` | | Per-trap override of `RAN_AUTH_DELAY` |
+| `RAN_<PROTO>_SESSION_TIMEOUT` | | Per-trap override of `RAN_SESSION_TIMEOUT` |
+
+`<PROTO>` is the upper-case trap name, for example `RAN_SSH_SESSION_TIMEOUT`.
 
 ### Logging
 
@@ -210,6 +229,14 @@ only subject to the global bucket.
 Request bodies are capped at 16 KiB (HTTP) and RESP, LDAP and line-based
 protocols enforce fixed input limits.
 
+On SIGTERM or SIGINT the listeners close and live sessions are closed at once
+(they are not drained). Shutdown shares one 9 second deadline, below Docker's
+default 10 second stop grace period regardless of `RAN_SESSION_TIMEOUT`: traps
+and the metrics server get 4 seconds, then the CrowdSec sink drains its queue
+within the remaining time (at most 5 seconds, with one last attempt if the
+LAPI was failing). If every trap exits on its own while nothing asked to stop,
+`ran` logs an error and exits with code 1 so the runtime restarts it.
+
 ### Metrics
 
 | Variable | Default | Purpose |
@@ -218,19 +245,30 @@ protocols enforce fixed input limits.
 
 Exposed metrics:
 
-- `ran_connections_total{protocol}`: connection counter
+- `ran_connections_total{protocol,outcome}`: connection counter
 - `ran_credentials_captured_total{protocol}`: credential capture counter
 - `ran_active_sessions{protocol}`: active session gauge
-- `ran_session_duration_seconds{protocol}`: session duration histogram
-- `ran_crowdsec_alerts_total{protocol,status}`: CrowdSec alert push counter
-- `ran_crowdsec_alerts_deduplicated_total{protocol}`: alerts suppressed by dedup
-- `ran_crowdsec_alerts_cached_total{protocol}`: alerts suppressed by decision cache
+- `ran_session_duration_seconds{protocol}`: session duration histogram (buckets 0.1 s to 120 s)
+- `ran_crowdsec_alerts_dropped_total{protocol}`: alerts dropped because the delivery queue was full
 - `ran_panics_recovered_total{protocol}`: panics recovered at connection and packet boundaries
 - `ran_proxy_protocol_dropped_total{protocol}`: connections closed by the PROXY protocol listener (no valid header, deadline, handshake limit, stalled consumer)
 - `ran_udp_rate_limited_total{protocol}`: UDP packets dropped by the packet rate limiter
-- `ran_crowdsec_pipeline_total{protocol,stage}`: CrowdSec alert pipeline events; stage `invalid` counts rejected source addresses, `closed` counts alerts raised after the alerter was shut down
+- `ran_sessions_rejected_total{protocol}`: TCP connections rejected by the session limiter (`RAN_MAX_SESSIONS`, `RAN_MAX_PER_IP`)
+- `ran_probe_summary_suppressed_sessions_total`: probe sessions whose per-session log lines were replaced by a summary
+- `ran_tracked_entries{map}`: entries in the bounded tracking maps (`map`: `scan`, `probe`, `cooldown`)
+- `ran_tracked_evictions_total{map}`: live entries evicted because a map was full; a rising rate means `RAN_CROWDSEC_MAX_TRACKED` is too small
+- `ran_crowdsec_push_duration_seconds`: histogram of CrowdSec LAPI push request durations
+- `ran_crowdsec_push_errors_total`: failed LAPI pushes (transport errors and non-2xx answers)
+- `ran_crowdsec_queue_length`: alerts waiting in the send queue
+- `ran_crowdsec_pipeline_total{protocol,stage}`: CrowdSec alert pipeline events. Stages: `received`, `invalid` (rejected source address), `closed` (raised after shutdown), `filtered` (class not in `RAN_BAN_ON`), `cooldown` (within `RAN_ALERT_COOLDOWN`), `queued`, `dropped`, `sent`, `failed`, `released` (cooldown slot freed after a failed push, so the source is reported again). The 0.3.x stages `cached` and `deduplicated` no longer exist. Per-class counts are not a label (cardinality); the class is in the alert meta and the logs.
 
 ### CrowdSec
+
+rán is a sensor: it classifies every TCP session, aggregates the noise and
+pushes alerts to the CrowdSec LAPI. **rán does not ban anything by itself.**
+Alerts carry no decisions; a CrowdSec profile decides whether and for how long
+an IP is banned (see [Escalation with CrowdSec profiles](#escalation-with-crowdsec-profiles)).
+Without a profile nothing is banned.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -238,23 +276,90 @@ Exposed metrics:
 | `RAN_CROWDSEC_URL` | | CrowdSec LAPI URL (required when enabled) |
 | `RAN_CROWDSEC_MACHINE_ID` | | Machine ID for LAPI login (required when enabled) |
 | `RAN_CROWDSEC_PASSWORD` | | Machine password for LAPI login (required when enabled) |
-| `RAN_CROWDSEC_BAN_DURATION` | `4h` | Ban duration (`0` = permanent) |
-| `RAN_CROWDSEC_DEDUP_WINDOW` | `5m` | Cooldown per IP+scenario before re-alerting (`0s` = disabled) |
+| `RAN_BAN_ON` | `attack,scan` | Classes that produce a CrowdSec alert (subset of `probe,attack,scan`). `probe` stays in logs and metrics only unless listed |
+| `RAN_ALERT_COOLDOWN` | `4h` | At most one alert per IP and class per cooldown (`0s` = disabled) |
+| `RAN_PROBE_SUMMARY_WINDOW` | `60s` | Window of the aggregated probe summary log line (`0s` = one log line per probe session) |
 | `RAN_CROWDSEC_BATCH_INTERVAL` | `10s` | Batch flush interval (`0s` = immediate, no batching) |
 | `RAN_CROWDSEC_BATCH_SIZE` | `50` | Max alerts per batch POST |
-| `RAN_CROWDSEC_DECISION_CACHE` | `on` | Cache own ban decisions to suppress redundant alerts |
-| `RAN_CROWDSEC_MAX_TRACKED` | `100000` | Max entries in the dedup map and in the decision cache (about 12 MB each at the default) |
+| `RAN_CROWDSEC_MAX_TRACKED` | `20000` | Max entries in each in-memory map: alert cooldown, scan tracker and probe summaries (see sizing below) |
+
+`RAN_CROWDSEC_BAN_DURATION`, `RAN_CROWDSEC_DECISION_CACHE` and
+`RAN_CROWDSEC_DEDUP_WINDOW` were removed in 0.4.0. They are ignored; rán logs a
+one-time warning at startup if one is still set.
+
+**Memory sizing.** Each tracked entry costs about 400 bytes per structure, and the
+cooldown, the scan tracker and the probe log share `RAN_CROWDSEC_MAX_TRACKED`, so
+20000 entries are roughly 25 MB at the cap (a 1M unique-source flood peaked at
+227 MB heap with a cap of 100000). Size the container memory limit for the cap you
+choose, and set `GOMEMLIMIT` to about 80 percent of the container limit (for example
+`GOMEMLIMIT=100MiB` for a 128 MB limit) so the garbage collector works harder before
+the kernel OOM-kills the process.
+
+#### Classification
+
+| Class | Meaning |
+|---|---|
+| `probe` | Connect and banner only: no auth attempt, command or payload byte |
+| `attack` | At least one auth attempt, command or payload byte |
+| `scan` | The same source IP touched at least 3 distinct TCP trap protocols within about 10 minutes |
+
+Scan detection never counts UDP (spoofable) or non-public source addresses, and
+its in-memory map is capped (oldest entries are evicted first, which only delays
+a scan classification). A scan is always its own alert, even if the session that
+crossed the threshold was only a probe; its scenario uses the protocol that
+crossed it. `scan` outranks `attack`, which outranks `probe`.
+
+The class is sent as event meta (`class`), together with `protocol`,
+`dest_port`, `auth_attempts`, `commands` and `payload_bytes`. Scenario names stay
+`custom/ran-<protocol>-trap` for every class, and `source.ip` and `source.value`
+are both set, so geo enrichment keeps working.
+
+Sessions are classified from the counters when they end, so a trap that logs a
+command, payload or auth attempt ends as `attack` even if it did not alert
+mid-session (redis, memcached, imap and irc alert on the first command with only
+the command name as meta). Pure fingerprinting stays a `probe`: Elasticsearch
+plain GET requests without a body and Minecraft server-list pings. Per-trap
+tuning for single-request protocols (a modbus request, an ADB CONNECT) is a
+planned follow-up.
+
+#### Logging of probes
+
+Probe sessions are not logged one by one. Per source IP and
+`RAN_PROBE_SUMMARY_WINDOW` rán writes one summary line
+(`action: probe_summary`, `sessions`, `protocols`). Attack and scan sessions keep
+their full per-event lines (credentials, commands, payloads). The `ran_*`
+metrics are still updated per session, so dashboards are unaffected.
+
+#### Alert pipeline
+
+```
+trap session ──▶ Classify (probe / attack / scan) ──▶ Alert pipeline ──▶ POST /v1/alerts
+                                                       │
+   IP validation ─▶ class filter (RAN_BAN_ON) ─▶ cooldown ─▶ batch queue
+        invalid          filtered                  cooldown       queued / dropped
+```
+
+1. **IP validation**: only publicly routable addresses pass (stage `invalid` otherwise).
+2. **Class filter**: classes not in `RAN_BAN_ON` stop here (stage `filtered`).
+3. **Cooldown**: at most one alert per IP and class per `RAN_ALERT_COOLDOWN`
+   (stage `cooldown`). A move to a higher class (probe to attack, attack to scan)
+   passes once; a lower class is suppressed while a higher one is cooling down.
+   The slot is only consumed when the alert is queued; if the queue is full the
+   alert is dropped and may be retried. With the default 4h cooldown a continuous
+   attacker produces about one alert per ban period, so CrowdSec's
+   `GetDecisionsCount` counts episodes, not packets.
+4. **Batch queue**: alerts are flushed as one POST on a timer or at the batch size.
+
+When a map is full, the oldest entries are evicted. An evicted cooldown entry can
+alert again, so a full map means more LAPI traffic.
 
 Only the TCP peer address is used as alert identity. The HTTP trap logs
-`X-Real-IP` / `X-Forwarded-For` as `claimed_client_ip` but never bans on it
+`X-Real-IP` / `X-Forwarded-For` as `claimed_client_ip` but never alerts on it
 (behind a trusted proxy, use `RAN_PROXY_PROTOCOL`). Alerts are accepted only
 for publicly routable addresses. Private (RFC 1918, ULA), CGNAT (100.64.0.0/10),
 loopback, link-local, unspecified, multicast, reserved, documentation, benchmark,
 6to4, NAT64 (including 64:ff9b:1::/48), IETF protocol assignment (2001::/23), 3fff::/20, 5f00::/16 and IPv4-compatible sources are dropped (pipeline stage `invalid`), so
 LAN-only deployments produce no CrowdSec alerts.
-
-When the dedup map or the decision cache is full, the oldest entries are
-evicted. Evicted entries are alerted again, so a full map means more LAPI traffic.
 
 With `RAN_PROXY_PROTOCOL`, the PROXY v1 or v2 header is required. A connection
 must send a valid header within 3 seconds; a connection that sends other bytes,
@@ -267,11 +372,6 @@ solely from a trusted proxy or tunnel: any peer that can connect directly can
 forge a header and choose its own source address. A source allowlist for
 trusted proxies is a possible future change.
 
-Upgrading from 0.3.7: UDP traps (`dns`, `ntp`, `snmp`, `sip`) no longer raise
-alerts, so the `custom/ran-{dns,ntp,snmp,sip}-trap` scenarios stop appearing.
-The HTTP log field `client_ip` is now `claimed_client_ip`. The `password` log
-field is omitted unless `RAN_LOG_PASSWORDS` is `mask` or `on`.
-
 Register the machine before starting rán:
 
 ```bash
@@ -279,29 +379,12 @@ cscli machines add -m ran-honeypot -p <password>
 ```
 
 rán authenticates via machine-login (`POST /v1/watchers/login`) and
-automatically refreshes the JWT token in the background. Scenario names
-follow the pattern `custom/ran-<protocol>-trap`. Each alert includes a
-self-contained ban decision, so CrowdSec forwards it directly to bouncers
-without needing a local scenario.
+automatically refreshes the JWT token in the background. Alerts are pushed with
+`remediation: true`, an empty `decisions` list, `simulated: false`, and
+`source.scope: Ip`. Decisions created by your profiles have the origin
+`crowdsec`, not `ran`.
 
-#### Alert Pipeline
-
-Alerts pass through four filters before reaching CrowdSec LAPI:
-
-```
-Alert(ip, protocol) → IP Validation → Decision Cache → Dedup Filter → Batch Queue → POST /v1/alerts
-```
-
-1. **IP Validation**: drop anything that is not a global unicast, non-private address.
-2. **Decision Cache**: if the IP was already banned by a prior alert, skip.
-3. **Dedup Filter**: if the same IP+scenario was reported within the dedup window, skip.
-   The slot is only consumed when the alert is queued; if the queue is full the alert is dropped and may be retried.
-4. **Batch Queue**: collect alerts and flush as a single POST on timer or batch-size threshold.
-
-After a successful POST, each IP in the batch is added to the decision cache
-with the configured ban duration.
-
-Example docker-compose with recommended alert optimization settings:
+Example docker-compose:
 
 ```yaml
 services:
@@ -313,67 +396,179 @@ services:
       RAN_CROWDSEC_URL: http://crowdsec:8080
       RAN_CROWDSEC_MACHINE_ID: ran-honeypot
       RAN_CROWDSEC_PASSWORD: ${CROWDSEC_PASSWORD}
-      RAN_CROWDSEC_DEDUP_WINDOW: 5m
-      RAN_CROWDSEC_BATCH_INTERVAL: 10s
-      RAN_CROWDSEC_DECISION_CACHE: "on"
+      RAN_BAN_ON: attack,scan
+      RAN_ALERT_COOLDOWN: 4h
 ```
 
-#### Ban Escalation
+#### Escalation with CrowdSec profiles
 
-By default every attacker gets the same ban duration (`RAN_CROWDSEC_BAN_DURATION`,
-default `4h`). CrowdSec Profiles can override this with dynamic escalation
-based on how many times an IP has been banned before, with no changes to rán
-required.
-
-> **Prerequisite:** `duration_expr` requires CrowdSec ≥ 1.4.
-
-Add the following to your CrowdSec `profiles.yaml`. Order matters:
-CrowdSec evaluates profiles top-to-bottom and stops at the first
-`on_success: break`. Place the permanent-ban profile before the escalation
-profile.
+CrowdSec evaluates `profiles.yaml` only for alerts that carry no decisions,
+which is exactly what rán sends. Select on the class with the **event** form
+`Alert.Events[0].GetMeta("class")`: `Alert.GetMeta("class")` reads only
+alert-level meta and matches nothing. Profiles run top to bottom and stop at the
+first `on_success: break`, so put the `scan` profile first.
 
 ```yaml
-# Permanent ban for persistent offenders (≥ 5 prior bans)
-name: ran_permanent
-filter: "Alert.Scenario startsWith 'custom/ran-' && GetDecisionsCount(Alert.GetValue()) >= 5"
+# scan: one IP probing many protocols
+name: ran_scan
+filters:
+  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "scan"
 decisions:
   - type: ban
     scope: Ip
-    duration: 8760h
+    duration: 1h
+duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
 on_success: break
 ---
-# Exponential escalation: 4h → 12h → 36h → 108h → 324h
-name: ran_escalation
-filter: "Alert.Scenario startsWith 'custom/ran-'"
+# attack: credentials, commands or payloads
+name: ran_attack
+filters:
+  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "attack"
 decisions:
   - type: ban
     scope: Ip
-duration_expr: "Sprintf('%dh', 4 * (3 ^ GetDecisionsCount(Alert.GetValue())))"
+    duration: 1h
+duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
 on_success: break
+# probe: no profile, so a probe alert (only sent with RAN_BAN_ON=probe,...) never bans
 ```
 
-| Hit | Prior decisions | Duration |
-|-----|-----------------|----------|
-| 1st | 0 | 4h |
-| 2nd | 1 | 12h |
-| 3rd | 2 | 36h (1.5 days) |
-| 4th | 3 | 108h (4.5 days) |
-| 5th | 4 | 324h (13.5 days) |
-| 6th+ | ≥ 5 | 8760h (permanent) |
+`duration_expr` overrides the profile `duration` (the fallback), and the newest
+decision replaces the older one. The `scan` class uses the same formula as
+`attack` in this example. If you want scanners to stay out longer, give
+the `scan` profile a harder formula, for example a larger base or a longer cap.
 
-Without these profiles, rán's embedded default decision applies unchanged,
-so existing deployments are not affected.
+| Alert for the IP | Prior decisions | Ban |
+|---|---|---|
+| 1st | 0 | 1h |
+| 2nd | 1 | 3h |
+| 3rd | 2 | 9h |
+| 4th | 3 | 27h |
+| 5th | 4 | 81h |
+| 6th and later | 5 or more | 168h (cap) |
 
-Verify escalation is working:
+Two expression pitfalls, both verified against CrowdSec v1.8.1:
+
+- Use lowercase `min`. The capitalized `Min` does not compile and CrowdSec
+  exits fatally with `unknown name Min`.
+- Use `%.0fh`, not `%dh`. `3 ^ n` is a float, so `%dh` silently falls back to
+  the base `duration` (`%!d(float64=...)`).
+
+> **Prerequisite:** `duration_expr` requires CrowdSec 1.4 or later.
+
+The profile syntax above is verified against CrowdSec v1.8.1 (profile syntax,
+expression and decisions tested). Use the list key `filters:`; the singular
+`filter:` key is rejected and the LAPI exits with `field filter not found in
+type csconfig.ProfileCfg`.
+
+Verify with:
 
 ```bash
+cscli alerts list
 cscli decisions list -o json
 ```
 
-> **Note:** `GetDecisionsCount()` queries CrowdSec's decision database.
-> Expired decisions are purged based on `db_config.flush.max_age`. If the
-> retention window is shorter than your escalation window, counters reset
-> early. Check your retention settings with `cscli config show`.
+#### CrowdSec behaviors to know
+
+- **No profile, no ban.** rán logs a startup line stating that it does not ban by itself.
+- **Escalation memory is the alert history.** `GetDecisionsCount` counts the
+  alerts CrowdSec still stores for the IP. `db_config.flush.max_items` deletes
+  alerts without an active decision, and `max_age` ages them out; a deleted
+  alert drops out of the count, which lowers or resets the escalation level
+  (observed: 27h instead of 81h, and a restart at 1h). Active bans are never
+  expired early. Size `max_items` and `max_age` so the history covers the
+  longest escalation step (168h) at your alert rate. Before the cooldown design
+  rán created about 4000 alerts per day on a busy host; the per-episode
+  cooldown lowers that, but check your own rate with `cscli alerts list`.
+- **CAPI sharing.** Alerts without decisions are still forwarded to the Central
+  API (custom scenarios) unless they are `simulated: true`. rán always sends
+  `simulated: false`; if you do not want to share, disable CAPI sharing on the
+  CrowdSec side. Simulated alerts are not usable for bans: they create
+  simulated decisions that are not in the bouncer stream. rán has no option to
+  send simulated alerts.
+- **Allowlists apply.** An alert without decisions for an allowlisted IP is
+  dropped by CrowdSec and not stored.
+- **Machine credentials stay required** (`cscli machines add`).
+
+#### Migrating from 0.3.x
+
+1. Add the example `profiles.yaml` (or an equivalent) to CrowdSec and reload it.
+   Without a profile, 0.4.0 bans nothing.
+2. Remove `RAN_CROWDSEC_BAN_DURATION`, `RAN_CROWDSEC_DECISION_CACHE` and
+   `RAN_CROWDSEC_DEDUP_WINDOW`; optionally set `RAN_BAN_ON`, `RAN_ALERT_COOLDOWN`
+   and `RAN_PROBE_SUMMARY_WINDOW`.
+3. Update Grafana panels and alerts that use `stage="cached"` or
+   `stage="deduplicated"` of `ran_crowdsec_pipeline_total`: use `cooldown` and
+   `filtered` instead.
+4. Expect fewer log lines: probe sessions are now summarized (see above).
+5. Decisions with origin `ran` from 0.3.x expire normally;
+   `GetDecisionsCount` stays inflated for old IPs because every re-push added a row.
+
+Upgrading from 0.3.7: UDP traps (`dns`, `ntp`, `snmp`, `sip`) no longer raise
+alerts, so the `custom/ran-{dns,ntp,snmp,sip}-trap` scenarios stop appearing.
+The HTTP log field `client_ip` is now `claimed_client_ip`. The `password` log
+field is omitted unless `RAN_LOG_PASSWORDS` is `mask` or `on`.
+
+Upgrading to 0.4.0 (breaking): the image now runs as user `65532`. An existing
+`/data` volume created by an older release is owned by root, so `ran` cannot
+read or write the SSH host key there. Fix it once with
+`chown -R 65532:65532` on the volume (for example
+`docker run --rm -v ran-data:/data busybox chown -R 65532:65532 /data`).
+Until then `ran` logs a warning and uses a new host key on every restart.
+Also user-visible: the MySQL banner now reports version `8.0.36`, and the SMTP
+trap identifies itself as `mx.localdomain`, so fingerprints of the old
+banners change.
+
+## Threat model
+
+rán is a sensor, not a defense. It exposes deliberately weak fake services and
+reports who touched them; it does not protect the host it runs on.
+
+- **Spoofing resistance.** The alert identity is always the TCP peer address.
+  Header values (`X-Forwarded-For`, `X-Real-IP`) are only logged as
+  `claimed_client_ip`. UDP source addresses can be forged, so UDP traps never
+  raise alerts; they only log and count metrics. Only TCP sessions with a
+  publicly routable peer can produce a CrowdSec alert.
+- **PROXY protocol trust.** With `RAN_PROXY_PROTOCOL=on` the address in the
+  header is trusted as the peer. Any host that can reach the port directly can
+  forge it, so enable it only when rán is reachable solely from your proxy or
+  tunnel (firewall the listener accordingly).
+- **Detectability.** Banners are generic and plausible, but a determined
+  attacker can fingerprint any honeypot. Do not rely on rán staying hidden.
+- **Isolation.** Run it unprivileged, without capabilities and with a read-only
+  filesystem (see below). Never place it on a network segment with sensitive
+  hosts.
+
+### Recommended container settings
+
+The image runs as user `65532` and needs write access only to `/data` (the SSH
+host key). Docker sets `net.ipv4.ip_unprivileged_port_start=0` inside containers, so
+low ports work without `NET_BIND_SERVICE`. Other runtimes may need that sysctl
+or higher ports (map them from the host, for example `"22:2222"`).
+
+```yaml
+services:
+  ran:
+    image: ghcr.io/st0o0/ran:latest
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    user: "65532:65532"
+    mem_limit: 128m
+    environment:
+      GOMEMLIMIT: 100MiB          # about 80 percent of mem_limit
+    volumes:
+      - ran-data:/data            # SSH host key
+    tmpfs:
+      - /tmp
+volumes:
+  ran-data:
+```
+
+Sizing: memory is dominated by the tracking maps (see *Memory sizing* above) and
+by concurrent sessions (`RAN_MAX_SESSIONS`). Set `GOMEMLIMIT` to about 80
+percent of the container limit.
 
 ## Log format
 
@@ -394,18 +589,24 @@ Structured JSON to stdout, one line per event:
 }
 ```
 
-Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`.
+Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`, `probe_summary`.
+Connect and disconnect lines are written for sessions that do something; probe
+sessions are summarized (see [Logging of probes](#logging-of-probes)).
 
 ## Troubleshooting
 
-**`at least one trap must be enabled`**: set `RAN_TRAPS` or at least one
-`RAN_<PROTO>=on` variable.
+**`at least one trap must be enabled`**: set `RAN_TRAPS` to a comma-separated
+list of traps. `ran check-config` validates the whole configuration.
 
 **Port already in use**: another service is on the default port. Override
 with `RAN_<PROTO>_ADDR=:<port>`.
 
 **CrowdSec alerts not arriving**: verify `RAN_CROWDSEC_URL` is reachable
 from the container and the machine is registered (`cscli machines list`).
+
+**Alerts arrive but nothing is banned**: rán does not create decisions. Add a
+CrowdSec profile for the `attack` and `scan` classes (see
+[Escalation with CrowdSec profiles](#escalation-with-crowdsec-profiles)).
 
 **UDP traps not receiving packets**: Docker needs explicit UDP port mapping:
 `-p 53:53/udp`, not just `-p 53:53`.

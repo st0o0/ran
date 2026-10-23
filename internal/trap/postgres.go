@@ -7,101 +7,32 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type PostgresTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewPostgres(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *PostgresTrap {
-	return &PostgresTrap{
+func NewPostgres(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *PostgresTrap {
+	t := &PostgresTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("postgres", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *PostgresTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("postgres"), t.cfg.ProxyProtocol, t.logger, t.metrics, "postgres")
-	if err != nil {
-		return fmt.Errorf("postgres listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("postgres"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "postgres", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "postgres", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *PostgresTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("postgres", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "postgres", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
-	setOutcomeFromErr := func(err error) {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
-	}
-
+func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	startup, err := readPgStartupMessage(conn)
 	if err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
@@ -109,7 +40,7 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 		_, _ = conn.Write([]byte{'N'})
 		startup, err = readPgStartupMessage(conn)
 		if err != nil {
-			setOutcomeFromErr(err)
+			setOutcome(sess, err)
 			return
 		}
 	}
@@ -121,22 +52,17 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn) {
 	binary.BigEndian.PutUint32(auth[1:5], 8)
 	binary.BigEndian.PutUint32(auth[5:9], 3)
 	if _, err := conn.Write(auth[:]); err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
 	password, err := readPgPasswordMessage(conn)
 	if err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
-	sess.LogAuthAttempt(
-		slog.String("username", username),
-		slog.String("password", password),
-	)
-	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "postgres", map[string]string{"username": username, "password": password})
+	sess.Cred(ctx, t.metrics, username, password)
 
 	errMsg := fmt.Sprintf("password authentication failed for user \"%s\"", username)
 	writePgErrorResponse(conn, errMsg)

@@ -20,20 +20,28 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+	os.Exit(realMain(os.Args[1:]))
+}
+
+// realMain returns the exit code instead of calling os.Exit, so deferred
+// cleanup always runs.
+func realMain(args []string) int {
+	if len(args) > 0 {
+		switch args[0] {
 		case "healthcheck":
-			os.Exit(healthcheck())
+			return healthcheck()
+		case "check-config":
+			return checkConfig(os.Getenv, os.Stdout, os.Stderr)
 		case "version":
 			fmt.Println(version)
-			return
+			return 0
 		}
 	}
 
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ran: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "ran: invalid configuration: %v\n", err)
+		return 1
 	}
 
 	logger := newLogger(cfg)
@@ -44,30 +52,31 @@ func main() {
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, version)
 
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	mux.HandleFunc("/healthz", healthzHandler(version, startTime, cfg.EnabledTraps()))
-	metricsSrv := &http.Server{Addr: cfg.MetricsAddr, Handler: mux}
-
-	go func() {
-		logger.Info("metrics server starting", "addr", cfg.MetricsAddr)
-		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("metrics server failed", "error", err)
-			os.Exit(1)
-		}
-	}()
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	if err := run(ctx, cfg, logger, m); err != nil {
+	if err := run(ctx, cfg, logger, m, newMetricsServer(cfg.MetricsAddr, reg, startTime, cfg.EnabledTraps())); err != nil {
 		logger.Error("fatal", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
+}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	_ = metricsSrv.Shutdown(shutdownCtx)
+// newMetricsServer builds the metrics and health HTTP server with timeouts, so a
+// slow or malicious client cannot hold connections open.
+func newMetricsServer(addr string, reg *prometheus.Registry, startTime time.Time, traps []string) *http.Server {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	mux.HandleFunc("/healthz", healthzHandler(version, startTime, traps))
+	return &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 }
 
 func healthzHandler(ver string, startTime time.Time, traps []string) http.HandlerFunc {

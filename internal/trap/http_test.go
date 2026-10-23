@@ -19,12 +19,7 @@ import (
 
 func httpTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	return &config.Config{
 		Traps:          []string{"http"},
@@ -36,6 +31,7 @@ func httpTestConfig(t *testing.T) *config.Config {
 }
 
 func TestHTTPLoginPage(t *testing.T) {
+	t.Parallel()
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -45,8 +41,7 @@ func TestHTTPLoginPage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["http"] = serveTrap(t, ctx, trap)
 
 	resp, err := http.Get("http://" + cfg.TrapAddr("http") + "/wp-login.php")
 	if err != nil {
@@ -64,6 +59,7 @@ func TestHTTPLoginPage(t *testing.T) {
 }
 
 func TestHTTPCredentialCapture(t *testing.T) {
+	t.Parallel()
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -73,8 +69,7 @@ func TestHTTPCredentialCapture(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["http"] = serveTrap(t, ctx, trap)
 
 	resp, err := http.Post(
 		"http://"+cfg.TrapAddr("http")+"/wp-login.php",
@@ -92,6 +87,7 @@ func TestHTTPCredentialCapture(t *testing.T) {
 }
 
 func TestHTTPAdminPage(t *testing.T) {
+	t.Parallel()
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -101,8 +97,7 @@ func TestHTTPAdminPage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["http"] = serveTrap(t, ctx, trap)
 
 	resp, err := http.Post(
 		"http://"+cfg.TrapAddr("http")+"/admin",
@@ -121,6 +116,7 @@ func TestHTTPAdminPage(t *testing.T) {
 }
 
 func TestHTTPResponseHeaders(t *testing.T) {
+	t.Parallel()
 	cfg := httpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -130,8 +126,7 @@ func TestHTTPResponseHeaders(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["http"] = serveTrap(t, ctx, trap)
 
 	resp, err := http.Get("http://" + cfg.TrapAddr("http") + "/admin")
 	if err != nil {
@@ -141,5 +136,47 @@ func TestHTTPResponseHeaders(t *testing.T) {
 
 	if got := resp.Header.Get("Server"); got != "Apache/2.4.62" {
 		t.Errorf("Server header = %q, want Apache/2.4.62", got)
+	}
+}
+
+// Two connections that report the same RemoteAddr (possible under PROXY
+// protocol) must get separate sessions and must not leak limiter slots.
+func TestHTTPSessionsAreKeyedPerConnection(t *testing.T) {
+	cfg := httpTestConfig(t)
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg, "test")
+	lim := NewLimiter(10, 10)
+	tr := NewHTTP(cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)), m, lim, alert.NoopAlerter{})
+
+	a1, b1 := net.Pipe()
+	a2, b2 := net.Pipe()
+	defer b1.Close()
+	defer b2.Close()
+	defer a1.Close()
+	defer a2.Close()
+
+	ctx1 := tr.connContext(context.Background(), a1)
+	ctx2 := tr.connContext(context.Background(), a2)
+	tr.connState(a1, http.StateNew)
+	tr.connState(a2, http.StateNew)
+
+	hc1, _ := ctx1.Value(httpConnKey{}).(*httpConn)
+	hc2, _ := ctx2.Value(httpConnKey{}).(*httpConn)
+	if hc1 == nil || hc2 == nil || hc1.sess == nil || hc2.sess == nil || hc1.sess == hc2.sess {
+		t.Fatal("each connection must own a distinct session")
+	}
+	if lim.global != 2 {
+		t.Fatalf("limiter holds %d slots, want 2", lim.global)
+	}
+
+	tr.connState(a1, http.StateClosed)
+	tr.connState(a2, http.StateHijacked)
+	if lim.global != 0 || len(lim.perIP) != 0 {
+		t.Errorf("limiter leaked: global=%d perIP=%v", lim.global, lim.perIP)
+	}
+	n := 0
+	tr.conns.Range(func(_, _ any) bool { n++; return true })
+	if n != 0 {
+		t.Errorf("%d connection entries left behind", n)
 	}
 }

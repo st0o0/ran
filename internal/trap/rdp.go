@@ -4,103 +4,37 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type RDPTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewRDP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *RDPTrap {
-	return &RDPTrap{
+func NewRDP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *RDPTrap {
+	t := &RDPTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("rdp", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *RDPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("rdp"), t.cfg.ProxyProtocol, t.logger, t.metrics, "rdp")
-	if err != nil {
-		return fmt.Errorf("rdp listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("rdp"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "rdp", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "rdp", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *RDPTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("rdp", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "rdp", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *RDPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	// Read TPKT header (4 bytes)
 	var tpkt [4]byte
 	if _, err := io.ReadFull(conn, tpkt[:]); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 	if tpkt[0] != 3 || tpkt[1] != 0 {
@@ -114,11 +48,7 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 	// Read X.224 Connection Request payload
 	payload := make([]byte, tpktLen-4)
 	if _, err := io.ReadFull(conn, payload); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
@@ -144,7 +74,7 @@ func (t *RDPTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("username", username),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "rdp", map[string]string{"username": username})
+	sess.Alert(ctx, map[string]string{"username": username})
 
 	// Send X.224 Connection Confirm with RDP Negotiation Failure
 	resp := buildRDPNegFailure()
@@ -166,11 +96,10 @@ func buildRDPNegFailure() []byte {
 	// dst-ref (2), src-ref (2), class (1) = all zeros
 
 	// RDP Negotiation Failure
-	buf[11] = 0x03 // type
-	buf[12] = 0x00 // flags
-	binary.BigEndian.PutUint16(buf[13:15], 8) // length
+	buf[11] = 0x03                                        // type
+	buf[12] = 0x00                                        // flags
+	binary.BigEndian.PutUint16(buf[13:15], 8)             // length
 	binary.LittleEndian.PutUint32(buf[15:19], 0x00000002) // SSL_REQUIRED_BY_SERVER
 
 	return buf
 }
-

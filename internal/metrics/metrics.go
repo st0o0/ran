@@ -17,7 +17,18 @@ type Metrics struct {
 	PanicsRecovered     *prometheus.CounterVec
 	ProxyDropped        *prometheus.CounterVec
 	UDPRateLimited      *prometheus.CounterVec
+
+	CrowdSecPushDuration prometheus.Histogram
+	CrowdSecPushErrors   prometheus.Counter
+	CrowdSecQueueLength  prometheus.Gauge
+	TrackedEntries       *prometheus.GaugeVec
+	TrackedEvictions     *prometheus.CounterVec
+	ProbeSuppressed      prometheus.Counter
+	SessionsRejected     *prometheus.CounterVec
 }
+
+// SessionDurationBuckets cover short probes up to the longest session timeout (seconds).
+var SessionDurationBuckets = []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120}
 
 func New(reg prometheus.Registerer, version string) *Metrics {
 	m := &Metrics{
@@ -36,11 +47,11 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 		SessionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "ran_session_duration_seconds",
 			Help:    "Duration of trap sessions in seconds.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: SessionDurationBuckets,
 		}, []string{"protocol"}),
 		CrowdSecPipeline: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ran_crowdsec_pipeline_total",
-			Help: "Total number of CrowdSec alert pipeline events.",
+			Help: "Total number of CrowdSec alert pipeline events by stage (received, invalid, closed, filtered, cooldown, queued, dropped, sent, failed, released).",
 		}, []string{"protocol", "stage"}),
 		CrowdSecDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ran_crowdsec_alerts_dropped_total",
@@ -63,6 +74,36 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 		Help: "Total number of UDP packets dropped by the packet rate limiter.",
 	}, []string{"protocol"})
 
+	m.CrowdSecPushDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "ran_crowdsec_push_duration_seconds",
+		Help:    "Duration of CrowdSec LAPI alert push requests in seconds.",
+		Buckets: prometheus.DefBuckets,
+	})
+	m.CrowdSecPushErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ran_crowdsec_push_errors_total",
+		Help: "Total number of failed CrowdSec LAPI alert pushes (transport errors and non-2xx responses).",
+	})
+	m.CrowdSecQueueLength = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ran_crowdsec_queue_length",
+		Help: "Number of alerts waiting in the CrowdSec send queue.",
+	})
+	m.TrackedEntries = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ran_tracked_entries",
+		Help: "Entries in the bounded tracking maps (map: scan, probe, cooldown).",
+	}, []string{"map"})
+	m.TrackedEvictions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_tracked_evictions_total",
+		Help: "Live entries evicted from a tracking map because it was full (map: scan, probe, cooldown).",
+	}, []string{"map"})
+	m.ProbeSuppressed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ran_probe_summary_suppressed_sessions_total",
+		Help: "Probe sessions whose per-session log lines were replaced by a probe summary.",
+	})
+	m.SessionsRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_sessions_rejected_total",
+		Help: "Total number of TCP connections rejected by the session limiter.",
+	}, []string{"protocol"})
+
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ran_build_info",
 		Help: "Build information for ran.",
@@ -71,6 +112,6 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, buildInfo)
+	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, m.CrowdSecPushDuration, m.CrowdSecPushErrors, m.CrowdSecQueueLength, m.TrackedEntries, m.TrackedEvictions, m.ProbeSuppressed, m.SessionsRejected, buildInfo)
 	return m
 }

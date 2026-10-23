@@ -88,13 +88,32 @@ func (pl *proxyListener) Accept() (net.Conn, error) {
 }
 
 func (pl *proxyListener) acceptLoop() {
+	backoff := acceptPanicBackoffMin
 	for {
 		conn, err := pl.Listener.Accept()
 		if err != nil {
-			pl.acceptErr = err
-			close(pl.failed)
-			return
+			if !acceptRetryable(err) {
+				pl.acceptErr = err
+				close(pl.failed)
+				return
+			}
+			// Transient error (for example EMFILE): back off and keep accepting.
+			if pl.logger != nil {
+				LogErrorStandalone(pl.logger, pl.protocol, "accept_failed", err)
+			}
+			select {
+			case <-time.After(backoff):
+			case <-pl.done:
+				pl.acceptErr = net.ErrClosed
+				close(pl.failed)
+				return
+			}
+			if backoff *= 2; backoff > acceptPanicBackoffMax {
+				backoff = acceptPanicBackoffMax
+			}
+			continue
 		}
+		backoff = acceptPanicBackoffMin
 		select {
 		case pl.sem <- struct{}{}:
 			go pl.handshake(conn)

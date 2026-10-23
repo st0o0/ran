@@ -7,96 +7,31 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type POP3Trap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewPOP3(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *POP3Trap {
-	return &POP3Trap{
+func NewPOP3(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *POP3Trap {
+	t := &POP3Trap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("pop3", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *POP3Trap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("pop3"), t.cfg.ProxyProtocol, t.logger, t.metrics, "pop3")
-	if err != nil {
-		return fmt.Errorf("pop3 listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("pop3"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "pop3", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "pop3", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *POP3Trap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *POP3Trap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("pop3", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "pop3", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *POP3Trap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	if _, err := fmt.Fprint(conn, "+OK POP3 server ready\r\n"); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
@@ -115,12 +50,7 @@ func (t *POP3Trap) handle(ctx context.Context, conn net.Conn) {
 
 		case strings.HasPrefix(upper, "PASS "):
 			password := strings.TrimSpace(line[5:])
-			sess.LogAuthAttempt(
-				slog.String("username", username),
-				slog.String("password", password),
-			)
-			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "pop3", map[string]string{"username": username, "password": password})
+			sess.Cred(ctx, t.metrics, username, password)
 			fmt.Fprint(conn, "-ERR [AUTH] Authentication failed\r\n")
 
 		case strings.HasPrefix(upper, "QUIT"):
@@ -132,10 +62,6 @@ func (t *POP3Trap) handle(ctx context.Context, conn net.Conn) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 	}
 }

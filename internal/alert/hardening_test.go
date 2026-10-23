@@ -22,19 +22,28 @@ func pipelineCount(t *testing.T, m *metrics.Metrics, protocol, stage string) flo
 	return out.GetCounter().GetValue()
 }
 
+func droppedCount(t *testing.T, m *metrics.Metrics, protocol string) float64 {
+	t.Helper()
+	var out dto.Metric
+	if err := m.CrowdSecDropped.WithLabelValues(protocol).Write(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.GetCounter().GetValue()
+}
+
 // newTestAlerter builds an alerter without a LAPI connection; alerts stay in ch.
 func newTestAlerter(t *testing.T, chSize int) *CrowdSecAlerter {
 	t.Helper()
 	return &CrowdSecAlerter{
-		logger:        slog.Default(),
-		metrics:       testMetrics(t),
-		dedup:         newDedupFilter(time.Minute, 100),
-		decisionCache: noopDecisionCache{},
-		ch:            make(chan alertMsg, chSize),
+		logger:   slog.Default(),
+		metrics:  testMetrics(t),
+		banOn:    map[Class]bool{ClassProbe: true, ClassAttack: true, ClassScan: true},
+		cooldown: newCooldownFilter(time.Minute, 100),
+		ch:       make(chan alertMsg, chSize),
 	}
 }
 
-func TestAlertRejectsInvalidIPs(t *testing.T) {
+func TestSubmitRejectsInvalidIPs(t *testing.T) {
 	invalid := []string{
 		"not-an-ip", "", "2001:db8::1%eth0", "8.8.8.8%eth0", "1.2.3.4:80", "999.1.1.1",
 		// One representative (plus edge) per denied prefix.
@@ -53,7 +62,7 @@ func TestAlertRejectsInvalidIPs(t *testing.T) {
 	}
 	a := newTestAlerter(t, 64)
 	for _, ip := range invalid {
-		a.Alert(context.Background(), ip, "http", nil)
+		a.Submit(context.Background(), evClass(ip, "http", ClassAttack))
 	}
 	if len(a.ch) != 0 {
 		t.Errorf("queued %d alerts for invalid IPs, want 0", len(a.ch))
@@ -61,8 +70,8 @@ func TestAlertRejectsInvalidIPs(t *testing.T) {
 	if got := pipelineCount(t, a.metrics, "http", "invalid"); got != float64(len(invalid)) {
 		t.Errorf("invalid stage = %v, want %d", got, len(invalid))
 	}
-	if len(a.dedup.seen) != 0 {
-		t.Errorf("dedup map has %d entries, want 0", len(a.dedup.seen))
+	if len(a.cooldown.seen) != 0 {
+		t.Errorf("cooldown map has %d entries, want 0", len(a.cooldown.seen))
 	}
 }
 
@@ -91,10 +100,10 @@ func TestBannableIPsAccepted(t *testing.T) {
 	}
 }
 
-func TestAlertAcceptsGlobalIPsAndUnmaps(t *testing.T) {
+func TestSubmitAcceptsGlobalIPsAndUnmaps(t *testing.T) {
 	a := newTestAlerter(t, 16)
-	a.Alert(context.Background(), "::ffff:8.8.8.8", "http", nil)
-	a.Alert(context.Background(), "2606:4700:4700::1111", "http", nil)
+	a.Submit(context.Background(), ev("::ffff:8.8.8.8", "http"))
+	a.Submit(context.Background(), ev("2606:4700:4700::1111", "http"))
 
 	if len(a.ch) != 2 {
 		t.Fatalf("queued %d alerts, want 2", len(a.ch))
@@ -107,70 +116,126 @@ func TestAlertAcceptsGlobalIPsAndUnmaps(t *testing.T) {
 	}
 }
 
-func TestDedupMappedAndPlainFormShareSlot(t *testing.T) {
+func TestCooldownMappedAndPlainFormShareSlot(t *testing.T) {
 	a := newTestAlerter(t, 16)
-	a.Alert(context.Background(), "::ffff:8.8.8.8", "http", nil)
-	a.Alert(context.Background(), "8.8.8.8", "http", nil)
+	a.Submit(context.Background(), ev("::ffff:8.8.8.8", "http"))
+	a.Submit(context.Background(), ev("8.8.8.8", "http"))
 	if len(a.ch) != 1 {
 		t.Errorf("queued %d alerts, want 1", len(a.ch))
 	}
 }
 
-func TestDroppedAlertReleasesDedupSlot(t *testing.T) {
+func TestDroppedAlertReleasesCooldownSlot(t *testing.T) {
 	a := newTestAlerter(t, 1)
 	ctx := context.Background()
 
-	a.Alert(ctx, "8.8.8.8", "http", nil) // fills the channel
-	a.Alert(ctx, "1.1.1.1", "http", nil) // dropped
+	a.Submit(ctx, ev("8.8.8.8", "http")) // fills the channel
+	a.Submit(ctx, ev("1.1.1.1", "http")) // dropped
 	if got := pipelineCount(t, a.metrics, "http", "dropped"); got != 1 {
 		t.Fatalf("dropped = %v, want 1", got)
 	}
 
 	<-a.ch // make space
-	a.Alert(ctx, "1.1.1.1", "http", nil)
+	a.Submit(ctx, ev("1.1.1.1", "http"))
 	if len(a.ch) != 1 {
 		t.Fatalf("retry of dropped alert was suppressed (queued %d)", len(a.ch))
 	}
-	if got := pipelineCount(t, a.metrics, "http", "deduplicated"); got != 0 {
-		t.Errorf("deduplicated = %v, want 0", got)
+	if got := pipelineCount(t, a.metrics, "http", "cooldown"); got != 0 {
+		t.Errorf("cooldown = %v, want 0", got)
 	}
 }
 
-func TestDedupReleaseKeepsNewerSlot(t *testing.T) {
+func TestCooldownReleaseKeepsNewerSlot(t *testing.T) {
 	now := time.Now()
-	d := newDedupFilter(time.Minute, 10)
+	d := newCooldownFilter(time.Minute, 10)
 	d.nowFunc = func() time.Time { return now }
 
-	oldSlot, ok := d.Allow("k")
+	oldKey, oldSlot, ok := d.Allow("8.8.8.8", ClassAttack)
 	if !ok {
 		t.Fatal("first Allow denied")
 	}
 	// The window passes and another alert re-arms the key before the first
 	// one gives up its (expired) slot.
 	now = now.Add(2 * time.Minute)
-	newSlot, ok := d.Allow("k")
+	newKey, newSlot, ok := d.Allow("8.8.8.8", ClassAttack)
 	if !ok {
 		t.Fatal("re-arm denied")
 	}
-	d.Release("k", oldSlot)
-	if d.allowed("k") {
+	d.Release(oldKey, oldSlot)
+	if _, _, ok := d.Allow("8.8.8.8", ClassAttack); ok {
 		t.Error("stale Release deleted the newer slot")
 	}
-	d.Release("k", newSlot)
-	if !d.allowed("k") {
+	d.Release(newKey, newSlot)
+	if _, _, ok := d.Allow("8.8.8.8", ClassAttack); !ok {
 		t.Error("Release with the current slot should free the key")
 	}
 }
 
-func TestDedupFloodIsFast(t *testing.T) {
+func TestCooldownWindowExpiry(t *testing.T) {
 	now := time.Now()
-	d := newDedupFilter(time.Hour, 1000)
+	d := newCooldownFilter(time.Hour, 10)
+	d.nowFunc = func() time.Time { return now }
+	if _, _, ok := d.Allow("8.8.8.8", ClassAttack); !ok {
+		t.Fatal("first denied")
+	}
+	now = now.Add(59 * time.Minute)
+	if _, _, ok := d.Allow("8.8.8.8", ClassAttack); ok {
+		t.Error("allowed inside the window")
+	}
+	now = now.Add(2 * time.Minute)
+	if _, _, ok := d.Allow("8.8.8.8", ClassAttack); !ok {
+		t.Error("denied after the window")
+	}
+}
+
+func TestCooldownDisabled(t *testing.T) {
+	d := newCooldownFilter(0, 10)
+	for range 5 {
+		if _, _, ok := d.Allow("8.8.8.8", ClassAttack); !ok {
+			t.Fatal("window 0 must allow everything")
+		}
+	}
+	d.cleanup() // must not panic
+}
+
+func TestCooldownClassRules(t *testing.T) {
+	now := time.Now()
+	d := newCooldownFilter(time.Hour, 10)
+	d.nowFunc = func() time.Time { return now }
+	ip := "8.8.8.8"
+	steps := []struct {
+		class Class
+		want  bool
+	}{
+		{ClassProbe, true},
+		{ClassProbe, false},
+		{ClassAttack, true},  // escalation bypass
+		{ClassProbe, false},  // lower class while higher is cooling down
+		{ClassAttack, false}, // same class
+		{ClassScan, true},    // escalation bypass
+		{ClassAttack, false}, // lower class
+		{ClassScan, false},
+	}
+	for i, s := range steps {
+		if _, _, ok := d.Allow(ip, s.class); ok != s.want {
+			t.Errorf("step %d (%s): allowed = %v, want %v", i, s.class, ok, s.want)
+		}
+	}
+	// A different IP is independent.
+	if _, _, ok := d.Allow("1.1.1.1", ClassProbe); !ok {
+		t.Error("other IP denied")
+	}
+}
+
+func TestCooldownFloodIsFast(t *testing.T) {
+	now := time.Now()
+	d := newCooldownFilter(time.Hour, 1000)
 	d.nowFunc = func() time.Time { return now }
 
 	start := time.Now()
 	for i := 0; i < 200000; i++ {
 		now = now.Add(time.Microsecond)
-		d.Allow("key" + strconv.Itoa(i))
+		d.Allow("ip"+strconv.Itoa(i), ClassAttack)
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("200000 unique inserts took %v, want well under 2s", elapsed)
@@ -180,27 +245,9 @@ func TestDedupFloodIsFast(t *testing.T) {
 	}
 }
 
-func TestDecisionCacheFloodIsFast(t *testing.T) {
-	now := time.Now()
-	c := newLocalDecisionCache(1000)
-	c.nowFunc = func() time.Time { return now }
-
-	start := time.Now()
-	for i := 0; i < 200000; i++ {
-		c.MarkBanned("ip"+strconv.Itoa(i), time.Hour)
-	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("200000 unique inserts took %v, want well under 2s", elapsed)
-	}
-	if len(c.bans) != 1000 || c.order.Len() != 1000 {
-		t.Errorf("size = %d/%d, want 1000", len(c.bans), c.order.Len())
-	}
-}
-
-func TestDedupConcurrentAllowReleaseAlert(t *testing.T) {
+func TestCooldownConcurrentAllowReleaseSubmit(t *testing.T) {
 	a := newTestAlerter(t, 8)
-	a.dedup = newDedupFilter(time.Minute, 64)
-	a.decisionCache = newLocalDecisionCache(64)
+	a.cooldown = newCooldownFilter(time.Minute, 64)
 
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
@@ -208,16 +255,13 @@ func TestDedupConcurrentAllowReleaseAlert(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			for i := 0; i < 2000; i++ {
-				key := "k" + strconv.Itoa((g*7+i)%200)
-				if slot, ok := a.dedup.Allow(key); ok && i%3 == 0 {
-					a.dedup.Release(key, slot)
+				ip := "8.8." + strconv.Itoa(g) + "." + strconv.Itoa(i%200)
+				if key, slot, ok := a.cooldown.Allow(ip, ClassAttack); ok && i%3 == 0 {
+					a.cooldown.Release(key, slot)
 				}
-				a.decisionCache.MarkBanned("ip"+strconv.Itoa(i%200), time.Minute)
-				a.decisionCache.IsBanned("ip" + strconv.Itoa(i%200))
-				a.Alert(context.Background(), "8.8."+strconv.Itoa(g)+"."+strconv.Itoa(i%250), "http", nil)
+				a.Submit(context.Background(), ev("8.9."+strconv.Itoa(g)+"."+strconv.Itoa(i%250), "http"))
 				if i%100 == 0 {
-					a.dedup.cleanup()
-					a.decisionCache.(*localDecisionCache).cleanup()
+					a.cooldown.cleanup()
 				}
 				select {
 				case <-a.ch:
@@ -228,12 +272,12 @@ func TestDedupConcurrentAllowReleaseAlert(t *testing.T) {
 	}
 	wg.Wait()
 
-	if len(a.dedup.seen) > 64 || a.dedup.order.Len() != len(a.dedup.seen) {
-		t.Errorf("dedup size %d / list %d breaks the cap invariant", len(a.dedup.seen), a.dedup.order.Len())
+	if len(a.cooldown.seen) > 64 || a.cooldown.order.Len() != len(a.cooldown.seen) {
+		t.Errorf("cooldown size %d / list %d breaks the cap invariant", len(a.cooldown.seen), a.cooldown.order.Len())
 	}
 }
 
-func TestCloseIsIdempotentAndAlertAfterCloseIsSafe(t *testing.T) {
+func TestCloseIsIdempotentAndSubmitAfterCloseIsSafe(t *testing.T) {
 	a := newTestAlerter(t, 4)
 	a.stopCh = make(chan struct{})
 	a.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -244,7 +288,7 @@ func TestCloseIsIdempotentAndAlertAfterCloseIsSafe(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			for i := 0; i < 500; i++ {
-				a.Alert(context.Background(), "8.8."+strconv.Itoa(g)+"."+strconv.Itoa(i%250), "http", nil)
+				a.Submit(context.Background(), ev("8.8."+strconv.Itoa(g)+"."+strconv.Itoa(i%250), "http"))
 			}
 		}(g)
 	}
@@ -252,50 +296,17 @@ func TestCloseIsIdempotentAndAlertAfterCloseIsSafe(t *testing.T) {
 	a.Close() // second Close must not panic
 	wg.Wait()
 	before := pipelineCount(t, a.metrics, "http", "closed")
-	a.Alert(context.Background(), "1.1.1.1", "http", nil) // after Close: dropped and counted
+	a.Submit(context.Background(), ev("1.1.1.1", "http")) // after Close: dropped and counted
 	if got := pipelineCount(t, a.metrics, "http", "closed"); got != before+1 {
 		t.Errorf("closed stage = %v, want %v", got, before+1)
 	}
 }
 
-func TestDecisionCacheCapped(t *testing.T) {
-	c := newLocalDecisionCache(5)
+func TestCooldownCapped(t *testing.T) {
+	d := newCooldownFilter(time.Hour, 5)
 	for i := 0; i < 50; i++ {
-		c.MarkBanned("198.20.0."+strconv.Itoa(i), time.Hour)
-		if len(c.bans) > 5 || c.order.Len() != len(c.bans) {
-			t.Fatalf("size %d (list %d) breaks cap 5", len(c.bans), c.order.Len())
-		}
-	}
-	// The oldest entries are evicted first, the newest stay cached.
-	if c.IsBanned("198.20.0.0") {
-		t.Error("oldest entry should have been evicted")
-	}
-	if !c.IsBanned("198.20.0.49") {
-		t.Error("newest entry should be cached")
-	}
-}
-
-func TestDecisionCacheCleanupRemovesExpired(t *testing.T) {
-	now := time.Now()
-	c := newLocalDecisionCache(10)
-	c.nowFunc = func() time.Time { return now }
-	c.MarkBanned("198.20.0.1", time.Minute)
-	c.MarkBanned("198.20.0.2", time.Hour)
-	now = now.Add(2 * time.Minute)
-	c.cleanup()
-	if len(c.bans) != 1 || c.order.Len() != 1 {
-		t.Errorf("size = %d/%d, want 1 after cleanup", len(c.bans), c.order.Len())
-	}
-	if !c.IsBanned("198.20.0.2") {
-		t.Error("live ban should survive cleanup")
-	}
-}
-
-func TestDedupCapped(t *testing.T) {
-	d := newDedupFilter(time.Hour, 5)
-	for i := 0; i < 50; i++ {
-		if !d.allowed("key" + strconv.Itoa(i)) {
-			t.Fatalf("key%d unexpectedly denied", i)
+		if _, _, ok := d.Allow("198.20.0."+strconv.Itoa(i), ClassAttack); !ok {
+			t.Fatalf("ip %d unexpectedly denied", i)
 		}
 		if len(d.seen) > 5 {
 			t.Fatalf("map size %d exceeds cap 5", len(d.seen))
@@ -303,47 +314,48 @@ func TestDedupCapped(t *testing.T) {
 	}
 }
 
-func TestDedupEvictsOldestWhenFull(t *testing.T) {
+func TestCooldownEvictsOldestWhenFull(t *testing.T) {
 	now := time.Now()
-	d := newDedupFilter(time.Hour, 3)
+	d := newCooldownFilter(time.Hour, 3)
 	d.nowFunc = func() time.Time { return now }
-	for _, k := range []string{"a", "b", "c"} {
+	for _, ip := range []string{testIP(1), testIP(2), testIP(3)} {
 		now = now.Add(time.Second)
-		d.allowed(k)
+		d.Allow(ip, ClassAttack)
 	}
 	now = now.Add(time.Second)
-	d.allowed("d")
-	if _, ok := d.seen["a"]; ok {
-		t.Error("oldest entry a should have been evicted")
+	d.Allow(testIP(4), ClassAttack)
+	if _, ok := d.seen[cooldownKey(testIP(1), ClassAttack)]; ok {
+		t.Error("oldest entry should have been evicted")
 	}
 	if len(d.seen) != 3 {
 		t.Errorf("size = %d, want 3", len(d.seen))
 	}
 }
 
-func TestDedupSweepsExpiredBeforeEvicting(t *testing.T) {
+func TestCooldownSweepsExpiredBeforeEvicting(t *testing.T) {
 	now := time.Now()
-	d := newDedupFilter(time.Minute, 2)
+	d := newCooldownFilter(time.Minute, 2)
 	d.nowFunc = func() time.Time { return now }
-	d.allowed("a")
-	d.allowed("b")
+	d.Allow(testIP(1), ClassAttack)
+	d.Allow(testIP(2), ClassAttack)
 	now = now.Add(2 * time.Minute)
-	d.allowed("c")
+	d.Allow(testIP(3), ClassAttack)
 	if len(d.seen) != 1 {
 		t.Errorf("size = %d, want 1 after sweeping expired entries", len(d.seen))
 	}
 }
 
-func TestDecisionCacheSweepsExpiredWhenFull(t *testing.T) {
+func TestCooldownCleanupRemovesExpired(t *testing.T) {
 	now := time.Now()
-	c := newLocalDecisionCache(2)
-	c.nowFunc = func() time.Time { return now }
-	c.MarkBanned("192.0.2.1", time.Minute)
-	c.MarkBanned("192.0.2.2", time.Minute)
-	now = now.Add(2 * time.Minute)
-	c.MarkBanned("192.0.2.3", time.Minute)
-	if !c.IsBanned("192.0.2.3") {
-		t.Error("new entry should be cached after sweeping expired ones")
+	d := newCooldownFilter(time.Minute, 10)
+	d.nowFunc = func() time.Time { return now }
+	d.Allow(testIP(1), ClassAttack)
+	now = now.Add(30 * time.Second)
+	d.Allow(testIP(2), ClassAttack)
+	now = now.Add(45 * time.Second)
+	d.cleanup()
+	if len(d.seen) != 1 || d.order.Len() != 1 {
+		t.Errorf("size = %d/%d, want 1 after cleanup", len(d.seen), d.order.Len())
 	}
 }
 
@@ -359,31 +371,16 @@ func TestBuildEventMetaDropsPassword(t *testing.T) {
 	}
 }
 
-func TestDecisionCacheMarkBannedKeepsMaxExpiry(t *testing.T) {
-	now := time.Now()
-	c := newLocalDecisionCache(10)
-	c.nowFunc = func() time.Time { return now }
-
-	c.MarkBanned("8.8.8.8", 4*time.Hour)
-	c.MarkBanned("8.8.8.8", time.Minute) // shorter ban must not shorten the cached expiry
-	c.nowFunc = func() time.Time { return now.Add(time.Hour) }
-	if !c.IsBanned("8.8.8.8") {
-		t.Error("shorter re-mark shortened the ban")
+func TestEventMetaSensorKeysWin(t *testing.T) {
+	meta := eventMeta(Event{
+		Class: ClassAttack,
+		Info:  SessionInfo{Protocol: "ssh", DestPort: 22, AuthAttempts: 3},
+		Meta:  map[string]string{"class": "probe", "protocol": "evil", "auth_attempts": "0", "username": "root"},
+	})
+	if meta["class"] != "attack" || meta["protocol"] != "ssh" || meta["auth_attempts"] != "3" {
+		t.Errorf("trap meta overrode sensor keys: %v", meta)
 	}
-
-	c.nowFunc = func() time.Time { return now }
-	c.MarkBanned("1.1.1.1", time.Minute)
-	c.MarkBanned("1.1.1.1", 4*time.Hour) // longer ban extends it
-	c.nowFunc = func() time.Time { return now.Add(time.Hour) }
-	if !c.IsBanned("1.1.1.1") {
-		t.Error("longer re-mark did not extend the ban")
-	}
-
-	c.nowFunc = func() time.Time { return now }
-	c.MarkBanned("9.9.9.9", 0) // permanent
-	c.MarkBanned("9.9.9.9", time.Minute)
-	c.nowFunc = func() time.Time { return now.Add(24 * time.Hour) }
-	if !c.IsBanned("9.9.9.9") {
-		t.Error("finite re-mark downgraded a permanent ban")
+	if meta["username"] != "root" {
+		t.Errorf("trap meta lost: %v", meta)
 	}
 }

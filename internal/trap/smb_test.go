@@ -131,12 +131,8 @@ func buildSMB2SessionSetupWithNTLMSSP(domain, username, workstation string) []by
 }
 
 func TestSMBTrapNegotiate(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -147,8 +143,7 @@ func TestSMBTrapNegotiate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -177,12 +172,8 @@ func TestSMBTrapNegotiate(t *testing.T) {
 }
 
 func TestSMBTrapSessionSetup(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -193,8 +184,7 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -238,12 +228,8 @@ func TestSMBTrapSessionSetup(t *testing.T) {
 }
 
 func TestSMB1Negotiate(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -254,8 +240,7 @@ func TestSMB1Negotiate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -298,12 +283,8 @@ func TestSMB1Negotiate(t *testing.T) {
 }
 
 func TestSMBProbeOutcome(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testSMBConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -314,8 +295,7 @@ func TestSMBProbeOutcome(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = smbTrap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, smbTrap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {

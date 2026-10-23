@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -19,12 +18,7 @@ import (
 
 func esTestConfig(t *testing.T) (*config.Config, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Addrs:          map[string]string{"elasticsearch": addr},
@@ -37,7 +31,7 @@ func esTestConfig(t *testing.T) (*config.Config, string) {
 
 func startES(t *testing.T) string {
 	t.Helper()
-	cfg, addr := esTestConfig(t)
+	cfg, _ := esTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
@@ -46,12 +40,12 @@ func startES(t *testing.T) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr := serveTrap(t, ctx, trap)
 	return addr
 }
 
 func TestElasticsearchRoot(t *testing.T) {
+	t.Parallel()
 	addr := startES(t)
 
 	resp, err := http.Get("http://" + addr + "/")
@@ -84,6 +78,7 @@ func TestElasticsearchRoot(t *testing.T) {
 }
 
 func TestElasticsearchClusterHealth(t *testing.T) {
+	t.Parallel()
 	addr := startES(t)
 
 	resp, err := http.Get("http://" + addr + "/_cluster/health")
@@ -107,6 +102,7 @@ func TestElasticsearchClusterHealth(t *testing.T) {
 }
 
 func TestElasticsearchSearch(t *testing.T) {
+	t.Parallel()
 	addr := startES(t)
 
 	resp, err := http.Post("http://"+addr+"/_search", "application/json", strings.NewReader(`{"query":{"match_all":{}}}`))
@@ -134,6 +130,7 @@ func TestElasticsearchSearch(t *testing.T) {
 }
 
 func TestElasticsearchPut(t *testing.T) {
+	t.Parallel()
 	addr := startES(t)
 
 	req, _ := http.NewRequest(http.MethodPut, "http://"+addr+"/my-index", strings.NewReader(`{}`))
@@ -153,6 +150,7 @@ func TestElasticsearchPut(t *testing.T) {
 }
 
 func TestElasticsearchDelete(t *testing.T) {
+	t.Parallel()
 	addr := startES(t)
 
 	req, _ := http.NewRequest(http.MethodDelete, "http://"+addr+"/my-index", nil)

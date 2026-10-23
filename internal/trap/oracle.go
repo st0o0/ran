@@ -8,101 +8,32 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type OracleTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewOracle(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *OracleTrap {
-	return &OracleTrap{
+func NewOracle(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *OracleTrap {
+	t := &OracleTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("oracle", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *OracleTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("oracle"), t.cfg.ProxyProtocol, t.logger, t.metrics, "oracle")
-	if err != nil {
-		return fmt.Errorf("oracle listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("oracle"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "oracle", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "oracle", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *OracleTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("oracle", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "oracle", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
-	setOutcomeFromErr := func(err error) {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
-	}
-
+func (t *OracleTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	pktType, payload, err := readTNSPacket(conn)
 	if err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
@@ -120,7 +51,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 	binary.BigEndian.PutUint16(acceptPayload[4:6], 0x0800)
 	binary.BigEndian.PutUint16(acceptPayload[6:8], 0x0800)
 	if _, err := conn.Write(buildTNSPacket(2, acceptPayload)); err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
@@ -129,7 +60,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn) {
 		slog.String("service_name", serviceName),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "oracle", map[string]string{"username": username, "service_name": serviceName})
+	sess.Alert(ctx, map[string]string{"username": username, "service_name": serviceName})
 
 	refuseMsg := "ORA-01017: invalid username/password; logon denied"
 	refuseData := make([]byte, 4+len(refuseMsg))

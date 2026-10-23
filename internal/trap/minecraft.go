@@ -9,100 +9,35 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type MinecraftTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewMinecraft(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *MinecraftTrap {
-	return &MinecraftTrap{
+func NewMinecraft(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *MinecraftTrap {
+	t := &MinecraftTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("minecraft", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *MinecraftTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("minecraft"), t.cfg.ProxyProtocol, t.logger, t.metrics, "minecraft")
-	if err != nil {
-		return fmt.Errorf("minecraft listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("minecraft"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "minecraft", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "minecraft", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *MinecraftTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *MinecraftTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("minecraft", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "minecraft", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *MinecraftTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	r := bufio.NewReader(conn)
 
 	payload, err := mcReadPacket(r)
 	if err != nil || len(payload) < 1 || payload[0] != 0x00 {
 		if err != nil {
-			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				sess.SetOutcome("timeout")
-			} else {
-				sess.SetOutcome("error")
-			}
+			setOutcome(sess, err)
 		} else {
 			sess.SetOutcome("error")
 		}
@@ -133,7 +68,10 @@ func (t *MinecraftTrap) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	sess.LogPayload("mc_handshake",
+	// The handshake and a server-list ping (next_state 1) are not an attack; only a
+	// login attempt with a player name counts as payload (see handleLogin).
+	sess.Log("handshake received",
+		slog.String("payload_type", "mc_handshake"),
 		slog.Int("protocol_version", int(protocolVersion)),
 		slog.String("server_address", serverAddr),
 		slog.Int("server_port", int(serverPort)),
@@ -152,7 +90,7 @@ func (t *MinecraftTrap) handle(ctx context.Context, conn net.Conn) {
 		t.handleLogin(conn, r, sess, meta)
 	}
 
-	t.alerter.Alert(ctx, host, "minecraft", meta)
+	sess.Alert(ctx, meta)
 }
 
 func (t *MinecraftTrap) handleStatus(conn net.Conn, r *bufio.Reader, sess *Session) {

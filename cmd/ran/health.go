@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -10,10 +11,14 @@ import (
 	"github.com/st0o0/ran/internal/config"
 )
 
+// healthcheck probes the local metrics server. It exits non-zero when the
+// configuration is invalid, because a container that cannot start its traps is
+// not healthy.
 func healthcheck() int {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
-		return 0
+		fmt.Fprintf(os.Stderr, "ran: unhealthy: invalid configuration: %v\n", err)
+		return 1
 	}
 	return doHealthcheck(healthAddr(cfg.MetricsAddr))
 }
@@ -34,13 +39,31 @@ func doHealthcheck(addr string) int {
 	return 0
 }
 
+// healthAddr turns the metrics listen address into one that can be dialed from
+// inside the container. An empty or wildcard host becomes 127.0.0.1 (never
+// "localhost", which may resolve to ::1 while the server listens on IPv4 only).
 func healthAddr(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return addr
 	}
-	if host == "" {
-		host = "localhost"
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
 	}
 	return net.JoinHostPort(host, port)
+}
+
+// checkConfig validates the environment and reports the result; it returns the
+// process exit code (0 valid, 1 invalid).
+func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
+	cfg, err := config.Load(getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "ran: invalid configuration: %v\n", err)
+		return 1
+	}
+	for _, name := range cfg.RemovedEnvVars {
+		fmt.Fprintf(stderr, "ran: warning: %s is removed and ignored; use a CrowdSec profile for ban durations\n", name)
+	}
+	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v)\n", len(cfg.Traps), cfg.Traps)
+	return 0
 }

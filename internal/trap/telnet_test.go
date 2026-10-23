@@ -27,12 +27,8 @@ func testTelnetConfig(addr string) *config.Config {
 }
 
 func TestTelnetTrapConnection(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testTelnetConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -43,8 +39,7 @@ func TestTelnetTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -103,12 +98,8 @@ func TestTelnetTrapConnection(t *testing.T) {
 }
 
 func TestTelnetMultiAttempt(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testTelnetConfig(addr)
 	cfg.MaxAuthRetries = 2
@@ -120,8 +111,7 @@ func TestTelnetMultiAttempt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = telnetTrap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, telnetTrap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {

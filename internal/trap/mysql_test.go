@@ -17,12 +17,7 @@ import (
 
 func mysqlTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	return &config.Config{
 		Traps:          []string{"mysql"},
@@ -51,14 +46,14 @@ func TestMySQLGreeting(t *testing.T) {
 	if pkt[4] != 10 { // protocol version
 		t.Errorf("protocol = %d, want 10", pkt[4])
 	}
-	// Check server version starts with "5.7.99-ran"
+	// Check server version starts with "8.0.36"
 	verEnd := 5
 	for verEnd < len(pkt) && pkt[verEnd] != 0 {
 		verEnd++
 	}
 	ver := string(pkt[5:verEnd])
-	if ver != "5.7.99-ran" {
-		t.Errorf("version = %q, want 5.7.99-ran", ver)
+	if ver != "8.0.36" {
+		t.Errorf("version = %q, want 8.0.36", ver)
 	}
 }
 
@@ -102,6 +97,7 @@ func TestMySQLErrPacket(t *testing.T) {
 }
 
 func TestMySQLTrapConnection(t *testing.T) {
+	t.Parallel()
 	cfg := mysqlTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -111,8 +107,7 @@ func TestMySQLTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["mysql"] = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("mysql"), 2*time.Second)
 	if err != nil {

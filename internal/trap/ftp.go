@@ -7,96 +7,31 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type FTPTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewFTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *FTPTrap {
-	return &FTPTrap{
+func NewFTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *FTPTrap {
+	t := &FTPTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("ftp", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *FTPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ftp"), t.cfg.ProxyProtocol, t.logger, t.metrics, "ftp")
-	if err != nil {
-		return fmt.Errorf("ftp listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("ftp"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "ftp", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "ftp", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *FTPTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *FTPTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("ftp", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "ftp", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *FTPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	if _, err := fmt.Fprint(conn, "220 FTP Server ready.\r\n"); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
@@ -115,12 +50,7 @@ func (t *FTPTrap) handle(ctx context.Context, conn net.Conn) {
 
 		case strings.HasPrefix(upper, "PASS "):
 			password := strings.TrimSpace(line[5:])
-			sess.LogAuthAttempt(
-				slog.String("username", username),
-				slog.String("password", password),
-			)
-			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "ftp", map[string]string{"username": username, "password": password})
+			sess.Cred(ctx, t.metrics, username, password)
 			fmt.Fprint(conn, "530 Login incorrect.\r\n")
 
 		case strings.HasPrefix(upper, "QUIT"):
@@ -132,10 +62,6 @@ func (t *FTPTrap) handle(ctx context.Context, conn net.Conn) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 	}
 }

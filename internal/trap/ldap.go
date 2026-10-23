@@ -7,102 +7,34 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type LDAPTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewLDAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *LDAPTrap {
-	return &LDAPTrap{
+func NewLDAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *LDAPTrap {
+	t := &LDAPTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("ldap", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *LDAPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("ldap"), t.cfg.ProxyProtocol, t.logger, t.metrics, "ldap")
-	if err != nil {
-		return fmt.Errorf("ldap listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("ldap"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "ldap", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "ldap", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *LDAPTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("ldap", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "ldap", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
-	setOutcomeFromErr := func(err error) {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
-	}
-
+func (t *LDAPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
+	host := sess.SourceIP
 	for {
 		tag, msgBytes, err := berReadElement(conn)
 		if err != nil {
-			setOutcomeFromErr(err)
+			setOutcome(sess, err)
 			return
 		}
 		if tag != 0x30 {
@@ -164,7 +96,7 @@ func (t *LDAPTrap) handleBind(ctx context.Context, conn net.Conn, host string, s
 		slog.String("password", password),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "ldap", map[string]string{"username": string(name), "password": password})
+	sess.Alert(ctx, map[string]string{"username": string(name), "password": password})
 
 	resp := berBuildBindResponse(msgID, 49, "", "Invalid credentials")
 	_, _ = conn.Write(resp)

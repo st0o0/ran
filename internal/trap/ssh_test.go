@@ -18,12 +18,7 @@ import (
 
 func testConfig(t *testing.T) *config.Config {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	return &config.Config{
 		Traps:          []string{"ssh"},
@@ -38,6 +33,7 @@ func testConfig(t *testing.T) *config.Config {
 }
 
 func TestSSHTrapCaptures(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -52,8 +48,7 @@ func TestSSHTrapCaptures(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["ssh"] = serveTrap(t, ctx, trap)
 
 	clientCfg := &gossh.ClientConfig{
 		User:            "root",
@@ -87,6 +82,7 @@ func TestSSHHostKeyGeneration(t *testing.T) {
 }
 
 func TestSSHBanner(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -101,8 +97,7 @@ func TestSSHBanner(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["ssh"] = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", cfg.TrapAddr("ssh"), 2*time.Second)
 	if err != nil {
@@ -126,6 +121,7 @@ func TestSSHBanner(t *testing.T) {
 }
 
 func TestSSHOutcomeCompletedAfterAuth(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig(t)
 	cfg.MaxAuthRetries = 3
 	reg := prometheus.NewRegistry()
@@ -141,8 +137,7 @@ func TestSSHOutcomeCompletedAfterAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = sshTrap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["ssh"] = serveTrap(t, ctx, sshTrap)
 
 	clientCfg := &gossh.ClientConfig{
 		User:            "root",
@@ -187,6 +182,7 @@ func TestSSHOutcomeCompletedAfterAuth(t *testing.T) {
 }
 
 func TestSSHMultiAuth(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig(t)
 	six := 6
 	cfg.PerProto["ssh"] = config.ProtoConfig{MaxAuthRetries: &six}
@@ -203,8 +199,7 @@ func TestSSHMultiAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = sshTrap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["ssh"] = serveTrap(t, ctx, sshTrap)
 
 	passwords := []string{"pass1", "pass2", "pass3"}
 	idx := 0

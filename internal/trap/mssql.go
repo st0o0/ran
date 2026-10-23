@@ -3,106 +3,36 @@ package trap
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 	"unicode/utf16"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type MSSQLTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewMSSQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *MSSQLTrap {
-	return &MSSQLTrap{
+func NewMSSQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *MSSQLTrap {
+	t := &MSSQLTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("mssql", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *MSSQLTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("mssql"), t.cfg.ProxyProtocol, t.logger, t.metrics, "mssql")
-	if err != nil {
-		return fmt.Errorf("mssql listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("mssql"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "mssql", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "mssql", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *MSSQLTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("mssql", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "mssql", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.ResolveSessionTimeout("mssql")))
-
-	setOutcomeFromErr := func(err error) {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
-	}
-
+func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(conn, header); err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 	if header[0] != 0x12 {
@@ -116,13 +46,13 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 	}
 	payload := make([]byte, pktLen-8)
 	if _, err := io.ReadFull(conn, payload); err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
 	preloginResp := buildTDSPreloginResponse()
 	if _, err := conn.Write(preloginResp); err != nil {
-		setOutcomeFromErr(err)
+		setOutcome(sess, err)
 		return
 	}
 
@@ -134,7 +64,7 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 			if sess.authAttempts > 0 {
 				return
 			}
-			setOutcomeFromErr(err)
+			setOutcome(sess, err)
 			return
 		}
 		if header[0] != 0x10 {
@@ -155,17 +85,12 @@ func (t *MSSQLTrap) handle(ctx context.Context, conn net.Conn) {
 			if sess.authAttempts > 0 {
 				return
 			}
-			setOutcomeFromErr(err)
+			setOutcome(sess, err)
 			return
 		}
 
 		username, password := parseTDSLogin7(body)
-		sess.LogAuthAttempt(
-			slog.String("username", username),
-			slog.String("password", password),
-		)
-		sess.RecordCredentials(t.metrics)
-		t.alerter.Alert(ctx, host, "mssql", map[string]string{"username": username, "password": password})
+		sess.Cred(ctx, t.metrics, username, password)
 
 		if authDelay > 0 {
 			if err := authSleep(ctx, authDelay, attempt); err != nil {
@@ -277,17 +202,17 @@ func buildTDSErrorResponse() []byte {
 	msgChars := len(msg) / 2
 
 	var token []byte
-	token = binary.LittleEndian.AppendUint32(token, 18456)          // error number
-	token = append(token, 1)                                        // state
-	token = append(token, 14)                                       // class/severity
+	token = binary.LittleEndian.AppendUint32(token, 18456)            // error number
+	token = append(token, 1)                                          // state
+	token = append(token, 14)                                         // class/severity
 	token = binary.LittleEndian.AppendUint16(token, uint16(msgChars)) // message length
 	token = append(token, msg...)
-	token = append(token, 0) // server name length
-	token = append(token, 0) // proc name length
-	token = binary.LittleEndian.AppendUint32(token, 0)              // line number
+	token = append(token, 0)                           // server name length
+	token = append(token, 0)                           // proc name length
+	token = binary.LittleEndian.AppendUint32(token, 0) // line number
 
 	var payload []byte
-	payload = append(payload, 0xAA)                                      // ERROR token
+	payload = append(payload, 0xAA)                                         // ERROR token
 	payload = binary.LittleEndian.AppendUint16(payload, uint16(len(token))) // token data length
 	payload = append(payload, token...)
 

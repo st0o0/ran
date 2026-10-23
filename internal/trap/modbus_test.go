@@ -37,12 +37,8 @@ func buildModbusRequest(transactionID uint16, unitID byte, fc byte, data []byte)
 }
 
 func TestModbusTrapReadCoils(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -53,8 +49,7 @@ func TestModbusTrapReadCoils(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -104,12 +99,8 @@ func TestModbusTrapReadCoils(t *testing.T) {
 }
 
 func TestModbusTrapWriteSingleRegister(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -120,8 +111,7 @@ func TestModbusTrapWriteSingleRegister(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -160,12 +150,8 @@ func TestModbusTrapWriteSingleRegister(t *testing.T) {
 }
 
 func TestModbusTrapInvalidProtocolID(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -176,8 +162,7 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -208,12 +193,8 @@ func TestModbusTrapInvalidProtocolID(t *testing.T) {
 }
 
 func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testModbusConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -224,8 +205,7 @@ func TestModbusTrapWriteMultipleRegisters(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {

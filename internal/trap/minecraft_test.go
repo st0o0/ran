@@ -31,24 +31,17 @@ func mcBuildHandshake(protocolVersion int32, serverAddr string, serverPort uint1
 type mcTestTrap struct {
 	trap      *MinecraftTrap
 	addr      string
-	cancel    context.CancelFunc
-	startDone chan struct{}
+	cancel context.CancelFunc
 }
 
 func (m *mcTestTrap) stopTrap() {
 	m.cancel()
-	<-m.startDone
 	_ = m.trap.Stop(context.Background())
 }
 
 func startMinecraftTrap(t *testing.T) *mcTestTrap {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Addrs:          map[string]string{"minecraft": addr},
@@ -65,14 +58,13 @@ func startMinecraftTrap(t *testing.T) *mcTestTrap {
 	tr := NewMinecraft(cfg, logger, m, limiter, alerter)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	startDone := make(chan struct{})
-	go func() { _ = tr.Start(ctx); close(startDone) }()
-	time.Sleep(50 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
-	return &mcTestTrap{trap: tr, addr: addr, cancel: cancel, startDone: startDone}
+	return &mcTestTrap{trap: tr, addr: addr, cancel: cancel}
 }
 
 func TestMinecraftStatusPing(t *testing.T) {
+	t.Parallel()
 	tt := startMinecraftTrap(t)
 	defer tt.stopTrap()
 
@@ -140,6 +132,7 @@ func TestMinecraftStatusPing(t *testing.T) {
 }
 
 func TestMinecraftLoginDisconnect(t *testing.T) {
+	t.Parallel()
 	tt := startMinecraftTrap(t)
 	defer tt.stopTrap()
 
@@ -195,6 +188,7 @@ func TestMinecraftLoginDisconnect(t *testing.T) {
 }
 
 func TestMinecraftMalformedHandshake(t *testing.T) {
+	t.Parallel()
 	tt := startMinecraftTrap(t)
 	defer tt.stopTrap()
 

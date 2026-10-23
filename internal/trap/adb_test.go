@@ -16,12 +16,8 @@ import (
 )
 
 func TestADBTrapCNXN(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Addrs:          map[string]string{"adb": addr},
@@ -38,10 +34,7 @@ func TestADBTrapCNXN(t *testing.T) {
 	tr := NewADB(cfg, logger, m, limiter, alerter)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan struct{})
-	go func() { close(started); _ = tr.Start(ctx) }()
-	<-started
-	time.Sleep(50 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -92,12 +85,8 @@ func TestADBTrapCNXN(t *testing.T) {
 }
 
 func TestADBTrapMalformed(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Addrs:          map[string]string{"adb": addr},
@@ -114,9 +103,7 @@ func TestADBTrapMalformed(t *testing.T) {
 	tr := NewADB(cfg, logger, m, limiter, alerter)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	startDone := make(chan struct{})
-	go func() { _ = tr.Start(ctx); close(startDone) }()
-	time.Sleep(50 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -133,6 +120,5 @@ func TestADBTrapMalformed(t *testing.T) {
 	conn.Close()
 
 	cancel()
-	<-startDone
 	_ = tr.Stop(context.Background())
 }

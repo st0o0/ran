@@ -18,12 +18,7 @@ import (
 
 func proxyTestConfig(t *testing.T) (*config.Config, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Addrs:          map[string]string{"httpproxy": addr},
@@ -36,7 +31,7 @@ func proxyTestConfig(t *testing.T) (*config.Config, string) {
 
 func startProxy(t *testing.T) string {
 	t.Helper()
-	cfg, addr := proxyTestConfig(t)
+	cfg, _ := proxyTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
 	limiter := NewLimiter(cfg.MaxSessions, cfg.MaxPerIP)
@@ -45,12 +40,12 @@ func startProxy(t *testing.T) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr := serveTrap(t, ctx, trap)
 	return addr
 }
 
 func TestHTTPProxyConnect(t *testing.T) {
+	t.Parallel()
 	addr := startProxy(t)
 
 	req, _ := http.NewRequest(http.MethodConnect, "http://"+addr, nil)
@@ -70,6 +65,7 @@ func TestHTTPProxyConnect(t *testing.T) {
 }
 
 func TestHTTPProxyAbsoluteURL(t *testing.T) {
+	t.Parallel()
 	addr := startProxy(t)
 
 	req, _ := http.NewRequest(http.MethodGet, "http://"+addr, nil)
@@ -96,6 +92,7 @@ func TestHTTPProxyAbsoluteURL(t *testing.T) {
 }
 
 func TestHTTPProxyWithAuth(t *testing.T) {
+	t.Parallel()
 	addr := startProxy(t)
 
 	creds := base64.StdEncoding.EncodeToString([]byte("admin:secret"))
@@ -118,6 +115,7 @@ func TestHTTPProxyWithAuth(t *testing.T) {
 }
 
 func TestHTTPProxyNonProxyRequest(t *testing.T) {
+	t.Parallel()
 	addr := startProxy(t)
 
 	resp, err := http.Get("http://" + addr + "/some/path")

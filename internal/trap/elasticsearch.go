@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
@@ -14,17 +13,18 @@ import (
 )
 
 type ElasticsearchTrap struct {
+	*bound
 	cfg     *config.Config
 	logger  *slog.Logger
 	metrics *metrics.Metrics
 	limiter *Limiter
-	alerter alert.Alerter
+	alerter Reporter
 	srv     *http.Server
-	wg      sync.WaitGroup
 }
 
-func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *ElasticsearchTrap {
+func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *ElasticsearchTrap {
 	t := &ElasticsearchTrap{
+		bound:   newBound(),
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
@@ -43,19 +43,21 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 
 	t.srv = &http.Server{
 		Handler:      recoverHandler(logger, m, "elasticsearch", mux),
-		ReadTimeout:  cfg.SessionTimeout,
-		WriteTimeout: cfg.SessionTimeout,
+		ReadTimeout:  cfg.ResolveSessionTimeout("elasticsearch"),
+		WriteTimeout: cfg.ResolveSessionTimeout("elasticsearch"),
 		ConnContext:  ConnContextWithDestPort,
 	}
 	return t
 }
 
 func (t *ElasticsearchTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("elasticsearch"), t.cfg.ProxyProtocol, t.logger, t.metrics, "elasticsearch")
+	addrs := t.cfg.TrapAddrs("elasticsearch")
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyProtocol, t.logger, t.metrics, "elasticsearch")
 	if err != nil {
 		return fmt.Errorf("elasticsearch listen: %w", err)
 	}
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("elasticsearch"))
+	t.set(ln.Addr())
+	t.logger.Info("listening", "addrs", addrs)
 
 	go func() {
 		<-ctx.Done()
@@ -70,7 +72,6 @@ func (t *ElasticsearchTrap) Start(ctx context.Context) error {
 
 func (t *ElasticsearchTrap) Stop(ctx context.Context) error {
 	t.srv.Close()
-	t.wg.Wait()
 	return nil
 }
 
@@ -82,10 +83,11 @@ func (t *ElasticsearchTrap) setHeaders(w http.ResponseWriter) {
 func (t *ElasticsearchTrap) withSession(w http.ResponseWriter, r *http.Request) (*Session, bool) {
 	host, port := ParseAddr(r.RemoteAddr)
 	destPort := DestPortFromContext(r.Context())
-	sess := NewSession("elasticsearch", "tcp", host, port, destPort, t.logger)
+	sess := NewSession("elasticsearch", alert.TransportTCP, host, port, destPort, t.logger)
+	sess.Sensor = t.alerter
 
 	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "elasticsearch", "tcp", destPort, host, "rate_limit")
+		LogRejected(t.logger, t.metrics, "elasticsearch", alert.TransportTCP, destPort, host, "rate_limit")
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return nil, false
 	}
@@ -114,12 +116,12 @@ func (t *ElasticsearchTrap) handleRoot(w http.ResponseWriter, r *http.Request) {
 	host, _ := ParseAddr(r.RemoteAddr)
 	defer t.releaseSession(sess, host)
 
-	sess.LogCommand("GET /")
-	t.alerter.Alert(r.Context(), host, "elasticsearch", map[string]string{"command": "GET /"})
+	// Fingerprinting request: a probe, not an attack (see handleCatchAll).
+	sess.Log("fingerprint request", slog.String("request", "GET /"))
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, `{"name":"ran","cluster_name":"elasticsearch","cluster_uuid":"_na_","version":{"number":"8.12.0","build_flavor":"default"},"tagline":"You Know, for Search"}`)
+	fmt.Fprint(w, `{"name":"node-1","cluster_name":"elasticsearch","cluster_uuid":"_na_","version":{"number":"8.12.0","build_flavor":"default"},"tagline":"You Know, for Search"}`)
 }
 
 func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.Request) {
@@ -130,14 +132,16 @@ func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.R
 	host, _ := ParseAddr(r.RemoteAddr)
 	defer t.releaseSession(sess, host)
 
-	sess.LogCommand("GET /_cluster/health")
-	t.alerter.Alert(r.Context(), host, "elasticsearch", map[string]string{"command": "GET /_cluster/health"})
+	sess.Log("fingerprint request", slog.String("request", "GET /_cluster/health"))
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `{"cluster_name":"elasticsearch","status":"green","number_of_nodes":1}`)
 }
 
+// handleCatchAll classifies by this rule: a plain GET or HEAD without a body is a
+// fingerprinting request and stays a probe; any other method, or any request with
+// a body, counts as a command (attack).
 func (t *ElasticsearchTrap) handleCatchAll(w http.ResponseWriter, r *http.Request) {
 	sess, ok := t.withSession(w, r)
 	if !ok {
@@ -147,13 +151,16 @@ func (t *ElasticsearchTrap) handleCatchAll(w http.ResponseWriter, r *http.Reques
 	defer t.releaseSession(sess, host)
 
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+	// Method and path only: the query string and the body may carry secrets and
+	// are free-form attacker input, so neither reaches the log command or the alert.
 	cmd := r.Method + " " + r.URL.Path
-	if len(body) > 0 {
-		cmd += " " + string(body)
-	}
 
-	sess.LogCommand(cmd)
-	t.alerter.Alert(r.Context(), host, "elasticsearch", map[string]string{"command": cmd})
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && len(body) == 0 {
+		sess.Log("fingerprint request", slog.String("request", cmd))
+	} else {
+		sess.LogCommand(cmd)
+		sess.Alert(r.Context(), map[string]string{"command": cmd})
+	}
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusUnauthorized)

@@ -8,129 +8,55 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 	"sync/atomic"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type MySQLTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
-	connID   atomic.Uint32
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
+	connID  atomic.Uint32
 }
 
-func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *MySQLTrap {
-	return &MySQLTrap{
+func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *MySQLTrap {
+	t := &MySQLTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("mysql", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *MySQLTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("mysql"), t.cfg.ProxyProtocol, t.logger, t.metrics, "mysql")
-	if err != nil {
-		return fmt.Errorf("mysql listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("mysql"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "mysql", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "mysql", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *MySQLTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("mysql", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "mysql", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	challenge := make([]byte, 20)
 	rand.Read(challenge)
 
 	connID := t.connID.Add(1)
 	greeting := buildGreeting(connID, challenge)
 	if _, err := conn.Write(greeting); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
 	response, err := readMySQLPacket(conn)
 	if err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
 	username, password := parseHandshakeResponse(response, challenge)
-	sess.LogAuthAttempt(
-		slog.String("username", username),
-		slog.String("password", password),
-	)
-	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "mysql", map[string]string{"username": username, "password": password})
+	sess.Cred(ctx, t.metrics, username, password)
 
 	_, _ = conn.Write(buildErrPacket(2, 1045, "28000", "Access denied for user '"+username+"'"))
 }
 
 func buildGreeting(connID uint32, challenge []byte) []byte {
-	serverVersion := "5.7.99-ran\x00"
+	serverVersion := "8.0.36\x00"
 	authPlugin := "mysql_clear_password\x00"
 
 	// Protocol version 10, server version, connection id, challenge part 1 (8 bytes),
@@ -147,16 +73,14 @@ func buildGreeting(connID uint32, challenge []byte) []byte {
 	capLow := uint16(0x0001 | 0x0200 | 0x8000 | 0x00080000>>16)
 	payload = binary.LittleEndian.AppendUint16(payload, capLow)
 
-	payload = append(payload, 0x21) // charset utf8
+	payload = append(payload, 0x21)                             // charset utf8
 	payload = binary.LittleEndian.AppendUint16(payload, 0x0002) // status: autocommit
 
 	// Upper capability flags
-	capHigh := uint16(0x00080000 >> 16)
-	_ = capHigh
 	payload = binary.LittleEndian.AppendUint16(payload, 0x0008) // CLIENT_PLUGIN_AUTH high bit
 
 	payload = append(payload, byte(len(challenge)+1)) // auth plugin data length
-	payload = append(payload, make([]byte, 10)...)     // reserved
+	payload = append(payload, make([]byte, 10)...)    // reserved
 
 	payload = append(payload, challenge[8:]...) // challenge part 2 (12 bytes)
 	payload = append(payload, 0)                // null terminator

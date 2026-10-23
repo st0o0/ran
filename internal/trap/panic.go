@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/st0o0/ran/internal/metrics"
@@ -36,7 +37,10 @@ func newPanicLimiter(nowFunc func() time.Time) *panicLimiter {
 	return &panicLimiter{nowFunc: nowFunc, state: make(map[string]*panicState)}
 }
 
-var panicLog = newPanicLimiter(time.Now)
+// panicLog is atomic so tests can swap it while a leftover goroutine reports.
+var panicLog atomic.Pointer[panicLimiter]
+
+func init() { panicLog.Store(newPanicLimiter(time.Now)) }
 
 // allow reports whether this panic should be logged, whether the log carries a
 // stack trace, and how many panics were suppressed since the previous log.
@@ -72,7 +76,7 @@ func reportPanic(logger *slog.Logger, m *metrics.Metrics, protocol string, r any
 	if m != nil {
 		m.PanicsRecovered.WithLabelValues(protocol).Inc()
 	}
-	logIt, withStack, suppressed := panicLog.allow(protocol)
+	logIt, withStack, suppressed := panicLog.Load().allow(protocol)
 	if !logIt {
 		return
 	}

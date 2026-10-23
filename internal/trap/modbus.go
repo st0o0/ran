@@ -7,112 +7,43 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type ModbusTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewModbus(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *ModbusTrap {
-	return &ModbusTrap{
+func NewModbus(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *ModbusTrap {
+	t := &ModbusTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("modbus", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *ModbusTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("modbus"), t.cfg.ProxyProtocol, t.logger, t.metrics, "modbus")
-	if err != nil {
-		return fmt.Errorf("modbus listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("modbus"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "modbus", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "modbus", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *ModbusTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *ModbusTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("modbus", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "modbus", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *ModbusTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	for {
 		transactionID, unitID, fc, pduData, err := readModbusRequest(conn)
 		if err != nil {
-			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				sess.SetOutcome("timeout")
-			} else {
-				sess.SetOutcome("error")
-			}
+			setOutcome(sess, err)
 			return
 		}
 
 		attrs := parseModbusPDU(fc, pduData)
 		sess.LogPayload("modbus_request", attrs...)
-		t.alerter.Alert(ctx, host, "modbus", map[string]string{"function_code": fmt.Sprintf("%d", fc)})
+		sess.Alert(ctx, map[string]string{"function_code": fmt.Sprintf("%d", fc)})
 
 		resp := buildModbusException(transactionID, unitID, fc, 0x01)
 		if _, err := conn.Write(resp); err != nil {
-			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				sess.SetOutcome("timeout")
-			} else {
-				sess.SetOutcome("error")
-			}
+			setOutcome(sess, err)
 			return
 		}
 	}

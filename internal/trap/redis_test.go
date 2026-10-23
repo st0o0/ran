@@ -25,12 +25,8 @@ func testRedisConfig(addr string) *config.Config {
 }
 
 func TestRedisTrapInlineAuth(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testRedisConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -41,8 +37,7 @@ func TestRedisTrapInlineAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -85,12 +80,8 @@ func TestRedisTrapInlineAuth(t *testing.T) {
 }
 
 func TestRedisTrapRESPAuth(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := testRedisConfig(addr)
 	reg := prometheus.NewRegistry()
@@ -101,8 +92,7 @@ func TestRedisTrapRESPAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {

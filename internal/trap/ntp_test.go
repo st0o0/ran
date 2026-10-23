@@ -14,6 +14,7 @@ import (
 )
 
 func TestNTPTrap(t *testing.T) {
+	t.Parallel()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -36,8 +37,7 @@ func TestNTPTrap(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(50 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	// Build NTP client request
 	req := make([]byte, 48)

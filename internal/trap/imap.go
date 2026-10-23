@@ -7,96 +7,31 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type IMAPTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewIMAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *IMAPTrap {
-	return &IMAPTrap{
+func NewIMAP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *IMAPTrap {
+	t := &IMAPTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("imap", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *IMAPTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("imap"), t.cfg.ProxyProtocol, t.logger, t.metrics, "imap")
-	if err != nil {
-		return fmt.Errorf("imap listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("imap"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "imap", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "imap", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *IMAPTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("imap", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "imap", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.SessionTimeout))
-
+func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	if _, err := fmt.Fprint(conn, "* OK IMAP4rev1 Server Ready\r\n"); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 		return
 	}
 
@@ -126,12 +61,7 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 			if len(fields) >= 2 {
 				password = strings.Trim(fields[1], "\"")
 			}
-			sess.LogAuthAttempt(
-				slog.String("username", username),
-				slog.String("password", password),
-			)
-			sess.RecordCredentials(t.metrics)
-			t.alerter.Alert(ctx, host, "imap", map[string]string{"username": username, "password": password})
+			sess.Cred(ctx, t.metrics, username, password)
 			fmt.Fprintf(conn, "%s NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", tag)
 
 		case "CAPABILITY":
@@ -146,14 +76,11 @@ func (t *IMAPTrap) handle(ctx context.Context, conn net.Conn) {
 
 		default:
 			sess.LogCommand(line)
+			sess.AlertCommand(ctx, cmd)
 			fmt.Fprintf(conn, "%s BAD Unknown command\r\n", tag)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-			sess.SetOutcome("timeout")
-		} else {
-			sess.SetOutcome("error")
-		}
+		setOutcome(sess, err)
 	}
 }

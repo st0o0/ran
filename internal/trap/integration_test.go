@@ -37,9 +37,9 @@ func TestIntegrationAllTraps(t *testing.T) {
 	trap.SetPasswordLogMode("on")
 	t.Cleanup(func() { trap.SetPasswordLogMode("off") })
 
-	sshAddr := freeAddr(t)
-	httpAddr := freeAddr(t)
-	mysqlAddr := freeAddr(t)
+	sshAddr := "127.0.0.1:0"
+	httpAddr := "127.0.0.1:0"
+	mysqlAddr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Traps:          []string{"ssh", "http", "mysql"},
@@ -66,17 +66,15 @@ func TestIntegrationAllTraps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = sshTrap.Start(ctx) }()
+	sshAddr = serveTrap(t, ctx, sshTrap)
 
 	// Start HTTP trap
 	httpTrap := trap.NewHTTP(cfg, logger, m, limiter, noop)
-	go func() { _ = httpTrap.Start(ctx) }()
+	httpAddr = serveTrap(t, ctx, httpTrap)
 
 	// Start MySQL trap
 	mysqlTrap := trap.NewMySQL(cfg, logger, m, limiter, noop)
-	go func() { _ = mysqlTrap.Start(ctx) }()
-
-	time.Sleep(200 * time.Millisecond)
+	mysqlAddr = serveTrap(t, ctx, mysqlTrap)
 
 	// Test SSH
 	sshClient, err := gossh.Dial("tcp", sshAddr, &gossh.ClientConfig{
@@ -225,7 +223,7 @@ func TestIntegrationMultiPort(t *testing.T) {
 }
 
 func TestIntegrationFTP(t *testing.T) {
-	addr := freeAddr(t)
+	addr := "127.0.0.1:0"
 	cfg := &config.Config{
 		Traps:          []string{"ftp"},
 		Addrs:          map[string]string{"ftp": addr},
@@ -241,8 +239,7 @@ func TestIntegrationFTP(t *testing.T) {
 	tr := trap.NewFTP(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -265,7 +262,7 @@ func TestIntegrationFTP(t *testing.T) {
 }
 
 func TestIntegrationTelnet(t *testing.T) {
-	addr := freeAddr(t)
+	addr := "127.0.0.1:0"
 	cfg := &config.Config{
 		Traps:          []string{"telnet"},
 		Addrs:          map[string]string{"telnet": addr},
@@ -281,8 +278,7 @@ func TestIntegrationTelnet(t *testing.T) {
 	tr := trap.NewTelnet(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -306,7 +302,7 @@ func TestIntegrationTelnet(t *testing.T) {
 }
 
 func TestIntegrationRedis(t *testing.T) {
-	addr := freeAddr(t)
+	addr := "127.0.0.1:0"
 	cfg := &config.Config{
 		Traps:          []string{"redis"},
 		Addrs:          map[string]string{"redis": addr},
@@ -322,8 +318,7 @@ func TestIntegrationRedis(t *testing.T) {
 	tr := trap.NewRedis(cfg, slog.Default(), m, limiter, alert.NoopAlerter{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {

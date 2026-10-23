@@ -15,19 +15,13 @@ import (
 )
 
 func TestDNSTrap(t *testing.T) {
-	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-
+	t.Parallel()
 	cfg := &config.Config{
-		Addrs:          map[string]string{"dns": conn.LocalAddr().String()},
+		Addrs:          map[string]string{"dns": "127.0.0.1:0"},
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
 	}
-	conn.Close()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	m := metrics.New(prometheus.NewRegistry(), "test")
@@ -37,8 +31,7 @@ func TestDNSTrap(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(50 * time.Millisecond)
+	addr := serveTrap(t, ctx, tr)
 
 	// Build DNS query for "example.com" type A
 	query := make([]byte, 0, 512)
@@ -57,7 +50,6 @@ func TestDNSTrap(t *testing.T) {
 	// qtype=1 (A), qclass=1 (IN)
 	query = append(query, 0, 1, 0, 1)
 
-	addr := cfg.Addrs["dns"]
 	c, err := net.Dial("udp", addr)
 	if err != nil {
 		t.Fatal(err)

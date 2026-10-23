@@ -17,12 +17,7 @@ import (
 
 func mssqlTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	return &config.Config{
 		Addrs:          map[string]string{"mssql": addr},
@@ -121,6 +116,7 @@ func TestParseTDSLogin7(t *testing.T) {
 }
 
 func TestMSSQLTrapConnection(t *testing.T) {
+	t.Parallel()
 	cfg := mssqlTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -130,8 +126,7 @@ func TestMSSQLTrapConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["mssql"] = serveTrap(t, ctx, trap)
 
 	conn, err := net.DialTimeout("tcp", cfg.Addrs["mssql"], 2*time.Second)
 	if err != nil {
@@ -206,6 +201,7 @@ func TestMSSQLTrapConnection(t *testing.T) {
 }
 
 func TestMSSQLProbeOutcome(t *testing.T) {
+	t.Parallel()
 	cfg := mssqlTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -215,8 +211,7 @@ func TestMSSQLProbeOutcome(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = mssqlTrap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["mssql"] = serveTrap(t, ctx, mssqlTrap)
 
 	conn, err := net.DialTimeout("tcp", cfg.Addrs["mssql"], 2*time.Second)
 	if err != nil {

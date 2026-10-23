@@ -19,12 +19,7 @@ import (
 
 func smtpTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := "127.0.0.1:0"
 
 	return &config.Config{
 		Addrs:          map[string]string{"smtp": addr},
@@ -54,6 +49,7 @@ func readLine(t *testing.T, r *bufio.Reader) string {
 }
 
 func TestSMTPBanner(t *testing.T) {
+	t.Parallel()
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -63,15 +59,14 @@ func TestSMTPBanner(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["smtp"] = serveTrap(t, ctx, trap)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
 	defer conn.Close()
 
 	banner := readLine(t, r)
-	if banner != "220 mail.example.com ESMTP ready\r\n" {
-		t.Errorf("banner = %q, want 220 mail.example.com ESMTP ready", banner)
+	if banner != "220 mx.localdomain ESMTP ready\r\n" {
+		t.Errorf("banner = %q, want 220 mx.localdomain ESMTP ready", banner)
 	}
 
 	cancel()
@@ -79,6 +74,7 @@ func TestSMTPBanner(t *testing.T) {
 }
 
 func TestSMTPEHLO(t *testing.T) {
+	t.Parallel()
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -88,8 +84,7 @@ func TestSMTPEHLO(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["smtp"] = serveTrap(t, ctx, trap)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
 	defer conn.Close()
@@ -101,7 +96,7 @@ func TestSMTPEHLO(t *testing.T) {
 	line2 := readLine(t, r)
 	line3 := readLine(t, r)
 
-	if line1 != "250-mail.example.com\r\n" {
+	if line1 != "250-mx.localdomain\r\n" {
 		t.Errorf("ehlo line1 = %q", line1)
 	}
 	if line2 != "250-AUTH LOGIN PLAIN\r\n" {
@@ -116,6 +111,7 @@ func TestSMTPEHLO(t *testing.T) {
 }
 
 func TestSMTPAuthLogin(t *testing.T) {
+	t.Parallel()
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -125,8 +121,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["smtp"] = serveTrap(t, ctx, trap)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
 	defer conn.Close()
@@ -134,7 +129,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 	readLine(t, r) // banner
 
 	fmt.Fprintf(conn, "EHLO test\r\n")
-	readLine(t, r) // 250-mail.example.com
+	readLine(t, r) // 250-mx.localdomain
 	readLine(t, r) // 250-AUTH LOGIN PLAIN
 	readLine(t, r) // 250 OK
 
@@ -167,6 +162,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 }
 
 func TestSMTPAuthPlain(t *testing.T) {
+	t.Parallel()
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -176,8 +172,7 @@ func TestSMTPAuthPlain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["smtp"] = serveTrap(t, ctx, trap)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
 	defer conn.Close()
@@ -202,6 +197,7 @@ func TestSMTPAuthPlain(t *testing.T) {
 }
 
 func TestSMTPMailFromWithoutAuth(t *testing.T) {
+	t.Parallel()
 	cfg := smtpTestConfig(t)
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, "test")
@@ -211,8 +207,7 @@ func TestSMTPMailFromWithoutAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = trap.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["smtp"] = serveTrap(t, ctx, trap)
 
 	conn, r := dialSMTP(t, cfg.TrapAddr("smtp"))
 	defer conn.Close()

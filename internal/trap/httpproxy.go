@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
@@ -15,17 +14,18 @@ import (
 )
 
 type HTTPProxyTrap struct {
+	*bound
 	cfg     *config.Config
 	logger  *slog.Logger
 	metrics *metrics.Metrics
 	limiter *Limiter
-	alerter alert.Alerter
+	alerter Reporter
 	srv     *http.Server
-	wg      sync.WaitGroup
 }
 
-func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *HTTPProxyTrap {
+func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *HTTPProxyTrap {
 	t := &HTTPProxyTrap{
+		bound:   newBound(),
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
@@ -35,19 +35,21 @@ func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 
 	t.srv = &http.Server{
 		Handler:      recoverHandler(logger, m, "httpproxy", t),
-		ReadTimeout:  cfg.SessionTimeout,
-		WriteTimeout: cfg.SessionTimeout,
+		ReadTimeout:  cfg.ResolveSessionTimeout("httpproxy"),
+		WriteTimeout: cfg.ResolveSessionTimeout("httpproxy"),
 		ConnContext:  ConnContextWithDestPort,
 	}
 	return t
 }
 
 func (t *HTTPProxyTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("httpproxy"), t.cfg.ProxyProtocol, t.logger, t.metrics, "httpproxy")
+	addrs := t.cfg.TrapAddrs("httpproxy")
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyProtocol, t.logger, t.metrics, "httpproxy")
 	if err != nil {
 		return fmt.Errorf("httpproxy listen: %w", err)
 	}
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("httpproxy"))
+	t.set(ln.Addr())
+	t.logger.Info("listening", "addrs", addrs)
 
 	go func() {
 		<-ctx.Done()
@@ -62,17 +64,17 @@ func (t *HTTPProxyTrap) Start(ctx context.Context) error {
 
 func (t *HTTPProxyTrap) Stop(ctx context.Context) error {
 	t.srv.Close()
-	t.wg.Wait()
 	return nil
 }
 
 func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, port := ParseAddr(r.RemoteAddr)
 	destPort := DestPortFromContext(r.Context())
-	sess := NewSession("httpproxy", "tcp", host, port, destPort, t.logger)
+	sess := NewSession("httpproxy", alert.TransportTCP, host, port, destPort, t.logger)
+	sess.Sensor = t.alerter
 
 	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "httpproxy", "tcp", destPort, host, "rate_limit")
+		LogRejected(t.logger, t.metrics, "httpproxy", alert.TransportTCP, destPort, host, "rate_limit")
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -88,16 +90,25 @@ func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodConnect {
-		sess.LogCommand("CONNECT "+r.Host)
-		t.alerter.Alert(r.Context(), host, "httpproxy", map[string]string{"command": "CONNECT " + r.Host})
+		cmd := "CONNECT " + sanitizeProxyTarget(r.Host)
+		sess.LogCommand(cmd)
+		sess.Alert(r.Context(), map[string]string{"command": cmd})
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 		return
 	}
 
 	if r.URL.Host != "" {
-		sess.LogCommand(r.Method+" "+r.URL.String())
-		t.alerter.Alert(r.Context(), host, "httpproxy", map[string]string{"command": r.Method + " " + r.URL.String()})
+		// Userinfo, query and fragment may carry secrets: keep scheme, host and path.
+		target := *r.URL
+		target.User = nil
+		target.RawQuery = ""
+		target.ForceQuery = false
+		target.Fragment = ""
+		target.RawFragment = ""
+		cmd := r.Method + " " + target.String()
+		sess.LogCommand(cmd)
+		sess.Alert(r.Context(), map[string]string{"command": cmd})
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 		return
@@ -127,5 +138,17 @@ func (t *HTTPProxyTrap) handleProxyAuth(sess *Session, r *http.Request, host, au
 		slog.String("password", creds[1]),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(r.Context(), host, "httpproxy", map[string]string{"username": creds[0], "password": creds[1]})
+	sess.Alert(r.Context(), map[string]string{"username": creds[0], "password": creds[1]})
+}
+
+// sanitizeProxyTarget reduces a CONNECT target to host:port (or host plus path):
+// userinfo, query and fragment may carry secrets and are dropped.
+func sanitizeProxyTarget(target string) string {
+	if i := strings.IndexAny(target, "?#"); i >= 0 {
+		target = target[:i]
+	}
+	if i := strings.LastIndex(target, "@"); i >= 0 {
+		target = target[i+1:]
+	}
+	return target
 }

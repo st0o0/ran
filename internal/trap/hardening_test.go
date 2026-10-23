@@ -20,6 +20,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
@@ -35,11 +36,14 @@ type recordingAlerter struct {
 	alerts []recordedAlert
 }
 
-func (r *recordingAlerter) Alert(_ context.Context, ip, protocol string, meta map[string]string) {
+func (r *recordingAlerter) Alert(_ context.Context, info alert.SessionInfo, meta map[string]string) alert.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.alerts = append(r.alerts, recordedAlert{ip, protocol, meta})
+	r.alerts = append(r.alerts, recordedAlert{info.SourceIP, info.Protocol, meta})
+	return alert.Classify(info)
 }
+
+func (r *recordingAlerter) SessionEnd(alert.SessionInfo) bool { return false }
 
 func (r *recordingAlerter) Close() {}
 
@@ -98,12 +102,12 @@ func startHTTPForTest(t *testing.T) (*config.Config, *recordingAlerter, *syncBuf
 	tr := NewHTTP(cfg, newJSONLogger(logs), m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), rec)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	cfg.Addrs["http"] = serveTrap(t, ctx, tr)
 	return cfg, rec, logs
 }
 
 func TestHTTPAlertUsesPeerNotForwardedHeader(t *testing.T) {
+	t.Parallel()
 	cfg, rec, logs := startHTTPForTest(t)
 	postHTTP(t, cfg, "username=a&password=b", map[string]string{"X-Forwarded-For": "203.0.113.9, 198.51.100.1"})
 
@@ -123,6 +127,7 @@ func TestHTTPAlertUsesPeerNotForwardedHeader(t *testing.T) {
 }
 
 func TestHTTPAlertIgnoresRealIPHeader(t *testing.T) {
+	t.Parallel()
 	cfg, rec, _ := startHTTPForTest(t)
 	postHTTP(t, cfg, "username=a&password=b", map[string]string{"X-Real-IP": "198.51.100.7"})
 	alerts := rec.snapshot()
@@ -132,6 +137,7 @@ func TestHTTPAlertIgnoresRealIPHeader(t *testing.T) {
 }
 
 func TestHTTPGarbageHeader(t *testing.T) {
+	t.Parallel()
 	cfg, rec, logs := startHTTPForTest(t)
 	postHTTP(t, cfg, "username=a&password=b", map[string]string{"X-Real-IP": "not-an-ip"})
 	alerts := rec.snapshot()
@@ -144,6 +150,7 @@ func TestHTTPGarbageHeader(t *testing.T) {
 }
 
 func TestHTTPOversizedBody(t *testing.T) {
+	t.Parallel()
 	cfg, rec, _ := startHTTPForTest(t)
 	postHTTP(t, cfg, "username=admin&password="+strings.Repeat("A", 200<<10), nil)
 	alerts := rec.snapshot()
@@ -156,6 +163,7 @@ func TestHTTPOversizedBody(t *testing.T) {
 }
 
 func TestHTTPBodyWithinLimit(t *testing.T) {
+	t.Parallel()
 	cfg, rec, _ := startHTTPForTest(t)
 	postHTTP(t, cfg, "username=admin&password=pw", nil)
 	alerts := rec.snapshot()
@@ -246,12 +254,8 @@ func TestProxyV1LineTooLong(t *testing.T) {
 }
 
 func TestTelnetEndlessLine(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	t.Parallel()
+	addr := "127.0.0.1:0"
 
 	cfg := &config.Config{
 		Addrs:          map[string]string{"telnet": addr},
@@ -263,8 +267,7 @@ func TestTelnetEndlessLine(t *testing.T) {
 	tr := NewTelnet(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), m, NewLimiter(100, 10), &recordingAlerter{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -427,9 +430,9 @@ func panicCount(t *testing.T, m *metrics.Metrics, protocol string) float64 {
 
 func TestSafelyRecoversAndCounts(t *testing.T) {
 	// Use a fresh limiter: the global one allows only a few stack logs per protocol, so repeated runs would exhaust it.
-	old := panicLog
-	panicLog = newPanicLimiter(time.Now)
-	defer func() { panicLog = old }()
+	old := panicLog.Load()
+	panicLog.Store(newPanicLimiter(time.Now))
+	defer panicLog.Store(old)
 
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	buf := &syncBuffer{}
@@ -478,27 +481,23 @@ func (h *panicHandler) HandlePacket(_ context.Context, _ *Session, data []byte, 
 	respond([]byte("ok"))
 }
 
-func freeUDPAddr(t *testing.T) string {
+// anyUDPAddr is the listen address for UDP traps under test; the bound port is
+// read back from the trap.
+func anyUDPAddr(t *testing.T) string {
 	t.Helper()
-	c, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := c.LocalAddr().String()
-	c.Close()
-	return addr
+	return "127.0.0.1:0"
 }
 
 func TestUDPPanicDoesNotStopTrapOrLeakSlot(t *testing.T) {
-	addr := freeUDPAddr(t)
+	t.Parallel()
+	addr := anyUDPAddr(t)
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	limiter := NewLimiter(10, 1)
 	h := &panicHandler{}
 	tr := NewUDP("dns", []string{addr}, slog.New(slog.NewTextHandler(io.Discard, nil)), m, limiter, newUDPRateLimiter(&config.Config{}), h)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
@@ -564,6 +563,7 @@ func TestAcceptRecoversFromMalformedProxyHeader(t *testing.T) {
 // --- UDP: no alerts, rate limiting ---
 
 func TestUDPTrapsNeverAlert(t *testing.T) {
+	t.Parallel()
 	// The UDP constructors take no alerter, so a handler cannot alert. This
 	// smoke test also hands the registry factories a recording alerter.
 	query := []byte{0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0, 7}
@@ -591,7 +591,7 @@ func TestUDPTrapsNeverAlert(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.protocol, func(t *testing.T) {
-			addr := freeUDPAddr(t)
+			addr := anyUDPAddr(t)
 			rec := &recordingAlerter{}
 			cfg := &config.Config{Addrs: map[string]string{tc.protocol: addr}, SessionTimeout: time.Second}
 			m := metrics.New(prometheus.NewRegistry(), "test")
@@ -601,8 +601,7 @@ func TestUDPTrapsNeverAlert(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			go func() { _ = tr.Start(ctx) }()
-			time.Sleep(100 * time.Millisecond)
+			addr = serveTrap(t, ctx, tr)
 
 			conn, err := net.Dial("udp", addr)
 			if err != nil {
@@ -696,7 +695,8 @@ func TestUDPRateLimiterSweepsIdleSources(t *testing.T) {
 }
 
 func TestUDPFloodIsBounded(t *testing.T) {
-	addr := freeUDPAddr(t)
+	t.Parallel()
+	addr := anyUDPAddr(t)
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	h := &panicHandler{}
 	cfg := &config.Config{UDPRatePerSource: 1, UDPRateBurst: 5, UDPRateGlobal: 1000}
@@ -708,8 +708,7 @@ func TestUDPFloodIsBounded(t *testing.T) {
 	tr := NewUDP("dns", []string{addr}, slog.New(slog.NewTextHandler(io.Discard, nil)), m, NewLimiter(1000, 1000), rate, h)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = tr.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	addr = serveTrap(t, ctx, tr)
 
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
@@ -942,9 +941,9 @@ func TestPanicLimiterSamplesLogs(t *testing.T) {
 
 func TestSafelyAlwaysCountsButLimitsLogs(t *testing.T) {
 	now := time.Now()
-	old := panicLog
-	panicLog = newPanicLimiter(func() time.Time { return now })
-	defer func() { panicLog = old }()
+	old := panicLog.Load()
+	panicLog.Store(newPanicLimiter(func() time.Time { return now }))
+	defer panicLog.Store(old)
 
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	buf := &syncBuffer{}
@@ -968,9 +967,9 @@ func TestSafelyAlwaysCountsButLimitsLogs(t *testing.T) {
 
 func TestRecoverHandlerCountsHTTPPanics(t *testing.T) {
 	// Fresh limiter: the global one suppresses logs after a few panics per protocol, so repeated runs would miss the line.
-	old := panicLog
-	panicLog = newPanicLimiter(time.Now)
-	defer func() { panicLog = old }()
+	old := panicLog.Load()
+	panicLog.Store(newPanicLimiter(time.Now))
+	defer panicLog.Store(old)
 
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	buf := &syncBuffer{}

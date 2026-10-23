@@ -48,7 +48,7 @@ func TestDefaultValues(t *testing.T) {
 
 func TestSSHHostKeyPathCustom(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":              "ssh",
+		"RAN_TRAPS":             "ssh",
 		"RAN_SSH_HOST_KEY_PATH": "/custom/path/key",
 	}))
 	if err != nil {
@@ -142,9 +142,6 @@ func TestCrowdSecEnabled(t *testing.T) {
 	if c.CrowdSecURL != "http://crowdsec:8080" {
 		t.Errorf("CrowdSecURL = %q", c.CrowdSecURL)
 	}
-	if c.CrowdSecBanDuration != 4*time.Hour {
-		t.Errorf("CrowdSecBanDuration = %v, want 4h", c.CrowdSecBanDuration)
-	}
 }
 
 func TestCrowdSecMissingURL(t *testing.T) {
@@ -183,40 +180,6 @@ func TestCrowdSecMissingPassword(t *testing.T) {
 	}
 }
 
-func TestCrowdSecPermanentBan(t *testing.T) {
-	c, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":                 "ssh",
-		"RAN_CROWDSEC":              "on",
-		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
-		"RAN_CROWDSEC_MACHINE_ID":   "ran-honeypot",
-		"RAN_CROWDSEC_PASSWORD":     "secret",
-		"RAN_CROWDSEC_BAN_DURATION": "0",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if c.CrowdSecBanDuration != 0 {
-		t.Errorf("CrowdSecBanDuration = %v, want 0 (permanent)", c.CrowdSecBanDuration)
-	}
-}
-
-func TestCrowdSecCustomDuration(t *testing.T) {
-	c, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":                 "ssh",
-		"RAN_CROWDSEC":              "on",
-		"RAN_CROWDSEC_URL":          "http://crowdsec:8080",
-		"RAN_CROWDSEC_MACHINE_ID":   "ran-honeypot",
-		"RAN_CROWDSEC_PASSWORD":     "secret",
-		"RAN_CROWDSEC_BAN_DURATION": "24h",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if c.CrowdSecBanDuration != 24*time.Hour {
-		t.Errorf("CrowdSecBanDuration = %v, want 24h", c.CrowdSecBanDuration)
-	}
-}
-
 func TestCrowdSecOptimizationDefaults(t *testing.T) {
 	c, err := Load(envFunc(map[string]string{
 		"RAN_TRAPS":               "ssh",
@@ -228,17 +191,11 @@ func TestCrowdSecOptimizationDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.CrowdSecDedupWindow != 5*time.Minute {
-		t.Errorf("CrowdSecDedupWindow = %v, want 5m", c.CrowdSecDedupWindow)
-	}
 	if c.CrowdSecBatchInterval != 10*time.Second {
 		t.Errorf("CrowdSecBatchInterval = %v, want 10s", c.CrowdSecBatchInterval)
 	}
 	if c.CrowdSecBatchSize != 50 {
 		t.Errorf("CrowdSecBatchSize = %d, want 50", c.CrowdSecBatchSize)
-	}
-	if !c.CrowdSecDecisionCache {
-		t.Error("CrowdSecDecisionCache should default to true")
 	}
 }
 
@@ -249,16 +206,11 @@ func TestCrowdSecOptimizationCustom(t *testing.T) {
 		"RAN_CROWDSEC_URL":            "http://crowdsec:8080",
 		"RAN_CROWDSEC_MACHINE_ID":     "ran",
 		"RAN_CROWDSEC_PASSWORD":       "secret",
-		"RAN_CROWDSEC_DEDUP_WINDOW":   "10m",
 		"RAN_CROWDSEC_BATCH_INTERVAL": "30s",
 		"RAN_CROWDSEC_BATCH_SIZE":     "100",
-		"RAN_CROWDSEC_DECISION_CACHE": "off",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if c.CrowdSecDedupWindow != 10*time.Minute {
-		t.Errorf("CrowdSecDedupWindow = %v, want 10m", c.CrowdSecDedupWindow)
 	}
 	if c.CrowdSecBatchInterval != 30*time.Second {
 		t.Errorf("CrowdSecBatchInterval = %v, want 30s", c.CrowdSecBatchInterval)
@@ -266,21 +218,106 @@ func TestCrowdSecOptimizationCustom(t *testing.T) {
 	if c.CrowdSecBatchSize != 100 {
 		t.Errorf("CrowdSecBatchSize = %d, want 100", c.CrowdSecBatchSize)
 	}
-	if c.CrowdSecDecisionCache {
-		t.Error("CrowdSecDecisionCache should be false")
-	}
 }
 
-func TestCrowdSecDedupWindowDisabled(t *testing.T) {
-	c, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":                 "ssh",
-		"RAN_CROWDSEC_DEDUP_WINDOW": "0s",
-	}))
+func TestBanOnDefault(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.CrowdSecDedupWindow != 0 {
-		t.Errorf("CrowdSecDedupWindow = %v, want 0", c.CrowdSecDedupWindow)
+	if got := strings.Join(c.BanOn, ","); got != "attack,scan" {
+		t.Errorf("BanOn = %q, want attack,scan", got)
+	}
+}
+
+func TestBanOnCustom(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_BAN_ON": "probe, Attack,scan,attack"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Join(c.BanOn, ","); got != "probe,attack,scan" {
+		t.Errorf("BanOn = %q, want probe,attack,scan (trimmed, lowercased, deduplicated)", got)
+	}
+}
+
+func TestBanOnInvalidClass(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_BAN_ON": "attack,foo"}))
+	if err == nil {
+		t.Fatal("expected error for invalid class")
+	}
+	if !strings.Contains(err.Error(), `"foo"`) || !strings.Contains(err.Error(), "RAN_BAN_ON") {
+		t.Errorf("error should name the variable and the invalid value: %v", err)
+	}
+}
+
+func TestBanOnOnlySeparators(t *testing.T) {
+	if _, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_BAN_ON": " , "})); err == nil {
+		t.Fatal("expected error for an empty class list")
+	}
+}
+
+func TestAlertCooldownDefaultAndCustom(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.AlertCooldown != 4*time.Hour {
+		t.Errorf("AlertCooldown = %v, want 4h", c.AlertCooldown)
+	}
+	c, err = Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_ALERT_COOLDOWN": "30m"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.AlertCooldown != 30*time.Minute {
+		t.Errorf("AlertCooldown = %v, want 30m", c.AlertCooldown)
+	}
+	c, err = Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_ALERT_COOLDOWN": "0s"}))
+	if err != nil || c.AlertCooldown != 0 {
+		t.Errorf("AlertCooldown 0s = %v, %v; want 0 (disabled)", c.AlertCooldown, err)
+	}
+}
+
+func TestAlertCooldownInvalid(t *testing.T) {
+	for _, v := range []string{"abc", "-1h"} {
+		if _, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_ALERT_COOLDOWN": v})); err == nil {
+			t.Errorf("RAN_ALERT_COOLDOWN=%q should fail", v)
+		}
+	}
+}
+
+func TestProbeSummaryWindow(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.ProbeSummaryWindow != 60*time.Second {
+		t.Errorf("ProbeSummaryWindow = %v, want 60s", c.ProbeSummaryWindow)
+	}
+	c, err = Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_PROBE_SUMMARY_WINDOW": "5m"}))
+	if err != nil || c.ProbeSummaryWindow != 5*time.Minute {
+		t.Errorf("ProbeSummaryWindow = %v, %v; want 5m", c.ProbeSummaryWindow, err)
+	}
+	if _, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_PROBE_SUMMARY_WINDOW": "-5s"})); err == nil {
+		t.Error("negative window should fail")
+	}
+}
+
+func TestRemovedEnvVarsAreIgnoredButReported(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                   "ssh",
+		"RAN_CROWDSEC_BAN_DURATION":   "24h",
+		"RAN_CROWDSEC_DEDUP_WINDOW":   "not-a-duration",
+		"RAN_CROWDSEC_DECISION_CACHE": "maybe",
+	}))
+	if err != nil {
+		t.Fatalf("removed variables must not fail startup: %v", err)
+	}
+	if len(c.RemovedEnvVars) != 3 {
+		t.Errorf("RemovedEnvVars = %v, want all three", c.RemovedEnvVars)
+	}
+	c, err = Load(envFunc(map[string]string{"RAN_TRAPS": "ssh"}))
+	if err != nil || len(c.RemovedEnvVars) != 0 {
+		t.Errorf("RemovedEnvVars = %v, %v; want none", c.RemovedEnvVars, err)
 	}
 }
 
@@ -436,9 +473,9 @@ func TestMaxAuthRetriesGlobal(t *testing.T) {
 
 func TestMaxAuthRetriesPerProto(t *testing.T) {
 	c, _ := Load(envFunc(map[string]string{
-		"RAN_TRAPS":                  "ssh,telnet",
-		"RAN_MAX_AUTH_RETRIES":       "3",
-		"RAN_SSH_MAX_AUTH_RETRIES":   "6",
+		"RAN_TRAPS":                "ssh,telnet",
+		"RAN_MAX_AUTH_RETRIES":     "3",
+		"RAN_SSH_MAX_AUTH_RETRIES": "6",
 	}))
 	if c.ResolveMaxAuthRetries("ssh") != 6 {
 		t.Errorf("ResolveMaxAuthRetries(ssh) = %d, want 6", c.ResolveMaxAuthRetries("ssh"))
@@ -450,8 +487,8 @@ func TestMaxAuthRetriesPerProto(t *testing.T) {
 
 func TestMaxAuthRetriesUnlimited(t *testing.T) {
 	c, _ := Load(envFunc(map[string]string{
-		"RAN_TRAPS":                    "mssql",
-		"RAN_MSSQL_MAX_AUTH_RETRIES":   "0",
+		"RAN_TRAPS":                  "mssql",
+		"RAN_MSSQL_MAX_AUTH_RETRIES": "0",
 	}))
 	if c.ResolveMaxAuthRetries("mssql") != 0 {
 		t.Errorf("ResolveMaxAuthRetries(mssql) = %d, want 0", c.ResolveMaxAuthRetries("mssql"))
@@ -470,8 +507,8 @@ func TestMaxAuthRetriesInvalid(t *testing.T) {
 
 func TestMaxAuthRetriesPerProtoInvalid(t *testing.T) {
 	_, err := Load(envFunc(map[string]string{
-		"RAN_TRAPS":                 "ssh",
-		"RAN_SSH_MAX_AUTH_RETRIES":  "-1",
+		"RAN_TRAPS":                "ssh",
+		"RAN_SSH_MAX_AUTH_RETRIES": "-1",
 	}))
 	if err == nil {
 		t.Fatal("expected error for negative per-proto max auth retries")
@@ -592,8 +629,8 @@ func TestHardeningDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.CrowdSecMaxTracked != 100000 {
-		t.Errorf("CrowdSecMaxTracked = %d, want 100000", c.CrowdSecMaxTracked)
+	if c.CrowdSecMaxTracked != 20000 {
+		t.Errorf("CrowdSecMaxTracked = %d, want 20000", c.CrowdSecMaxTracked)
 	}
 	if c.UDPRatePerSource != 20 || c.UDPRateBurst != 40 || c.UDPRateGlobal != 2000 {
 		t.Errorf("UDP rates = %d/%d/%d, want 20/40/2000", c.UDPRatePerSource, c.UDPRateBurst, c.UDPRateGlobal)
@@ -638,5 +675,26 @@ func TestUDPRateBurstSmallerThanPerSourceRejected(t *testing.T) {
 		"RAN_UDP_RATE_BURST":      "10",
 	})); err != nil {
 		t.Errorf("burst equal to rate should be accepted: %v", err)
+	}
+}
+
+func TestProbeSummaryWindowInvalidAndZero(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_PROBE_SUMMARY_WINDOW": "abc"}))
+	if err == nil || !strings.Contains(err.Error(), "RAN_PROBE_SUMMARY_WINDOW") {
+		t.Errorf("invalid duration should fail naming the variable, got %v", err)
+	}
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_PROBE_SUMMARY_WINDOW": "0"}))
+	if err != nil || c.ProbeSummaryWindow != 0 {
+		t.Errorf("window 0 = %v, %v; want 0 and no error", c.ProbeSummaryWindow, err)
+	}
+}
+
+func TestBanOnEmptyUsesDefault(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_BAN_ON": ""}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Join(c.BanOn, ","); got != "attack,scan" {
+		t.Errorf("BanOn = %q, want attack,scan for an empty value", got)
 	}
 }

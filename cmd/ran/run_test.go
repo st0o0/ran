@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 	"github.com/st0o0/ran/internal/trap"
@@ -31,7 +30,6 @@ func (f *fakeTrap) Start(ctx context.Context) error {
 }
 
 func (f *fakeTrap) Stop(_ context.Context) error { return nil }
-
 
 func testSetup(t *testing.T, trapNames []string, factories map[string]trap.Factory) (*config.Config, *slog.Logger, *metrics.Metrics, *bytes.Buffer) {
 	t.Helper()
@@ -61,14 +59,14 @@ func testSetup(t *testing.T, trapNames []string, factories map[string]trap.Facto
 func TestRunAllTrapsSucceed(t *testing.T) {
 	ft := &fakeTrap{started: make(chan struct{})}
 	cfg, logger, m, _ := testSetup(t, []string{"test-ok"}, map[string]trap.Factory{
-		"test-ok": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter alert.Alerter) (trap.Trap, error) {
+		"test-ok": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter trap.Reporter) (trap.Trap, error) {
 			return ft, nil
 		},
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, cfg, logger, m) }()
+	go func() { done <- run(ctx, cfg, logger, m, nil) }()
 
 	select {
 	case <-ft.started:
@@ -92,17 +90,17 @@ func TestRunPartialFailure(t *testing.T) {
 	failTrap := &fakeTrap{startErr: net.ErrClosed, started: make(chan struct{})}
 
 	cfg, logger, m, buf := testSetup(t, []string{"test-ok", "test-fail"}, map[string]trap.Factory{
-		"test-ok": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter alert.Alerter) (trap.Trap, error) {
+		"test-ok": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter trap.Reporter) (trap.Trap, error) {
 			return okTrap, nil
 		},
-		"test-fail": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter alert.Alerter) (trap.Trap, error) {
+		"test-fail": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter trap.Reporter) (trap.Trap, error) {
 			return failTrap, nil
 		},
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, cfg, logger, m) }()
+	go func() { done <- run(ctx, cfg, logger, m, nil) }()
 
 	select {
 	case <-okTrap.started:
@@ -130,10 +128,10 @@ func TestRunAllTrapsFail(t *testing.T) {
 	fail2 := &fakeTrap{startErr: net.ErrClosed, started: make(chan struct{})}
 
 	cfg, logger, m, _ := testSetup(t, []string{"test-fail1", "test-fail2"}, map[string]trap.Factory{
-		"test-fail1": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter alert.Alerter) (trap.Trap, error) {
+		"test-fail1": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter trap.Reporter) (trap.Trap, error) {
 			return fail1, nil
 		},
-		"test-fail2": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter alert.Alerter) (trap.Trap, error) {
+		"test-fail2": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *trap.Limiter, alerter trap.Reporter) (trap.Trap, error) {
 			return fail2, nil
 		},
 	})
@@ -141,7 +139,7 @@ func TestRunAllTrapsFail(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := run(ctx, cfg, logger, m)
+	err := run(ctx, cfg, logger, m, nil)
 	if err == nil {
 		t.Fatal("run() should return error when all traps fail")
 	}

@@ -8,91 +8,31 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"sync"
 	"unicode/utf16"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type SMBTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewSMB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *SMBTrap {
-	return &SMBTrap{
+func NewSMB(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *SMBTrap {
+	t := &SMBTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("smb", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *SMBTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("smb"), t.cfg.ProxyProtocol, t.logger, t.metrics, "smb")
-	if err != nil {
-		return fmt.Errorf("smb listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("smb"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "smb", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "smb", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *SMBTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *SMBTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("smb", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "smb", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.ResolveSessionTimeout("smb")))
-
+func (t *SMBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
+	host := sess.SourceIP
 	maxRetries := t.cfg.ResolveMaxAuthRetries("smb")
 	authDelay := t.cfg.ResolveAuthDelay("smb")
 	authAttempt := 0
@@ -100,11 +40,7 @@ func (t *SMBTrap) handle(ctx context.Context, conn net.Conn) {
 	for {
 		payload, err := smbReadMessage(conn)
 		if err != nil {
-			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				sess.SetOutcome("timeout")
-			} else if sess.authAttempts == 0 {
-				sess.SetOutcome("error")
-			}
+			sess.setReadOutcome(err)
 			return
 		}
 
@@ -245,7 +181,7 @@ func (t *SMBTrap) handleSMB2SessionSetup(ctx context.Context, conn net.Conn, hos
 		slog.String("workstation", workstation),
 	)
 	sess.RecordCredentials(t.metrics)
-	t.alerter.Alert(ctx, host, "smb", map[string]string{"username": user, "domain": domain, "workstation": workstation})
+	sess.Alert(ctx, map[string]string{"username": user, "domain": domain, "workstation": workstation})
 
 	t.sendSessionSetupFailure(conn, payload)
 }
@@ -255,7 +191,7 @@ func (t *SMBTrap) sendSessionSetupFailure(conn net.Conn, req []byte) {
 
 	resp[0] = 0xFE
 	copy(resp[1:4], []byte("SMB"))
-	binary.LittleEndian.PutUint16(resp[4:6], 64) // StructureSize
+	binary.LittleEndian.PutUint16(resp[4:6], 64)       // StructureSize
 	binary.LittleEndian.PutUint16(resp[12:14], 0x0001) // Command: Session Setup
 	// Status: STATUS_LOGON_FAILURE
 	binary.LittleEndian.PutUint32(resp[8:12], 0xC000006D)

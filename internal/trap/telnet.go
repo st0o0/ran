@@ -7,90 +7,29 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
-	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
 type TelnetTrap struct {
-	cfg      *config.Config
-	logger   *slog.Logger
-	metrics  *metrics.Metrics
-	limiter  *Limiter
-	alerter  alert.Alerter
-	listener *MultiListener
-	wg       sync.WaitGroup
+	*tcpServer
+	cfg     *config.Config
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-func NewTelnet(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter alert.Alerter) *TelnetTrap {
-	return &TelnetTrap{
+func NewTelnet(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *TelnetTrap {
+	t := &TelnetTrap{
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
-		limiter: limiter,
-		alerter: alerter,
 	}
+	t.tcpServer = newTCPServer("telnet", cfg, logger, m, limiter, alerter, t.handle)
+	return t
 }
 
-func (t *TelnetTrap) Start(ctx context.Context) error {
-	ln, err := ListenMultiTCP(ctx, t.cfg.TrapAddrs("telnet"), t.cfg.ProxyProtocol, t.logger, t.metrics, "telnet")
-	if err != nil {
-		return fmt.Errorf("telnet listen: %w", err)
-	}
-	t.listener = ln
-	t.logger.Info("listening", "addrs", t.cfg.TrapAddrs("telnet"))
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			LogErrorStandalone(t.logger, "telnet", "accept_failed", err)
-			continue
-		}
-		t.wg.Add(1)
-		go safely(t.logger, t.metrics, "telnet", func() { t.handle(ctx, conn) })
-	}
-	return nil
-}
-
-func (t *TelnetTrap) Stop(_ context.Context) error {
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	t.wg.Wait()
-	return nil
-}
-
-func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
-	defer t.wg.Done()
-	defer conn.Close()
-
-	host, port := ParseAddr(conn.RemoteAddr().String())
-	_, destPort := ParseAddr(conn.LocalAddr().String())
-	sess := NewSession("telnet", "tcp", host, port, destPort, t.logger)
-
-	if !t.limiter.Acquire(host) {
-		LogRejected(t.logger, "telnet", "tcp", destPort, host, "rate_limit")
-		return
-	}
-	defer t.limiter.Release(host)
-
-	sess.LogConnect()
-	sess.RecordStart(t.metrics)
-	defer sess.RecordEnd(t.metrics)
-	defer sess.LogDisconnect()
-
-	_ = conn.SetDeadline(deadlineFromContext(ctx, t.cfg.ResolveSessionTimeout("telnet")))
-
+func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	reader := bufio.NewReaderSize(conn, 4096)
 	maxRetries := t.cfg.ResolveMaxAuthRetries("telnet")
 	authDelay := t.cfg.ResolveAuthDelay("telnet")
@@ -99,11 +38,7 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 		fmt.Fprint(conn, "\r\nLogin: ")
 		userLine, err := readLineLimited(reader, maxLineLen)
 		if err != nil {
-			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				sess.SetOutcome("timeout")
-			} else if sess.authAttempts == 0 {
-				sess.SetOutcome("error")
-			}
+			sess.setReadOutcome(err)
 			return
 		}
 		username := strings.TrimSpace(userLine)
@@ -111,21 +46,12 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn) {
 		fmt.Fprint(conn, "Password: ")
 		passLine, err := readLineLimited(reader, maxLineLen)
 		if err != nil {
-			if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				sess.SetOutcome("timeout")
-			} else if sess.authAttempts == 0 {
-				sess.SetOutcome("error")
-			}
+			sess.setReadOutcome(err)
 			return
 		}
 		password := strings.TrimSpace(passLine)
 
-		sess.LogAuthAttempt(
-			slog.String("username", username),
-			slog.String("password", password),
-		)
-		sess.RecordCredentials(t.metrics)
-		t.alerter.Alert(ctx, host, "telnet", map[string]string{"username": username, "password": password})
+		sess.Cred(ctx, t.metrics, username, password)
 
 		if authDelay > 0 {
 			if err := authSleep(ctx, authDelay, attempt); err != nil {

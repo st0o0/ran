@@ -59,6 +59,9 @@ func (h *dnsHandler) HandlePacket(ctx context.Context, sess *Session, data []byt
 }
 
 func parseDNSName(data []byte, offset int) (string, int, bool) {
+	if offset < 0 {
+		return "", 0, false
+	}
 	var labels []string
 	pos := offset
 	for {

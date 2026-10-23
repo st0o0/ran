@@ -2,10 +2,12 @@ package trap
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
 
+	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -14,6 +16,7 @@ type PacketHandler interface {
 }
 
 type UDPTrap struct {
+	*bound
 	protocol string
 	addrs    []string
 	logger   *slog.Logger
@@ -21,12 +24,18 @@ type UDPTrap struct {
 	limiter  *Limiter
 	rate     *udpRateLimiter
 	handler  PacketHandler
+
+	mu       sync.Mutex
 	conns    []net.PacketConn
+	stopping bool
+	done     chan struct{}
 	wg       sync.WaitGroup
 }
 
 func NewUDP(protocol string, addrs []string, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, rate *udpRateLimiter, handler PacketHandler) *UDPTrap {
 	return &UDPTrap{
+		bound:    newBound(),
+		done:     make(chan struct{}),
 		protocol: protocol,
 		addrs:    addrs,
 		logger:   logger,
@@ -39,30 +48,57 @@ func NewUDP(protocol string, addrs []string, logger *slog.Logger, m *metrics.Met
 
 func (t *UDPTrap) Start(ctx context.Context) error {
 	var lc net.ListenConfig
+	conns := make([]net.PacketConn, 0, len(t.addrs))
 	for _, addr := range t.addrs {
 		conn, err := lc.ListenPacket(ctx, "udp", addr)
 		if err != nil {
-			for _, c := range t.conns {
+			for _, c := range conns {
 				c.Close()
 			}
 			return err
 		}
-		t.conns = append(t.conns, conn)
+		conns = append(conns, conn)
 		t.logger.Info("listening", "addr", addr)
 	}
 
-	go func() {
-		<-ctx.Done()
-		for _, c := range t.conns {
+	t.mu.Lock()
+	if t.stopping {
+		t.mu.Unlock()
+		if len(conns) > 0 {
+			t.set(conns[0].LocalAddr()) // keep Ready from hanging
+		}
+		for _, c := range conns {
 			c.Close()
 		}
-	}()
+		return nil
+	}
+	t.conns = conns
+	// Add before the goroutines exist, ordered against Stop by the mutex.
+	t.wg.Add(len(conns))
+	t.mu.Unlock()
 
-	for _, conn := range t.conns {
-		go t.readLoop(ctx, conn)
+	if len(conns) > 0 {
+		t.set(conns[0].LocalAddr())
 	}
 
-	<-ctx.Done()
+	stop := context.AfterFunc(ctx, func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	defer stop()
+
+	for _, conn := range conns {
+		go func() {
+			defer t.wg.Done()
+			t.readLoop(ctx, conn)
+		}()
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-t.done:
+	}
 	return nil
 }
 
@@ -72,7 +108,7 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 	for {
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
 			t.logger.Debug("read error", "error", err)
@@ -90,11 +126,11 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 		}
 
 		if !t.limiter.Acquire(host) {
-			LogRejected(t.logger, t.protocol, "udp", destPort, host, "rate_limit")
+			LogRejected(t.logger, t.metrics, t.protocol, alert.TransportUDP, destPort, host, "rate_limit")
 			continue
 		}
 
-		sess := NewSession(t.protocol, "udp", host, port, destPort, t.logger)
+		sess := NewSession(t.protocol, alert.TransportUDP, host, port, destPort, t.logger)
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 
@@ -118,10 +154,31 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 	}
 }
 
-func (t *UDPTrap) Stop(_ context.Context) error {
-	for _, c := range t.conns {
+// Stop closes the sockets and waits for read loops and packet handlers. It
+// returns ctx.Err() if they do not finish before ctx ends and may be called
+// repeatedly.
+func (t *UDPTrap) Stop(ctx context.Context) error {
+	t.mu.Lock()
+	if !t.stopping {
+		t.stopping = true
+		close(t.done)
+	}
+	conns := t.conns
+	t.mu.Unlock()
+
+	for _, c := range conns {
 		c.Close()
 	}
-	t.wg.Wait()
-	return nil
+
+	waited := make(chan struct{})
+	go func() {
+		t.wg.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
