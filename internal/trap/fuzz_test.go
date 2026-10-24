@@ -272,3 +272,57 @@ func FuzzFormCommand(f *testing.F) {
 		boundedText(t, data, sanitizeHTTPValue(joined))
 	})
 }
+
+func FuzzTelnetIAC(f *testing.F) {
+	f.Add([]byte("\xff\xfb\x18root\r\n"))
+	f.Add([]byte("\xff\xfa\x18\x00xterm\xff\xf0"))
+	f.Add([]byte("\xff\xff\xff\xfd"))
+	f.Add([]byte("\xff"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		clean, replies, ttype := parseTelnetIAC(data)
+		boundedPayload(t, data, clean)
+		boundedPayload(t, data, replies)
+		if len(replies) > maxTelnetReplyBytes || len(ttype) > maxTelnetTType {
+			t.Fatalf("replies %d bytes, ttype %d bytes", len(replies), len(ttype))
+		}
+	})
+}
+
+func FuzzReadADBPacket(f *testing.F) {
+	f.Add(adbPacket(adbCmdOPEN, 1, 0, []byte("shell:id")))
+	f.Add(adbPacket(adbCmdAUTH, adbAuthPublicKey, 0, make([]byte, 64)))
+	f.Add(make([]byte, adbHdrSize))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _, _, payload, err := readADBPacket(bytes.NewReader(data))
+		if err == nil {
+			boundedPayload(t, data, payload)
+		}
+		if cmd, ok := adbShellCommand(payload); ok {
+			boundedText(t, data, cmd)
+			if len(cmd) > 256 {
+				t.Fatalf("command of %d bytes", len(cmd))
+			}
+		}
+	})
+}
+
+func FuzzParseModbusPDU(f *testing.F) {
+	f.Add(byte(3), []byte{0, 1, 0xFF, 0xFF})
+	f.Add(byte(23), make([]byte, 9))
+	f.Add(byte(43), []byte{0x0E, 1, 0})
+	f.Fuzz(func(t *testing.T, fc byte, data []byte) {
+		attrs := parseModbusPDU(fc, data)
+		if len(attrs) > 6 {
+			t.Fatalf("%d attributes", len(attrs))
+		}
+		for _, a := range attrs {
+			if (a.Key == "quantity" || a.Key == "write_quantity") && a.Value.Int64() > 2000 {
+				t.Fatalf("%s = %d above the Modbus maximum", a.Key, a.Value.Int64())
+			}
+		}
+		meta := modbusAlertMeta(attrs)
+		if len(meta) > len(attrs) {
+			t.Fatal("meta larger than attrs")
+		}
+	})
+}

@@ -116,10 +116,12 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 			idAttrs, meta := identity(c)
 			attrs := append([]slog.Attr{
 				slog.String("username", alert.SanitizeValue(c.User())),
+				slog.String("method", "password"),
 				slog.String("password", string(pass)),
 			}, idAttrs...)
 			sess.LogAuthAttempt(attrs...)
 			sess.RecordCredentials(t.metrics)
+			meta["method"] = "password"
 			meta["password"] = string(pass)
 			sess.Alert(ctx, meta)
 			if authDelay > 0 {

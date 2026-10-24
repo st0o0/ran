@@ -126,7 +126,7 @@ which keeps the attack surface of the honeypot minimal.
 | `ssh` | `:2222` | Credentials (OpenSSH banner; password and keyboard-interactive answers, and the SHA256 fingerprint and type of every offered public key, are logged as auth attempts and always rejected). Client identity: the client version string (`client_version`) and the HASSH of its KEXINIT (`hassh`) go to the log and the alert meta. Passwords never go to CrowdSec meta |
 | `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session |
 | `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response |
-| `telnet` | `:23`, `:2323` | Credentials (login/password prompts). Listens on both ports by default (`:2323` is the port Mirai-style botnets scan); see the multi-port note below |
+| `telnet` | `:23`, `:2323` | Credentials (login/password prompts). IAC option negotiation is parsed: `DO` is answered with `WONT`, `WILL` with `DONT`, and IAC bytes never reach the username or password; a reported terminal type is logged (`terminal_type`, 64 bytes). Listens on both ports by default (`:2323` is the port Mirai-style botnets scan); see the multi-port note below |
 | `ftp` | `:21` | Credentials (`USER` / `PASS`). Banner `220 FTP Server ready.`, lines up to 512 bytes. Every other command except `QUIT` gets `530` and is not logged |
 
 ### Web & proxy
@@ -153,8 +153,8 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `mysql` | `:3307` | Username and the client's auth response (greeting reports version `8.0.36` and offers `mysql_clear_password`; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response) |
-| `postgres` | `:5432` | Credentials (cleartext password auth) |
+| `mysql` | `:3307` | Username and the client's auth response (greeting reports version `8.0.36` and offers `mysql_clear_password`; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response). Further attempts (see retries) use an authentication switch to `mysql_clear_password` |
+| `postgres` | `:5432` | Credentials (cleartext password auth; after a rejected password the trap asks again on the same connection, up to the retry limit) |
 | `mssql` | `:1433` | Credentials (TDS Login7 with password decode) |
 | `oracle` | `:1521` | `USER` and `SERVICE_NAME` from the TNS CONNECT descriptor; no password |
 | `redis` | `:6379` | `AUTH` credentials + RESP and inline command logging |
@@ -183,8 +183,8 @@ which keeps the attack surface of the honeypot minimal.
 | Name | Port | Captures |
 |---|---|---|
 | `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass) |
-| `modbus` | `:502` | ICS payloads (function codes + registers) |
-| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). A first packet that is not CNXN is logged as an `adb_unknown` payload |
+| `modbus` | `:502` | Function codes with start address and quantity (capped at the Modbus maximum). Reads (1 to 4) and device identification (43) are fingerprinting and stay a `probe`; writes (5, 6, 15, 16, 22, 23) and unknown function codes are payload and make the session an `attack` |
+| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only the SHA-256 of the key is kept), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload |
 | `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload |
 
 ### UDP
@@ -254,8 +254,8 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RAN_MAX_AUTH_RETRIES` | `3` | Credential attempts per session before the trap disconnects (`0` = unlimited until the session timeout). Honored only by `ssh`, `telnet`, `mssql` and `smb` (see below) |
-| `RAN_AUTH_DELAY` | `0s` | Delay before answering a failed login; grows up to 4x per attempt. Honored only by `ssh`, `telnet`, `mssql` and `smb` |
+| `RAN_MAX_AUTH_RETRIES` | `3` | Credential attempts per session before the trap disconnects (`0` = unlimited until the session timeout). Honored only by `ssh`, `telnet`, `mssql`, `smb`, `mysql` and `postgres` (see below) |
+| `RAN_AUTH_DELAY` | `0s` | Delay before answering a failed login; grows up to 4x per attempt. Honored only by `ssh`, `telnet`, `mssql`, `smb`, `mysql` and `postgres` |
 | `RAN_SSH_TARPIT` | `off` | Hold SSH clients with slow random banner lines before the SSH handshake (see below) |
 | `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection (`0s` = no tarpit lines) |
 | `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start and persisted if the directory is writable (the image declares `/data` as a volume). Otherwise `ran` logs a warning and uses an ephemeral key that changes on every restart; this is not fatal |
@@ -269,14 +269,19 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 
 **Which traps honor the retry and delay settings.** `RAN_MAX_AUTH_RETRIES`,
 `RAN_AUTH_DELAY` and their `RAN_<PROTO>_` variants apply to `ssh`, `telnet`,
-`mssql` and `smb` only. `0` means unlimited attempts until the session timeout
-for all four (for `ssh` too: `ran` maps it to an unlimited setting, because
+`mssql`, `smb`, `mysql` and `postgres` only. `0` means unlimited attempts until the session timeout
+for all six (for `ssh` too: `ran` maps it to an unlimited setting, because
 the SSH library would otherwise fall back to 6). For `ssh` every rejected password, keyboard-interactive and distinct public-key offer counts as one attempt. The other traps ignore them:
 
 - `ftp`, `pop3`, `imap`, `smtp`, `ldap`, `irc`, `redis`, `http`, `https` and `httpproxy`
   accept unlimited attempts until the session timeout.
-- `mysql`, `postgres`, `oracle`, `mqtt`, `rdp`, `vnc` and `socks5` take one
-  attempt and then end the session.
+- `oracle`, `mqtt`, `rdp`, `vnc` and `socks5` take one
+  attempt and then end the session. `rdp` cannot retry by design: the only user name
+  is in the X.224 cookie and the negotiation failure ends the exchange.
+- `mysql` asks for another password with an authentication switch to
+  `mysql_clear_password`; `postgres` repeats the cleartext password request
+  (without an error in between). A client that does not answer ends the session
+  after the attempts it made.
 
 **SSH tarpit.** With `RAN_SSH_TARPIT=on` the trap first writes a random 32
 character line every 10 seconds, for at most `RAN_SSH_TARPIT_DURATION`, and then
@@ -344,7 +349,7 @@ Input limits (fixed, not configurable):
 |---|---|
 | `ftp`, `smtp`, `irc` | 512 byte lines |
 | `pop3`, `imap` | 1024 byte lines |
-| `telnet`, `redis` (inline commands), `memcached` | 4096 byte lines |
+| `telnet`, `redis` (inline commands), `memcached` | 4096 byte lines. `telnet` answers at most 192 bytes of option negotiation per line and keeps 64 bytes of terminal type |
 | `redis` (RESP) | 128 arguments, 4096 bytes per bulk string |
 | `ldap` | 64 KiB per BER element |
 | `mysql`, `postgres`, `mqtt`, `smb` | 1 MiB per packet |
@@ -353,7 +358,7 @@ Input limits (fixed, not configurable):
 | `http`, `https`, `docker`, `kubernetes` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes. `docker` keeps at most 64 command words and 1024 bytes before the 256 byte cut; `kubernetes` 32 values |
 | `mongodb` | 64 KiB per message (the protocol allows 48 MB; larger messages close the connection before anything is read); first 64 top-level BSON elements of the command document, nested documents are skipped by their declared length; user names 128 bytes |
 | `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 16 point formats, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
-| `adb` | 4096 bytes of identity data |
+| `adb` | 4096 bytes of identity data and 4096 bytes per later packet (a longer declared length ends the session), 8 packets after the token, command meta 256 bytes |
 | `rdp` | 1024 bytes per TPKT packet |
 | UDP traps | 4096 bytes per packet (the rest is cut off) |
 
@@ -458,10 +463,10 @@ so the garbage collector works harder before the kernel OOM-kills the process.
 |---|---|
 | `probe` | Connect and banner only: no auth attempt, command or payload byte |
 | `attack` | At least one auth attempt, command or payload byte |
-| `scan` | The same source IP touched at least 3 distinct TCP trap protocols within about 10 minutes |
+| `scan` | The same source IP touched at least 3 distinct TCP trap protocols or at least 5 distinct destination ports within about 10 minutes |
 
-Scan detection never counts UDP (spoofable) or non-public source addresses, and
-its in-memory map is capped (oldest entries are evicted first, which only delays
+Scan detection never counts UDP (spoofable), sources in `RAN_IGNORE_IPS` or non-public source addresses, and
+its in-memory map is capped, with at most 16 ports remembered per source (oldest entries are evicted first, which only delays
 a scan classification). A scan is always its own alert, even if the session that
 crossed the threshold was only a probe; its scenario uses the protocol that
 crossed it. `scan` outranks `attack`, which outranks `probe`. The scan and
@@ -495,9 +500,7 @@ Sessions are classified from the counters when they end, so a trap that logs a
 command, payload or auth attempt ends as `attack` even if it did not alert
 mid-session (redis, memcached, imap and irc alert on the first command with only
 the command name as meta). Pure fingerprinting stays a `probe`: Elasticsearch
-plain GET requests without a body, HTTP `GET`/`HEAD` requests that match no exploit path or JNDI string, and Minecraft server-list pings. Per-trap
-tuning for single-request protocols (a modbus request, an ADB CONNECT) is a
-planned follow-up.
+plain GET requests without a body, HTTP `GET`/`HEAD` requests that match no exploit path or JNDI string, Minecraft server-list pings, and Modbus read requests (function codes 1 to 4) and device identification (43). An ADB CNXN still counts as payload.
 
 </details>
 

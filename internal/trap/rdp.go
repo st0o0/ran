@@ -31,6 +31,10 @@ func NewRDP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 }
 
 func (t *RDPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
+	// One attempt per TCP session by design: the X.224 connection request carries
+	// the only user name, and the negotiation failure that answers it ends the
+	// exchange (a real server closes here too). RAN_MAX_AUTH_RETRIES and
+	// RAN_AUTH_DELAY therefore do not apply.
 	// Read TPKT header (4 bytes)
 	var tpkt [4]byte
 	if _, err := io.ReadFull(conn, tpkt[:]); err != nil {

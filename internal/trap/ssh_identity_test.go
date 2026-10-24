@@ -184,7 +184,7 @@ func TestSSHIdentityCapture(t *testing.T) {
 	}{
 		{"key only", []gossh.AuthMethod{gossh.PublicKeys(signers...)}, 1, "publickey", "", fp},
 		{"interactive", []gossh.AuthMethod{interactive("hunter2")}, 1, "keyboard-interactive", "hunter2", ""},
-		{"password", []gossh.AuthMethod{gossh.Password("hunter2")}, 1, "", "hunter2", ""},
+		{"password", []gossh.AuthMethod{gossh.Password("hunter2")}, 1, "password", "hunter2", ""},
 		{"mixed", []gossh.AuthMethod{gossh.PublicKeys(signers...), interactive("hunter2"), gossh.Password("hunter2")}, 3, "", "hunter2", fp},
 	}
 	SetPasswordLogMode("on")
@@ -201,6 +201,9 @@ func TestSSHIdentityCapture(t *testing.T) {
 			for _, a := range alerts {
 				if a.Meta["username"] != "root" || a.Meta["client_version"] != "SSH-2.0-libssh_0.9.6" {
 					t.Errorf("meta = %v", a.Meta)
+				}
+				if m := a.Meta["method"]; m != "password" && m != "publickey" && m != "keyboard-interactive" {
+					t.Errorf("method meta = %q", m)
 				}
 				if len(a.Meta["hassh"]) != 32 {
 					t.Errorf("hassh meta = %q", a.Meta["hassh"])

@@ -36,20 +36,18 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 
 	for attempt := 0; maxRetries == 0 || attempt < maxRetries; attempt++ {
 		fmt.Fprint(conn, "\r\nLogin: ")
-		userLine, err := readLineLimited(reader, maxLineLen)
+		username, err := t.readTelnetField(conn, reader, sess)
 		if err != nil {
 			sess.setReadOutcome(err)
 			return
 		}
-		username := strings.TrimSpace(userLine)
 
 		fmt.Fprint(conn, "Password: ")
-		passLine, err := readLineLimited(reader, maxLineLen)
+		password, err := t.readTelnetField(conn, reader, sess)
 		if err != nil {
 			sess.setReadOutcome(err)
 			return
 		}
-		password := strings.TrimSpace(passLine)
 
 		sess.Cred(ctx, t.metrics, username, password)
 
@@ -62,4 +60,22 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 
 		fmt.Fprint(conn, "\r\nLogin incorrect\r\n")
 	}
+}
+
+// readTelnetField reads one input line, answers its option negotiation and
+// returns the text without IAC sequences. The terminal type, if reported, is
+// logged as a probe event.
+func (t *TelnetTrap) readTelnetField(conn net.Conn, reader *bufio.Reader, sess *Session) (string, error) {
+	line, err := readLineLimited(reader, maxLineLen)
+	if err != nil {
+		return "", err
+	}
+	clean, replies, ttype := parseTelnetIAC([]byte(line))
+	if len(replies) > 0 {
+		_, _ = conn.Write(replies)
+	}
+	if ttype != "" {
+		sess.Log("telnet_terminal_type", slog.String("terminal_type", ttype))
+	}
+	return strings.TrimSpace(string(clean)), nil
 }

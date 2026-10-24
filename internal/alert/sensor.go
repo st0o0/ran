@@ -125,7 +125,7 @@ func (s *Sensor) touchScan(info SessionInfo) bool {
 	if !ok {
 		return false
 	}
-	return s.scan.Touch(addr.String(), info.Protocol)
+	return s.scan.TouchPort(addr.String(), info.Protocol, info.DestPort)
 }
 
 // Ignored reports whether ip is in the ignore list. IPv4-mapped IPv6 addresses

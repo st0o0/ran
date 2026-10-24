@@ -24,6 +24,7 @@ func postgresTestConfig(t *testing.T) *config.Config {
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
+		MaxAuthRetries: 1,
 	}
 }
 

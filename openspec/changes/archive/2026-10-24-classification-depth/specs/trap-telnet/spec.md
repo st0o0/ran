@@ -11,6 +11,10 @@ The Telnet trap SHALL parse IAC sequences in the input, answer `DO` with `WONT` 
 - **WHEN** the input ends inside an IAC sequence
 - **THEN** the sequence is dropped and the session ends normally
 
+#### Scenario: Reply bound
+- **WHEN** a line carries more options than fit in 192 bytes of replies
+- **THEN** the surplus options are dropped without an answer
+
 ### Requirement: Terminal type
 If a client reports a terminal type via subnegotiation, the trap SHALL log it bounded to 64 bytes.
 

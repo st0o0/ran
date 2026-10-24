@@ -1,6 +1,7 @@
 package trap
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -49,10 +50,60 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		return
 	}
 
-	username, password := parseHandshakeResponse(response, challenge)
-	sess.Cred(ctx, t.metrics, username, password)
+	maxRetries := t.cfg.ResolveMaxAuthRetries("mysql")
+	authDelay := t.cfg.ResolveAuthDelay("mysql")
 
-	_, _ = conn.Write(buildErrPacket(2, 1045, "28000", "Access denied for user '"+username+"'"))
+	username, password := parseHandshakeResponse(response, challenge)
+	seq := byte(1) // sequence number of the last packet received
+	for attempt := 0; ; attempt++ {
+		sess.Cred(ctx, t.metrics, username, password)
+
+		if authDelay > 0 {
+			if err := authSleep(ctx, authDelay, attempt); err != nil {
+				sess.SetOutcome("timeout")
+				return
+			}
+		}
+
+		if maxRetries != 0 && attempt+1 >= maxRetries {
+			_, _ = conn.Write(buildErrPacket(seq+1, 1045, "28000", "Access denied for user '"+username+"'"))
+			return
+		}
+
+		// Ask for another password with an authentication switch to
+		// mysql_clear_password; the client answers with the password and a NUL.
+		if _, err := conn.Write(buildAuthSwitchRequest(seq + 1)); err != nil {
+			setOutcome(sess, err)
+			return
+		}
+		reply, err := readMySQLPacket(conn)
+		if err != nil {
+			sess.setReadOutcome(err)
+			return
+		}
+		seq += 2
+		password = parseAuthSwitchReply(reply)
+	}
+}
+
+// buildAuthSwitchRequest asks the client to authenticate again with
+// mysql_clear_password.
+func buildAuthSwitchRequest(seq byte) []byte {
+	payload := append([]byte{0xFE}, "mysql_clear_password\x00"...)
+	return wrapMySQLPacket(seq, payload)
+}
+
+// maxMySQLPassword bounds a password taken from an authentication switch reply.
+const maxMySQLPassword = 4096
+
+// parseAuthSwitchReply returns the clear text password of an authentication
+// switch reply: the packet without its trailing NUL, cut to maxMySQLPassword.
+func parseAuthSwitchReply(data []byte) string {
+	data = bytes.TrimSuffix(data, []byte{0})
+	if len(data) > maxMySQLPassword {
+		data = data[:maxMySQLPassword]
+	}
+	return string(data)
 }
 
 func buildGreeting(connID uint32, challenge []byte) []byte {

@@ -47,22 +47,37 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn, sess *Session)
 
 	username := parsePgStartupParams(startup)
 
-	var auth [9]byte
-	auth[0] = 'R'
-	binary.BigEndian.PutUint32(auth[1:5], 8)
-	binary.BigEndian.PutUint32(auth[5:9], 3)
-	if _, err := conn.Write(auth[:]); err != nil {
-		setOutcome(sess, err)
-		return
-	}
+	maxRetries := t.cfg.ResolveMaxAuthRetries("postgres")
+	authDelay := t.cfg.ResolveAuthDelay("postgres")
 
-	password, err := readPgPasswordMessage(conn)
-	if err != nil {
-		setOutcome(sess, err)
-		return
-	}
+	for attempt := 0; maxRetries == 0 || attempt < maxRetries; attempt++ {
+		// AuthenticationCleartextPassword. A rejected password is followed by a
+		// new request on the same connection (no error in between), so a client
+		// that keeps sending password messages can try several passwords.
+		var auth [9]byte
+		auth[0] = 'R'
+		binary.BigEndian.PutUint32(auth[1:5], 8)
+		binary.BigEndian.PutUint32(auth[5:9], 3)
+		if _, err := conn.Write(auth[:]); err != nil {
+			sess.setReadOutcome(err)
+			return
+		}
 
-	sess.Cred(ctx, t.metrics, username, password)
+		password, err := readPgPasswordMessage(conn)
+		if err != nil {
+			sess.setReadOutcome(err)
+			return
+		}
+
+		sess.Cred(ctx, t.metrics, username, password)
+
+		if authDelay > 0 {
+			if err := authSleep(ctx, authDelay, attempt); err != nil {
+				sess.SetOutcome("timeout")
+				return
+			}
+		}
+	}
 
 	errMsg := fmt.Sprintf("password authentication failed for user \"%s\"", username)
 	writePgErrorResponse(conn, errMsg)

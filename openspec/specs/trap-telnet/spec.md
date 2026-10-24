@@ -1,9 +1,7 @@
 ## Purpose
 
 Telnet honeypot trap that simulates a Telnet login service to capture unauthorized access attempts and credential harvesting.
-
 ## Requirements
-
 ### Requirement: Telnet login prompt and credential capture
 The Telnet trap SHALL listen on TCP, present a login prompt, capture username and password, log the credentials, display "Login incorrect", and repeat up to the resolved max auth retries. The session timeout SHALL use the resolved value for Telnet (global default or `RAN_TELNET_SESSION_TIMEOUT` override).
 
@@ -37,3 +35,26 @@ The Telnet handler SHALL apply the resolved auth delay for Telnet before sending
 #### Scenario: No delay when disabled
 - **WHEN** `RAN_AUTH_DELAY` is not set (default 0s)
 - **THEN** "Login incorrect" SHALL be sent immediately after credential capture
+
+### Requirement: Option negotiation
+The Telnet trap SHALL parse IAC sequences in the input, answer `DO` with `WONT` and `WILL` with `DONT`, and SHALL NOT pass IAC bytes into the username or password.
+
+#### Scenario: Mirai-style client
+- **WHEN** a client sends `FF FB 18` followed by `root\r\n`
+- **THEN** the username is `root` and a `DONT` reply for the option was sent
+
+#### Scenario: Truncated sequence
+- **WHEN** the input ends inside an IAC sequence
+- **THEN** the sequence is dropped and the session ends normally
+
+#### Scenario: Reply bound
+- **WHEN** a line carries more options than fit in 192 bytes of replies
+- **THEN** the surplus options are dropped without an answer
+
+### Requirement: Terminal type
+If a client reports a terminal type via subnegotiation, the trap SHALL log it bounded to 64 bytes.
+
+#### Scenario: TTYPE reply
+- **WHEN** a client sends `IAC SB TTYPE IS xterm IAC SE`
+- **THEN** `xterm` is logged as the terminal type
+
