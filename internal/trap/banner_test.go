@@ -22,6 +22,7 @@ type bannerEnv struct {
 	logs    *syncBuffer
 	metrics *metrics.Metrics
 	reg     *prometheus.Registry
+	trap    *BannerTrap
 }
 
 func bannerConfig(services ...config.BannerService) *config.Config {
@@ -61,7 +62,7 @@ func startBanner(t *testing.T, cfg *config.Config, ignore ...string) bannerEnv {
 	for _, a := range tr.Addrs() {
 		addrs = append(addrs, a.String())
 	}
-	return bannerEnv{addrs: addrs, sink: sink, logs: logs, metrics: m, reg: reg}
+	return bannerEnv{addrs: addrs, sink: sink, logs: logs, metrics: m, reg: reg, trap: tr}
 }
 
 func svc(name, banner string) config.BannerService {
@@ -318,5 +319,62 @@ func TestBannerIgnoredSourceNeverAlerts(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if evs := env.sink.snapshot(); len(evs) != 0 {
 		t.Errorf("ignored banner source produced events: %+v", evs)
+	}
+}
+
+// A client that connects and never reads or writes must not hold the session
+// past its deadline or block shutdown. The 256 byte banner always fits in the
+// loopback socket buffers, so the write itself cannot be made to block here; the
+// test covers the session deadline and Stop with an idle, non-reading peer.
+func TestBannerNonReadingClientDoesNotBlockShutdown(t *testing.T) {
+	t.Parallel()
+	cfg := bannerConfig(svc("custom", strings.Repeat("B", config.MaxBannerBytes)))
+	cfg.SessionTimeout = 300 * time.Millisecond
+	env := startBanner(t, cfg)
+	c := dialTrap(t, env.addrs[0])
+	_ = c // never read, never write
+
+	start := time.Now()
+	waitFor(t, func() bool { return counterVal(t, env.metrics.Connections, "banner", "probe") == 1 })
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("session lasted %v, want about the 300ms deadline", d)
+	}
+
+	// A second idle client is still open when Stop is called.
+	c2 := dialTrap(t, env.addrs[0])
+	_ = c2
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start = time.Now()
+	if err := env.trap.Stop(ctx); err != nil {
+		t.Errorf("Stop: %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("Stop took %v", d)
+	}
+}
+
+func TestBannerSecretHeadersFollowPasswordMode(t *testing.T) {
+	defer SetPasswordLogMode("off")
+	for _, tc := range []struct{ mode, want string }{
+		{"off", "Authorization:"},
+		{"mask", "Authorization: *** (14)"},
+		{"on", "Authorization: Basic c2VjcmV0"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			SetPasswordLogMode(tc.mode)
+			env := startBanner(t, bannerConfig(svc("custom", "hi\n")))
+			c := dialTrap(t, env.addrs[0])
+			if _, err := c.Write([]byte("Authorization: Basic c2VjcmV0\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			line := waitLog(t, env.logs, func(m map[string]any) bool { return m["action"] == "command" })
+			if line["command"] != tc.want {
+				t.Errorf("command = %q, want %q", line["command"], tc.want)
+			}
+			if tc.mode != "on" && strings.Contains(env.logs.String(), "c2VjcmV0") {
+				t.Errorf("secret in log: %s", env.logs.String())
+			}
+		})
 	}
 }

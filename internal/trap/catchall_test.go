@@ -3,11 +3,14 @@ package trap
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -152,7 +155,8 @@ func waitLog(t *testing.T, logs *syncBuffer, pred func(map[string]any) bool) map
 }
 
 func TestCatchallLogsFirst256BytesOfLargerSend(t *testing.T) {
-	t.Parallel()
+	SetPasswordLogMode("on")
+	t.Cleanup(func() { SetPasswordLogMode("off") })
 	env := startCatchall(t, 2*time.Second, catchallConfig("127.0.0.1:0", 5*time.Second, 10))
 	data := append([]byte{0x16, 0x03, 0x01}, bytes.Repeat([]byte{'A'}, 297)...) // 300 bytes
 	c := dialTrap(t, env.addr)
@@ -185,7 +189,7 @@ func TestCatchallLogsFirst256BytesOfLargerSend(t *testing.T) {
 			meta = e.Meta
 		}
 	}
-	if meta["sniffed_protocol"] != "tls" || meta["bytes"] != "256" {
+	if want := map[string]string{"sniffed_protocol": "tls", "bytes": "256"}; !maps.Equal(meta, want) {
 		t.Errorf("alert meta = %v", meta)
 	}
 	if got := counterVal(t, env.metrics.Connections, "catchall", "completed"); got != 1 {
@@ -399,5 +403,67 @@ func TestCatchallIgnoredSourceNeverAlerts(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if evs := sink.snapshot(); len(evs) != 0 {
 		t.Errorf("ignored source produced events: %+v", evs)
+	}
+}
+
+// The raw bytes reach the log only in mode "on". The alert meta never carries
+// them in any mode and holds exactly the label and the byte count.
+func TestCatchallLogsFollowPasswordMode(t *testing.T) {
+	secret := "hunter2-secret-token"
+	data := []byte("GET / HTTP/1.1\r\nAuthorization: Basic " + secret + "\r\n\r\n")
+	sum := sha256.Sum256(data)
+	prefix := hex.EncodeToString(sum[:])[:8]
+	masked := "*** (" + strconv.Itoa(len(data)) + ")"
+	defer SetPasswordLogMode("off")
+
+	for _, mode := range []string{"off", "mask", "on"} {
+		t.Run(mode, func(t *testing.T) {
+			SetPasswordLogMode(mode)
+			env := startCatchall(t, 2*time.Second, catchallConfig("127.0.0.1:0", 5*time.Second, 10))
+			c := dialTrap(t, env.addr)
+			if _, err := c.Write(data); err != nil {
+				t.Fatal(err)
+			}
+			line := waitLog(t, env.logs, func(m map[string]any) bool { return m["action"] == "payload" })
+			evs := env.sink.waitEvents(t, func(e []alert.Event) bool { return hasClass(e, alert.ClassAttack) })
+			for _, e := range evs {
+				if e.Class != alert.ClassAttack {
+					continue
+				}
+				want := map[string]string{"sniffed_protocol": "http", "bytes": strconv.Itoa(len(data))}
+				if !maps.Equal(e.Meta, want) {
+					t.Errorf("alert meta = %v, want exactly %v", e.Meta, want)
+				}
+			}
+			all := env.logs.String()
+			switch mode {
+			case "on":
+				if line["hex"] != hex.EncodeToString(data) || !strings.Contains(line["text"].(string), secret) {
+					t.Errorf("mode on: line = %v", line)
+				}
+			default:
+				for _, raw := range []string{secret, hex.EncodeToString([]byte(secret)), "Authorization", hex.EncodeToString(data)} {
+					if strings.Contains(all, raw) {
+						t.Errorf("mode %s: %q appears in log %s", mode, raw, all)
+					}
+				}
+				if line["sha256_prefix"] != prefix {
+					t.Errorf("sha256_prefix = %v, want %s", line["sha256_prefix"], prefix)
+				}
+				if line["sniffed_protocol"] != "http" || line["bytes"] != float64(len(data)) {
+					t.Errorf("line = %v", line)
+				}
+				if mode == "off" {
+					if _, ok := line["hex"]; ok {
+						t.Errorf("hex present in mode off: %v", line)
+					}
+					if _, ok := line["text"]; ok {
+						t.Errorf("text present in mode off: %v", line)
+					}
+				} else if line["hex"] != masked || line["text"] != masked {
+					t.Errorf("mode mask: hex/text = %v / %v, want %s", line["hex"], line["text"], masked)
+				}
+			}
+		})
 	}
 }

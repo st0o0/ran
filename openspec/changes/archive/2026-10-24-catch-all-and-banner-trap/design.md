@@ -28,7 +28,7 @@ The trap reads once, at most 256 bytes, with a read deadline of the earlier of 3
 
 Sniffer: fixed positions only, checked in this order: `SSH-` prefix, TLS record (`0x16 0x03 0x00..0x04`), SMB over NetBIOS (`0x00`, then `\xffSMB` or `\xfeSMB` at offset 4), RDP (TPKT `03 00` with an X.224 connection request `0xE0` at offset 5), HTTP method followed by a space (or the HTTP/2 preface). Everything else, including empty input, is `unknown`. A silent connect has no sniff label and no payload event: it is a probe with outcome `probe`.
 
-Raw bytes are logged as hex and as text with every non-printable byte replaced by `.`. The first 256 bytes can contain a secret (for example an HTTP Authorization header), and unlike the credential logs they are not subject to `RAN_LOG_PASSWORDS`; the alert meta only carries the label and the byte count, never the bytes.
+Raw bytes are logged according to `RAN_LOG_PASSWORDS` (this replaces the earlier decision to log them always). The first 256 bytes can contain a secret (an HTTP Authorization or Cookie header, FTP/SMTP/Redis AUTH, a database handshake), so: `off` (default) logs only `sniffed_protocol`, `bytes` and `sha256_prefix` (the first 8 hex characters of the SHA-256 of the captured bytes, enough to correlate repeated payloads); `mask` additionally logs `hex` and `text` as `*** (<length>)`, the same form as masked passwords, with the length in bytes; `on` logs `hex` and `text` (non-printable bytes shown as `.`) and no hash. The mode comes from the package level password mode set from `cfg.LogPasswords`, like every other trap. The alert meta is exactly `{sniffed_protocol, bytes}` in every mode and never carries bytes.
 
 ### 5. Banner input
 
@@ -37,3 +37,11 @@ Lines are read with the bounded line reader (512 bytes, at most 100 lines per co
 ### 6. Scan detection
 
 No code change in `internal/alert`: the sensor already counts `info.Protocol` and `info.DestPort`, and the skeleton fills `DestPort` from `conn.LocalAddr()` (the real socket, also under PROXY protocol, which only replaces the remote address). The fixed protocol names `catchall` and `banner` count as two protocols; distinct catch-all or banner ports count towards the port rule.
+
+### 7. Banner client lines and secrets
+
+Banner lines are logged as commands, so the existing command redaction applies: `LogCommand` hides the arguments of the credential verbs and markers that the other traps know (`USER`/`PASS` style verbs, `AUTH`, `IDENTIFY`, and so on) according to `RAN_LOG_PASSWORDS`. A banner service can imitate an HTTP-like protocol, so the banner trap additionally hides the value of `Authorization`, `Proxy-Authorization` and `Cookie` lines in the same way (`off` drops the value, `mask` shows `*** (<length>)`, `on` keeps it). The lines are not hashed or blanked as a whole: the command text of a custom service is the data the trap exists to collect, and blanking it would make the trap useless. Limit: a secret in a custom protocol that uses none of these verbs or headers cannot be recognized and is logged; the same limit applies to every other command trap. Overlong lines are never logged (only their size). The alert meta (`command`, `service`) carries only the first token of the first line.
+
+### 8. Non-reading clients
+
+A banner is at most 256 bytes and is written before any read, so it always fits in the socket buffers and the write cannot block on a peer that never reads. Every connection also has the session deadline, so a client that neither reads nor writes ends as a `probe` at `RAN_BANNER_SESSION_TIMEOUT`, and `Stop` closes any live connection. A test covers this; the buffer limit cannot be reached with 256 bytes on loopback, so the write blocking path itself is not exercised.

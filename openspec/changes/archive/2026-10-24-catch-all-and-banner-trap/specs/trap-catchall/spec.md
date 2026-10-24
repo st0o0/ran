@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: First byte capture
-The `catchall` trap SHALL accept TCP connections on the ports configured in `RAN_CATCHALL_ADDR`, wait for the first bytes up to a read window of 3 seconds (never longer than the session timeout), read once and log at most 256 bytes as hex and sanitized printable text. Bytes beyond the 256th SHALL NOT be read or stored.
+The `catchall` trap SHALL accept TCP connections on the ports configured in `RAN_CATCHALL_ADDR`, wait for the first bytes up to a read window of 3 seconds (never longer than the session timeout), read once and capture at most 256 bytes. Bytes beyond the 256th SHALL NOT be read or stored. The log SHALL contain `sniffed_protocol`, `bytes` and `sha256_prefix` (first 8 hex characters of the SHA-256 of the captured bytes) in every mode. The captured bytes as hex and sanitized printable text SHALL be logged only when `RAN_LOG_PASSWORDS` is `on`; when it is `mask`, hex and text SHALL be logged as `*** (<length>)`; when it is `off` (default) they SHALL be omitted. The alert meta SHALL contain exactly `sniffed_protocol` and `bytes`.
 
 #### Scenario: Client sends data
 - **WHEN** a client sends 300 bytes
-- **THEN** 256 bytes are logged, the rest is never stored and the session is classified `attack`
+- **THEN** 256 bytes are captured (hex and text logged only with `RAN_LOG_PASSWORDS=on`), the rest is never stored and the session is classified `attack`
 
 #### Scenario: Silent connect
 - **WHEN** a client connects and sends nothing until the read window ends, or closes without sending
@@ -36,3 +36,11 @@ The trap SHALL NOT respond with protocol data, SHALL close after the first read,
 #### Scenario: Port spray
 - **WHEN** one source sends data to five distinct catch-all ports within the scan window
 - **THEN** the session is classified `scan`
+
+#### Scenario: Default password mode
+- **WHEN** `RAN_LOG_PASSWORDS` is `off` and a client sends an HTTP request with an Authorization header
+- **THEN** neither the raw bytes nor their hex or text appear in the log, and the log line holds only `sniffed_protocol`, `bytes` and `sha256_prefix`
+
+#### Scenario: Mask mode
+- **WHEN** `RAN_LOG_PASSWORDS` is `mask`
+- **THEN** `hex` and `text` are logged as `*** (<length>)` and the raw bytes do not appear

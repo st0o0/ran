@@ -3,8 +3,10 @@ package trap
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -75,9 +77,40 @@ func printableText(b []byte) string {
 	return string(out)
 }
 
+// catchallDataAttrs returns the log attributes that describe the captured
+// bytes, according to RAN_LOG_PASSWORDS. The first bytes can carry a secret
+// (HTTP Authorization or Cookie, FTP/SMTP/Redis AUTH, a database handshake), so
+// the raw bytes are only logged in mode "on". In mode "mask" hex and text are
+// replaced by "*** (<length>)", the same form as masked passwords; in mode "off"
+// (default) they are omitted. Both modes add the first 8 hex characters of the
+// SHA-256 of the bytes, which lets repeated payloads be correlated.
+func catchallDataAttrs(data []byte) []slog.Attr {
+	switch passwordMode.Load() {
+	case passwordsOn:
+		return []slog.Attr{
+			slog.String("hex", hex.EncodeToString(data)),
+			slog.String("text", printableText(data)),
+		}
+	case passwordsMask:
+		masked := fmt.Sprintf("*** (%d)", len(data))
+		return []slog.Attr{
+			slog.String("hex", masked),
+			slog.String("text", masked),
+			slog.String("sha256_prefix", sha256Prefix(data)),
+		}
+	default:
+		return []slog.Attr{slog.String("sha256_prefix", sha256Prefix(data))}
+	}
+}
+
+func sha256Prefix(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:8]
+}
+
 // CatchallTrap accepts TCP connections on operator chosen ports (no default
-// port), reads the first bytes once and logs them with a protocol guess. It never
-// sends data back.
+// port), reads the first bytes once and logs them (subject to RAN_LOG_PASSWORDS)
+// with a protocol guess. It never sends data back.
 type CatchallTrap struct {
 	*tcpServer
 	readWindow time.Duration
@@ -111,12 +144,11 @@ func (t *CatchallTrap) handle(ctx context.Context, conn net.Conn, sess *Session)
 
 	data := buf[:n]
 	label := sniffProtocol(data)
-	sess.LogPayloadSize("catchall", n,
+	attrs := append([]slog.Attr{
 		slog.String("sniffed_protocol", label),
 		slog.Int("bytes", n),
-		slog.String("hex", hex.EncodeToString(data)),
-		slog.String("text", printableText(data)),
-	)
+	}, catchallDataAttrs(data)...)
+	sess.LogPayloadSize("catchall", n, attrs...)
 	sess.Alert(ctx, map[string]string{
 		"sniffed_protocol": label,
 		"bytes":            strconv.Itoa(n),

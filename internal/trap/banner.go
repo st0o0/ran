@@ -126,7 +126,7 @@ func bannerHandler(svc config.BannerService) tcpHandler {
 				sess.SetOutcome(outcomeTooLong)
 				return
 			}
-			if cmd := strings.TrimSpace(sanitizeHTTPValue(line)); cmd != "" {
+			if cmd := redactSecretHeader(strings.TrimSpace(sanitizeHTTPValue(line))); cmd != "" {
 				sess.LogCommand(cmd, slog.String("service", name))
 				if !alerted {
 					alerted = true
@@ -145,4 +145,23 @@ func bannerHandler(svc config.BannerService) tcpHandler {
 			}
 		}
 	}
+}
+
+// secretHeaders are header names whose value is a credential. A banner service
+// may imitate an HTTP-like protocol, so these lines are treated like the
+// credential verbs of the other traps (see redactCommand).
+var secretHeaders = map[string]bool{"authorization:": true, "proxy-authorization:": true, "cookie:": true}
+
+// redactSecretHeader hides the value of a credential header according to
+// RAN_LOG_PASSWORDS (on keeps it, mask shows its length, off drops it). Other
+// lines pass through; LogCommand still hides known credential verbs.
+func redactSecretHeader(line string) string {
+	if passwordMode.Load() == passwordsOn {
+		return line
+	}
+	fields := strings.Fields(line)
+	if len(fields) >= 2 && secretHeaders[strings.ToLower(fields[0])] {
+		return redactTail(fields, 1)
+	}
+	return line
 }

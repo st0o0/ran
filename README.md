@@ -195,8 +195,8 @@ refuses to start with either enabled and no address.
 
 | Name | Port | Captures |
 |---|---|---|
-| `catchall` | none (`RAN_CATCHALL_ADDR`) | Accepts a TCP connection on any port you route to it, waits up to 3 seconds (never longer than the session timeout) for the first bytes and logs at most 256 of them as hex and printable text. The bytes are labeled `tls`, `http`, `smb`, `ssh`, `rdp` or `unknown` (`sniffed_protocol`, also in the alert meta). It never sends anything back. Any received byte makes the session an `attack`; a connect that stays silent is a `probe` |
-| `banner` | none (`RAN_BANNER_SERVICES`) | Sends a configured banner on connect, then reads client lines (512 bytes) and logs them as commands, so the session is an `attack`. A connect without data is a `probe`. The configured service name only appears in the log and the alert meta (`service`) |
+| `catchall` | none (`RAN_CATCHALL_ADDR`) | Accepts a TCP connection on any port you route to it, waits up to 3 seconds (never longer than the session timeout) for the first bytes and captures at most 256 of them. What is logged depends on `RAN_LOG_PASSWORDS`: `off` (default) logs only the label, the byte count and `sha256_prefix` (first 8 hex characters of the SHA-256), `mask` adds `hex` and `text` as `*** (<length>)`, `on` logs the bytes as hex and printable text. The alert meta never carries bytes. The bytes are labeled `tls`, `http`, `smb`, `ssh`, `rdp` or `unknown` (`sniffed_protocol`, also in the alert meta). It never sends anything back. Any received byte makes the session an `attack`; a connect that stays silent is a `probe` |
+| `banner` | none (`RAN_BANNER_SERVICES`) | Sends a configured banner on connect, then reads client lines (512 bytes) and logs them as commands (values of `Authorization`, `Proxy-Authorization` and `Cookie` lines and the arguments of credential verbs like `PASS` or `AUTH` follow `RAN_LOG_PASSWORDS`; other content of a custom protocol is logged as sent), so the session is an `attack`. A connect without data is a `probe`. The configured service name only appears in the log and the alert meta (`service`) |
 
 ### UDP
 
@@ -339,7 +339,7 @@ session timeout restarts for the handshake.
 |---|---|---|
 | `RAN_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
 | `RAN_LOG_FORMAT` | `json` | Log format: json, text |
-| `RAN_LOG_PASSWORDS` | `off` | Password field in credential logs: `off` (omitted), `mask` (`*** (<length>)`), `on` (cleartext) |
+| `RAN_LOG_PASSWORDS` | `off` | Password field in credential logs: `off` (omitted), `mask` (`*** (<length>)`), `on` (cleartext). Also gates the raw `catchall` bytes (`hex`, `text`) and credential lines of the `banner` trap |
 
 Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
