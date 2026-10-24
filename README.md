@@ -35,26 +35,50 @@ services:
 
 ## Why rán?
 
-There are already good honeypots out there. The reason I built rán:
+There are good honeypots out there, and they answer different questions. rán is
+built for one job: be a cheap, hardened **sensor** whose alerts a CrowdSec
+profile can act on.
 
-- **T-Pot** is excellent if you have a dedicated server, but it's 31 Docker
-  containers, an ELK stack, and 8+ GB RAM. Too heavy for running alongside
-  production services.
-- **qeeqbox/honeypots** has broad protocol coverage in Python, but it needs a
-  Python runtime and pip, and doesn't integrate with CrowdSec.
+| | Cowrie | OpenCanary | qeeqbox/honeypots | T-Pot | Beelzebub | rán |
+|---|---|---|---|---|---|---|
+| Language / runtime | Python 3.11+ | Python 3.10+ | Python (pip) | Docker Compose stack | Go | Go, static binary |
+| Focus | Interactive SSH/Telnet shell | Tripwire for internal networks | Many protocol servers | Platform of many honeypots | Deception framework, optional LLM | Sensor for blocklists |
+| Protocols | SSH, Telnet (SFTP/SCP) | multi-protocol, list not verified | 29 modules | 31 honeypots listed | SSH, HTTP, TCP, Telnet, MCP | 29 stubs |
+| Post-login shell, file capture | yes | no | no | via Cowrie, Dionaea | optional LLM shell | no (by design) |
+| CrowdSec | log parsing via the Hub | none found | none found | none found | none found | native LAPI alerts, classified |
+| Footprint | Python process | Python process | Python process | 8 GB (sensor) to 16 GB (hive) RAM | Go binary | about 13 MB working set idle, all 29 traps |
+| Prometheus metrics | no | no | no | via the stack | optional | built in |
+| Licence | see repo | BSD-3 | AGPL-3.0 | GPL-3.0 | GPL-3.0 | MIT |
 
-rán does one thing: catch probes, log them, report the source to CrowdSec. Single static Go
-binary, no shell, no runtime, just protocol stubs and a CrowdSec LAPI client.
+Read from the projects' own READMEs in October 2026; check them for current
+details. "None found" means the README does not mention it. The memory figure
+for rán was measured on Windows with all 29 traps enabled and no traffic.
 
-| | T-Pot | qeeqbox/honeypots | rán |
-|---|:---:|:---:|:---:|
-| Single binary / container | 31 containers | Python + deps | yes |
-| Protocol coverage | 31 honeypots | 30 protocols | 29 protocols |
-| RAM | 8+ GB | ~500 MB | ~20 MB idle |
-| CrowdSec | via log parser | no | native LAPI push |
-| Selective traps | edition-based | yes | yes |
-| External deps | Docker Compose stack | Python, pip | none (static binary) |
-| Prometheus metrics | via ELK | no | native |
+What rán does better:
+
+- **Alert quality.** Every TCP session is classified as `probe`, `attack` or
+  `scan`, repeated alerts per source are limited by a cooldown, and alerts carry
+  no decisions, so CrowdSec profiles can escalate bans per class and per repeat
+  offender.
+- **Hardened by design.** The alert identity is always the socket peer, UDP traps
+  never alert (spoofable), every read is bounded, passwords never leave the host,
+  and the parsers are fuzzed.
+- **Small and easy to run.** One static binary, environment-variable config,
+  `check-config`, a health endpoint and Prometheus metrics.
+
+What rán deliberately does not do, and where to look instead:
+
+- **No interactive session.** There is no shell, no filesystem emulation, no file
+  download or upload capture and no LLM. To study what attackers type after they
+  log in, use Cowrie, Beelzebub or T-Pot.
+- **Stubs, not servers.** Most traps handle one handshake and return a plausible
+  error. Depth varies by protocol (see [Traps](#traps)).
+- **Not stealthy.** Banners are generic; a determined attacker can fingerprint any
+  honeypot (see [Threat model](#threat-model)).
+
+Use rán to turn internet-facing probes into CrowdSec bans on a small host. Choose
+or add another honeypot when you want attacker behavior, malware samples or an
+internal tripwire.
 
 ## Quick start
 
@@ -87,8 +111,11 @@ attacker connects ──▶ protocol handshake ──▶ credential / command / 
 ```
 
 Each trap emulates just enough protocol to complete the handshake, grab the
-interesting data, and return a plausible error. No interactive sessions,
-no filesystem emulation. This keeps the attack surface of the honeypot minimal.
+interesting data, and return a plausible error. What is captured depends on the
+protocol: credentials for the login protocols, commands for line protocols such
+as Redis or IMAP, and payload metadata for binary protocols. There is no
+post-login session (no shell for `ssh` or `telnet`) and no filesystem emulation,
+which keeps the attack surface of the honeypot minimal.
 
 ## Traps
 
@@ -96,7 +123,7 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `ssh` | `:2222` | Credentials (OpenSSH banner, password auth only) |
+| `ssh` | `:2222` | Credentials (OpenSSH banner, password auth only; public-key and keyboard-interactive attempts are rejected without being logged) |
 | `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session |
 | `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response |
 | `telnet` | `:23` | Credentials (login/password prompts) |
@@ -205,6 +232,9 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 
 ### Authentication behavior and PROXY protocol
 
+<details>
+<summary>Retries, delays, SSH tarpit and PROXY protocol</summary>
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `RAN_MAX_AUTH_RETRIES` | `3` | Credential attempts per session before the trap disconnects (`0` = unlimited until the session timeout). Honored only by `ssh`, `telnet`, `mssql` and `smb` (see below) |
@@ -238,6 +268,8 @@ timeout (the defaults are both `30s`), it stops slightly before the session
 deadline and the session ends with outcome `timeout`. With a shorter tarpit the
 session timeout restarts for the handshake.
 
+</details>
+
 ### Logging
 
 | Variable | Default | Purpose |
@@ -249,6 +281,9 @@ session timeout restarts for the handshake.
 Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
 ### Limits
+
+<details>
+<summary>Session, rate and input limits</summary>
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -291,7 +326,12 @@ within the remaining time (at most 5 seconds, with one last attempt if the
 LAPI was failing). If every trap exits on its own while nothing asked to stop,
 `ran` logs an error and exits with code 1 so the runtime restarts it.
 
+</details>
+
 ### Metrics
+
+<details>
+<summary>Exposed metrics</summary>
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -316,6 +356,8 @@ runtime and process collectors:
 - `ran_crowdsec_push_errors_total`: failed LAPI pushes (transport errors, non-2xx answers and failed re-logins after a 401)
 - `ran_crowdsec_queue_length`: alerts waiting in the send queue
 - `ran_crowdsec_pipeline_total{protocol,stage}`: CrowdSec alert pipeline events. Stages: `received`, `invalid` (rejected source address), `closed` (raised after shutdown), `filtered` (class not in `RAN_BAN_ON`), `cooldown` (within `RAN_ALERT_COOLDOWN`), `queued`, `dropped`, `sent`, `failed`, `released` (cooldown slot freed after a failed push, so the source is reported again). The 0.3.x stages `cached` and `deduplicated` no longer exist. Per-class counts are not a label (cardinality); the class is in the alert meta and the logs.
+
+</details>
 
 ### CrowdSec
 
@@ -342,6 +384,9 @@ Without a profile nothing is banned.
 `RAN_CROWDSEC_DEDUP_WINDOW` were removed in 0.4.0. They are ignored; rán logs a
 one-time warning at startup if one is still set.
 
+<details>
+<summary>Delivery, failures and memory sizing</summary>
+
 **Delivery and failures.** On startup `ran` logs in to the LAPI; if that first
 login fails, `ran` exits with code 1. Later outages are handled at runtime: alerts
 wait in a queue of 256 (more are dropped and counted), a failed push pauses the
@@ -362,7 +407,12 @@ the container memory limit for the cap you choose, and set `GOMEMLIMIT` to about
 percent of the container limit (for example `GOMEMLIMIT=100MiB` for a 128 MB limit)
 so the garbage collector works harder before the kernel OOM-kills the process.
 
+</details>
+
 #### Classification
+
+<details>
+<summary>Classes, scan detection and alert payload</summary>
 
 | Class | Meaning |
 |---|---|
@@ -409,7 +459,12 @@ plain GET requests without a body and Minecraft server-list pings. Per-trap
 tuning for single-request protocols (a modbus request, an ADB CONNECT) is a
 planned follow-up.
 
+</details>
+
 #### Logging of probes
+
+<details>
+<summary>Probe log summaries</summary>
 
 TCP probe sessions are not logged one by one. Per source IP and
 `RAN_PROBE_SUMMARY_WINDOW` rán writes one summary line
@@ -419,7 +474,12 @@ triggers a scan alert is still summarized in the logs. UDP sessions are never
 summarized: they always log `connect` and `disconnect` lines. The `ran_*`
 metrics are still updated per session, so dashboards are unaffected.
 
+</details>
+
 #### Alert pipeline
+
+<details>
+<summary>Pipeline, cooldown and address validation</summary>
 
 ```
 trap session ──▶ Classify (probe / attack / scan) ──▶ Alert pipeline ──▶ POST /v1/alerts
@@ -480,6 +540,10 @@ connect directly choose the source address ran reports, so any public IP can be
 reported and then banned. A source allowlist for trusted proxies is a possible
 future change.
 
+</details>
+
+#### Connecting rán to CrowdSec
+
 Register the machine before starting rán:
 
 ```bash
@@ -509,6 +573,9 @@ services:
 ```
 
 #### Escalation with CrowdSec profiles
+
+<details>
+<summary>Example profiles and ban escalation</summary>
 
 CrowdSec evaluates `profiles.yaml` only for alerts that carry no decisions,
 which is exactly what rán sends. Select on the class with the **event** form
@@ -576,7 +643,12 @@ cscli alerts list
 cscli decisions list -o json
 ```
 
+</details>
+
 #### CrowdSec behaviors to know
+
+<details>
+<summary>CAPI sharing, allowlists and alert history</summary>
 
 - **No profile, no ban.** rán logs a startup line stating that it does not ban by itself.
 - **Escalation memory is the alert history.** `GetDecisionsCount` counts the
@@ -598,7 +670,12 @@ cscli decisions list -o json
   dropped by CrowdSec and not stored.
 - **Machine credentials stay required** (`cscli machines add`).
 
+</details>
+
 #### Migrating from 0.3.x
+
+<details>
+<summary>Upgrade notes</summary>
 
 1. Add the example `profiles.yaml` (or an equivalent) to CrowdSec and reload it.
    Without a profile, 0.4.0 bans nothing.
@@ -635,6 +712,8 @@ Also user-visible: the MySQL banner now reports version `8.0.36`, and the SMTP
 trap identifies itself as `mx.localdomain`, so fingerprints of the old
 banners change.
 
+</details>
+
 ## Threat model
 
 rán is a sensor, not a defense. It exposes deliberately weak fake services and
@@ -656,6 +735,9 @@ reports who touched them; it does not protect the host it runs on.
   hosts.
 
 ### Recommended container settings
+
+<details>
+<summary>Hardened compose example</summary>
 
 The image runs as user `65532` and needs write access only to `/data` (the SSH
 host key). Docker sets `net.ipv4.ip_unprivileged_port_start=0` inside containers, so
@@ -686,7 +768,12 @@ Sizing: memory is dominated by the tracking maps (see *Memory sizing* above) and
 by concurrent sessions (`RAN_MAX_SESSIONS`). Set `GOMEMLIMIT` to about 80
 percent of the container limit.
 
+</details>
+
 ## Log format
+
+<details>
+<summary>Log line format and actions</summary>
 
 Structured JSON to stdout, one line per event:
 
@@ -712,7 +799,12 @@ written for sessions that do something; TCP probe sessions are summarized (see
 [Logging of probes](#logging-of-probes)). UDP traps always log `connect` and
 `disconnect`.
 
+</details>
+
 ## Troubleshooting
+
+<details>
+<summary>Common problems</summary>
 
 **`at least one trap must be enabled`**: set `RAN_TRAPS` to a comma-separated
 list of traps. `ran check-config` validates the whole configuration.
@@ -738,6 +830,8 @@ CrowdSec profile for the `attack` and `scan` classes (see
 
 **High connection volume causing drops**: increase `RAN_MAX_SESSIONS` and
 `RAN_MAX_PER_IP`, or enable only the traps you need.
+
+</details>
 
 ## Development
 
