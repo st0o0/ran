@@ -21,7 +21,6 @@ Docs: the README comparison, positioning section and collapsible reference secti
 |---|---|---|---|---|
 | 5 | `new-scan-targets` | Traps for Docker API 2375, Kubernetes 6443 and 10250, MongoDB 27017; `telnet` default also on 2323. One task per trap (registry, ports and README must change together) | S-M each | audit, T-Pot |
 | 6 | `classification-depth` | Modbus read versus write, ADB continue after AUTH, telnet IAC handling, more than one attempt for mysql, postgres and rdp, scan detection by distinct ports | S-M | audit |
-| 7 | `catch-all-and-banner-trap` | Catch-all TCP trap that logs the first bytes (sniffs TLS, HTTP, SMB) and a configurable banner trap for odd ports | M | T-Pot (Honeytrap), OpenCanary (tcpbanner) |
 | 8 | `mcp-decoy-trap` | Static JSON-RPC over HTTP decoy (`initialize`, `tools/list`, inert bait tools); any `tools/call` is `attack`; all text bounded and sanitized | M | Beelzebub, agent-canary |
 
 ## Later

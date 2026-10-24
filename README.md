@@ -187,6 +187,17 @@ which keeps the attack surface of the honeypot minimal.
 | `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only a SHA-256 is kept: `key_hash` for a public key, `signature_hash` for a signature), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload |
 | `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload |
 
+### Catch-all & banner
+
+These two traps have no default port: they only listen where you tell them to
+(see [Catch-all and banner traps](#catch-all-and-banner-traps)), and `ran`
+refuses to start with either enabled and no address.
+
+| Name | Port | Captures |
+|---|---|---|
+| `catchall` | none (`RAN_CATCHALL_ADDR`) | Accepts a TCP connection on any port you route to it, waits up to 3 seconds (never longer than the session timeout) for the first bytes and logs at most 256 of them as hex and printable text. The bytes are labeled `tls`, `http`, `smb`, `ssh`, `rdp` or `unknown` (`sniffed_protocol`, also in the alert meta). It never sends anything back. Any received byte makes the session an `attack`; a connect that stays silent is a `probe` |
+| `banner` | none (`RAN_BANNER_SERVICES`) | Sends a configured banner on connect, then reads client lines (512 bytes) and logs them as commands, so the session is an `attack`. A connect without data is a `probe`. The configured service name only appears in the log and the alert meta (`service`) |
+
 ### UDP
 
 | Name | Port | Captures |
@@ -233,6 +244,31 @@ Further validation: `RAN_SESSION_TIMEOUT` must be greater than zero;
 per-trap delay overrides must not be negative; `RAN_<PROTO>_SESSION_TIMEOUT` must be
 greater than zero; `RAN_METRICS_ADDR` must be a single `host:port` (no comma list).
 A trailing slash on `RAN_CROWDSEC_URL` is trimmed.
+
+### Catch-all and banner traps
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RAN_CATCHALL_ADDR` | | Required when `catchall` is enabled. Comma-separated listen addresses (`:4444,:6000`), validated like every other `RAN_<PROTO>_ADDR` |
+| `RAN_BANNER_SERVICES` | | Required when `banner` is enabled. Comma-separated `port=name:banner` entries, at most 10 |
+
+`RAN_BANNER_SERVICES` rules: the port is 1 to 65535 and unique, the name uses
+`a-z`, `0-9`, `_` and `-` (at most 32 bytes), and the banner is 1 to 256 bytes
+after escapes. The escapes `\r`, `\n`, `\t`, `\\` and `\,` (a literal comma) are
+interpreted; any other backslash sequence is an error. The first `:` after the
+name starts the banner, so the banner may contain colons. Every problem is
+reported by `ran check-config` with the offending entry.
+
+```bash
+RAN_TRAPS=ssh,catchall,banner
+RAN_CATCHALL_ADDR=:4444,:6000
+RAN_BANNER_SERVICES=9999=custom:hello\r\n,7000=fake-ftp:220 FTP ready\r\n
+```
+
+Routing: `ran` only listens. It does not install iptables or nftables rules, does
+not redirect ports and uses no raw sockets. Publish the ports to the container
+(`-p 4444:4444`) or redirect them on the host yourself; the container image
+exposes no catch-all or banner ports because they have no defaults.
 
 Command line helpers:
 
@@ -364,6 +400,8 @@ Input limits (fixed, not configurable):
 | `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 16 point formats, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
 | `adb` | 4096 bytes of identity data and 4096 bytes per later packet (a longer declared length ends the session), 8 packets after the token, command meta 256 bytes |
 | `rdp` | 1024 bytes per TPKT packet |
+| `catchall` | one read of at most 256 bytes, within a 3 second window (cut to the session timeout); nothing else is read |
+| `banner` | 512 byte lines, at most 100 lines per connection; banners are at most 256 bytes and there are at most 10 services |
 | UDP traps | 4096 bytes per packet (the rest is cut off) |
 
 On SIGTERM or SIGINT the listeners close and live sessions are closed at once

@@ -24,8 +24,16 @@ func TestTrapKeySetsMatch(t *testing.T) {
 		sort.Strings(out)
 		return out
 	}
-	ports := keys(len(config.DefaultPorts), func(f func(string)) {
+	// Every trap has a default port or is addressless (needs its own address
+	// variable); the two sets are disjoint and together are the valid names.
+	ports := keys(len(config.DefaultPorts)+len(config.AddresslessTraps), func(f func(string)) {
 		for k := range config.DefaultPorts {
+			f(k)
+		}
+		for k := range config.AddresslessTraps {
+			if _, dup := config.DefaultPorts[k]; dup {
+				t.Errorf("trap %s is both addressless and has a default port", k)
+			}
 			f(k)
 		}
 	})

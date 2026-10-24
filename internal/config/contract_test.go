@@ -18,8 +18,13 @@ func knownEnvVars(t *testing.T) []string {
 	allTraps := strings.Join(config.ValidTrapNames(), ",")
 	_, err := config.Load(func(name string) string {
 		seen[name] = true
-		if name == "RAN_TRAPS" {
+		switch name {
+		case "RAN_TRAPS":
 			return allTraps
+		case "RAN_CATCHALL_ADDR":
+			return ":4444"
+		case "RAN_BANNER_SERVICES":
+			return "9999=custom:hello\\r\\n"
 		}
 		return ""
 	})

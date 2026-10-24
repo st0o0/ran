@@ -48,9 +48,21 @@ var DefaultPorts = map[string]string{
 	"mongodb":       ":27017",
 }
 
+// AddresslessTraps are traps without a default port: they only make sense on
+// ports the operator chooses. The value is the environment variable that must be
+// set when the trap is enabled. They are valid RAN_TRAPS names and have a
+// trap.Registry entry, but no DefaultPorts entry.
+var AddresslessTraps = map[string]string{
+	"catchall": "RAN_CATCHALL_ADDR",
+	"banner":   "RAN_BANNER_SERVICES",
+}
+
 var ValidTraps = func() map[string]bool {
-	m := make(map[string]bool, len(DefaultPorts))
+	m := make(map[string]bool, len(DefaultPorts)+len(AddresslessTraps))
 	for k := range DefaultPorts {
+		m[k] = true
+	}
+	for k := range AddresslessTraps {
 		m[k] = true
 	}
 	return m
@@ -76,6 +88,10 @@ type ProtoConfig struct {
 type Config struct {
 	Traps []string
 	Addrs map[string]string
+
+	// BannerServices are the services of the banner trap (RAN_BANNER_SERVICES);
+	// set only when banner is enabled.
+	BannerServices []BannerService
 
 	SSHHostKeyPath string
 	HTTPSCertPath  string
@@ -404,12 +420,22 @@ func Load(getenv func(string) string) (*Config, error) {
 
 	// Load per-trap addr overrides
 	for _, name := range c.Traps {
+		if name == "banner" {
+			services, err := ParseBannerServices("RAN_BANNER_SERVICES", getenv("RAN_BANNER_SERVICES"))
+			if err != nil {
+				return nil, err
+			}
+			c.BannerServices = services
+			continue
+		}
 		envKey := "RAN_" + strings.ToUpper(name) + "_ADDR"
 		if addr := getenv(envKey); addr != "" {
 			if err := ValidateAddrList(envKey, addr); err != nil {
 				return nil, err
 			}
 			c.Addrs[name] = addr
+		} else if required, ok := AddresslessTraps[name]; ok {
+			return nil, fmt.Errorf("%s is required when %s is enabled in RAN_TRAPS; set it to a comma-separated list of listen addresses such as :4444,:6000, or remove %s from RAN_TRAPS", required, name, name)
 		} else {
 			c.Addrs[name] = DefaultPorts[name]
 		}

@@ -61,8 +61,11 @@ type tcpServer struct {
 	limiter  *Limiter
 	reporter Reporter
 	handler  tcpHandler
+	// addrs overrides the configured listen addresses (the banner trap runs one
+	// server per service); nil means cfg.TrapAddrs(proto).
+	addrs []string
 
-	mu       sync.Mutex
+	mu      sync.Mutex
 	ln       *MultiListener
 	conns    map[net.Conn]context.CancelFunc
 	stopping bool
@@ -86,7 +89,10 @@ func newTCPServer(proto string, cfg *config.Config, logger *slog.Logger, m *metr
 // Start listens and serves until ctx is cancelled or Stop is called. Cancelling
 // ctx also closes live connections.
 func (s *tcpServer) Start(ctx context.Context) error {
-	addrs := s.cfg.TrapAddrs(s.proto)
+	addrs := s.addrs
+	if addrs == nil {
+		addrs = s.cfg.TrapAddrs(s.proto)
+	}
 	ln, err := ListenMultiTCP(ctx, addrs, s.cfg.ProxyProtocol, s.logger, s.metrics, s.proto)
 	if err != nil {
 		return fmt.Errorf("%s listen: %w", s.proto, err)

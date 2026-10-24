@@ -326,3 +326,22 @@ func FuzzParseModbusPDU(f *testing.F) {
 		}
 	})
 }
+
+func FuzzSniffProtocol(f *testing.F) {
+	f.Add([]byte{0x16, 0x03, 0x01, 0x00})
+	f.Add([]byte("GET / HTTP/1.1\r\n"))
+	f.Add([]byte("SSH-2.0-x"))
+	f.Add([]byte{0, 0, 0, 0, 0xff, 'S', 'M', 'B'})
+	f.Add([]byte{3, 0, 0, 0x13, 0x0e, 0xe0})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		switch got := sniffProtocol(data); got {
+		case sniffTLS, sniffHTTP, sniffSMB, sniffSSH, sniffRDP, sniffUnknown:
+		default:
+			t.Fatalf("label %q is outside the fixed set", got)
+		}
+		text := printableText(data)
+		if len(text) != len(data) || strings.ContainsFunc(text, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+			t.Fatalf("printableText(%x) = %q", data, text)
+		}
+	})
+}
