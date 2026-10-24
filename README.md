@@ -4,7 +4,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
 
-Single-binary honeypot written in Go. Emulates 30 network services (SSH, RDP,
+Single-binary honeypot written in Go. Emulates 33 network services (SSH, RDP,
 Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
 pushes classified alerts to CrowdSec, whose profiles decide the bans. No external
 dependencies, ~8 MB scratch image.
@@ -43,7 +43,7 @@ profile can act on.
 |---|---|---|---|---|---|---|
 | Language / runtime | Python 3.11+ | Python 3.10+ | Python (pip) | Docker Compose stack | Go | Go, static binary |
 | Focus | Interactive SSH/Telnet shell | Tripwire for internal networks | Many protocol servers | Platform of many honeypots | Deception framework, optional LLM | Sensor for blocklists |
-| Protocols | SSH, Telnet (SFTP/SCP) | multi-protocol, list not verified | 29 modules | 31 honeypots listed | SSH, HTTP, TCP, Telnet, MCP | 30 stubs |
+| Protocols | SSH, Telnet (SFTP/SCP) | multi-protocol, list not verified | 29 modules | 31 honeypots listed | SSH, HTTP, TCP, Telnet, MCP | 33 stubs |
 | Post-login shell, file capture | yes | no | no | via Cowrie, Dionaea | optional LLM shell | no (by design) |
 | CrowdSec | log parsing via the Hub | none found | none found | none found | none found | native LAPI alerts, classified |
 | Footprint | Python process | Python process | Python process | 8 GB (sensor) to 16 GB (hive) RAM | Go binary | about 13 MB working set idle, all 29 traps |
@@ -126,7 +126,7 @@ which keeps the attack surface of the honeypot minimal.
 | `ssh` | `:2222` | Credentials (OpenSSH banner; password and keyboard-interactive answers, and the SHA256 fingerprint and type of every offered public key, are logged as auth attempts and always rejected). Client identity: the client version string (`client_version`) and the HASSH of its KEXINIT (`hassh`) go to the log and the alert meta. Passwords never go to CrowdSec meta |
 | `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session |
 | `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response |
-| `telnet` | `:23` | Credentials (login/password prompts) |
+| `telnet` | `:23`, `:2323` | Credentials (login/password prompts). Listens on both ports by default (`:2323` is the port Mirai-style botnets scan); see the multi-port note below |
 | `ftp` | `:21` | Credentials (`USER` / `PASS`). Banner `220 FTP Server ready.`, lines up to 512 bytes. Every other command except `QUIT` gets `530` and is not logged |
 
 ### Web & proxy
@@ -138,7 +138,16 @@ which keeps the attack surface of the honeypot minimal.
 | `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
 | `elasticsearch` | `:9200` | API requests with fake cluster responses. Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
 
-`http`, `https`, `httpproxy` and `elasticsearch` start a session per connection (`http`, `https`) or per request (`httpproxy`, `elasticsearch`).
+`http`, `https`, `docker` and `kubernetes` start a session per connection; `httpproxy` and `elasticsearch` start one per request.
+
+### Containers & orchestration
+
+| Name | Port | Captures |
+|---|---|---|
+| `docker` | `:2375` | Stub of the Docker Engine API (plain HTTP, no TLS). `GET /_ping`, `/version`, `/info`, `/containers/json` and `/images/json` (also with a `/v1.xx` prefix) get static answers and stay a `probe`. `POST /containers/create` and `POST /containers/{id}/exec` are commands recorded as `docker create image=... cmd=...` or `docker exec cmd=...` (JSON body read up to 16 KiB, image and command line cut to 256 bytes) and refused with `403`; nothing is pulled or executed. Any other state-changing method is recorded as `METHOD /path` and refused, unknown paths get `404`. Same JNDI check and header logging as `http`. Alert meta: `command`, `image`, `path`, `method`, `user_agent` |
+| `kubernetes` | `:6443` | Stub of the Kubernetes API server and the kubelet API (plain HTTP, no TLS; set `RAN_KUBERNETES_ADDR=:6443,:10250` for the kubelet port). `GET /version`, `/api`, `/healthz`, `/livez` and `/readyz` get plausible answers and stay a `probe`; kubelet `/pods` and `/runningpods` answer `401`, every other path `403` as `system:anonymous`. `/run/`, `/exec/` and `/attach/` requests are commands (method, path and the `cmd`/`command` values of the query or form body, 256 bytes) and are refused. An `Authorization: Bearer` token is an auth attempt: only the first 8 hex characters of its SHA-256 are logged and sent as alert meta `token_hash`; the token itself is never stored. A token that is presented gets `401` instead of `403` |
+
+`docker` and `kubernetes` reuse the request handling of `http` (sessions per connection, 16 KiB header and body limit, `claimed_client_ip` logging only, `Cookie` and `Authorization` never logged). The alert IP is always the socket peer.
 
 ### Databases
 
@@ -150,6 +159,7 @@ which keeps the attack surface of the honeypot minimal.
 | `oracle` | `:1521` | `USER` and `SERVICE_NAME` from the TNS CONNECT descriptor; no password |
 | `redis` | `:6379` | `AUTH` credentials + RESP and inline command logging |
 | `memcached` | `:11211` | Command logging (text protocol) |
+| `mongodb` | `:27017` | MongoDB wire protocol (`OP_MSG` and legacy `OP_QUERY`). `hello`/`isMaster`, `buildInfo` and `ping` are answered like a server that needs authentication and stay a `probe`. `saslStart` and `authenticate` are auth attempts: only the user name is kept (SCRAM `n=` attribute, PLAIN authcid, legacy `user`), never the proof, nonce or password, and the reply is `AuthenticationFailed`. Any other command is recorded by name only (alert meta `command`, 32 bytes) and answered with `Unauthorized`. Messages above 64 KiB close the connection |
 
 ### Mail
 
@@ -210,6 +220,12 @@ RAN_HTTP_ADDR=:8081,:8080,:8443,:3128   # HTTP on 4 ports
 RAN_SSH_ADDR=:2222,:22                  # SSH on both default and standard port
 RAN_SMTP_ADDR=:25,:587                  # SMTP on standard + submission port
 ```
+
+Binding is all or nothing: if one address of a multi-port trap cannot be bound
+(already in use, or a privileged port without permission), the trap does not
+start at all and the other ports are released. This also holds for the `telnet`
+default `:23,:2323`; if only one of them is available, set
+`RAN_TELNET_ADDR` to that port (for example `RAN_TELNET_ADDR=:2323`).
 
 Listen addresses are validated at startup (`host:port` or `:port`, port 1 to 65535).
 Further validation: `RAN_SESSION_TIMEOUT` must be greater than zero;
@@ -334,7 +350,8 @@ Input limits (fixed, not configurable):
 | `mysql`, `postgres`, `mqtt`, `smb` | 1 MiB per packet |
 | `mssql`, `oracle` | 64 KiB per packet (the length field has 16 bits) |
 | `minecraft` | 32767 bytes per packet |
-| `http`, `https` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes |
+| `http`, `https`, `docker`, `kubernetes` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes. `docker` keeps at most 64 command words and 1024 bytes before the 256 byte cut; `kubernetes` 32 values |
+| `mongodb` | 64 KiB per message (the protocol allows 48 MB; larger messages close the connection before anything is read); first 64 top-level BSON elements of the command document, nested documents are skipped by their declared length; user names 128 bytes |
 | `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 16 point formats, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
 | `adb` | 4096 bytes of identity data |
 | `rdp` | 1024 bytes per TPKT packet |

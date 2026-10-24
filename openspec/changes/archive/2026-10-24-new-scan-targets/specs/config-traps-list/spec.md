@@ -8,8 +8,12 @@
 - **THEN** all three traps start on their default ports and appear in `/healthz`
 
 ### Requirement: Telnet default addresses
-The default listen addresses of `telnet` SHALL be `:23,:2323`.
+The default listen addresses of `telnet` SHALL be `:23,:2323`. Binding follows the multi-port rule: if one of the two addresses cannot be bound, the trap fails to start and releases the other one (all or nothing). `RAN_TELNET_ADDR` replaces both defaults.
 
 #### Scenario: Default telnet
 - **WHEN** `RAN_TRAPS=telnet` is set without `RAN_TELNET_ADDR`
 - **THEN** the trap listens on `:23` and `:2323`
+
+#### Scenario: One default address is taken
+- **WHEN** `:2323` is already in use and `RAN_TELNET_ADDR` is not set
+- **THEN** the telnet trap fails to start with a listen error and the operator sets `RAN_TELNET_ADDR=:23`

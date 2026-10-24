@@ -13,7 +13,7 @@ context: |
   CI: GitHub Actions (ci.yml), semantic versioning releases
   Domain: honeypot that emulates 25+ network protocols to capture attacker credentials and behavior
   Architecture: cmd/ran (entrypoint) + internal/ (config, metrics, trap, alert)
-  Traps: ssh, http, mysql, ftp, telnet, smtp, dns, pop3, imap, ldap, smb, modbus, socks5, mssql, oracle, mqtt, rdp, postgres, sip, vnc, redis, irc, httpproxy, elasticsearch, memcached, ntp, snmp, adb, minecraft
+  Traps: ssh, http, mysql, ftp, telnet, smtp, dns, pop3, imap, ldap, smb, modbus, socks5, mssql, oracle, mqtt, rdp, postgres, sip, vnc, redis, irc, httpproxy, elasticsearch, memcached, ntp, snmp, adb, minecraft, docker, kubernetes, mongodb
   Alerting: CrowdSec LAPI integration with dedup, caching, and pipeline metrics
   Conventions:
     - Single-line git commit messages, no body, no Co-Authored-By

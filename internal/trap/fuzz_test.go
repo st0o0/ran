@@ -3,6 +3,7 @@ package trap
 import (
 	"bufio"
 	"bytes"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -205,5 +206,69 @@ func FuzzParseKexInit(f *testing.F) {
 		if len(c.buf) > sshKexScanLimit {
 			t.Fatalf("buffer of %d bytes", len(c.buf))
 		}
+	})
+}
+
+func FuzzReadMongoMessage(f *testing.F) {
+	f.Add(mongoFrame(mongoOpMsg, 1, append([]byte{0, 0, 0, 0, 0}, newBSONDoc().i32("hello", 1).str("$db", "admin").bytes()...)))
+	f.Add(opQuery("admin.$cmd", newBSONDoc().i32("isMaster", 1).bytes()))
+	f.Add(opMsg(newBSONDoc().i32("saslStart", 1).str("mechanism", "SCRAM-SHA-256").binary("payload", []byte("n,,n=u,r=x")).bytes(), 0))
+	f.Add([]byte{0xFF, 0xFF, 0xFF, 0x7F, 0, 0, 0, 0, 0, 0, 0, 0, 0xDD, 0x07, 0, 0})
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		h, body, err := readMongoMessage(bytes.NewReader(data))
+		if err != nil {
+			return
+		}
+		boundedPayload(t, data, body)
+		if h.length > maxMongoMessage {
+			t.Fatalf("message of %d bytes accepted", h.length)
+		}
+		req, err := parseMongoMessage(h, body)
+		if err != nil {
+			return
+		}
+		boundedPayload(t, data, req.payload)
+		boundedText(t, data, req.command, req.db, req.mechanism, req.user, mongoSASLUser(req.payload))
+		// The reply to any parsed request must be a frame the reader accepts.
+		reply := mongoReply(req, h, 1, mongoErrorDoc("command "+commandName(req.command)+" requires authentication", 13, "Unauthorized"))
+		if _, _, err := readMongoMessage(bytes.NewReader(reply)); err != nil {
+			t.Fatalf("own reply rejected: %v", err)
+		}
+	})
+}
+
+func FuzzParseDockerBody(f *testing.F) {
+	f.Add([]byte(`{"Image":"alpine","Cmd":["sh","-c","id"]}`))
+	f.Add([]byte(`{"Image":"x","Entrypoint":"sh","Cmd":"id"}`))
+	f.Add([]byte(`{"Cmd":[[["a"]],null,1]}`))
+	f.Add([]byte(`{`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		image, cmd := parseDockerBody(data)
+		if len(image) > maxHTTPValue {
+			t.Fatalf("image of %d bytes", len(image))
+		}
+		// Bounded by the item and byte caps; invalid UTF-8 may grow up to 3x when decoded.
+		if limit := maxDockerCmdBytes + 4*len(data); len(cmd) > limit {
+			t.Fatalf("cmd of %d bytes for %d input bytes", len(cmd), len(data))
+		}
+		if n := strings.Count(cmd, " ") + 1; n > 2*maxDockerCmdItems {
+			t.Fatalf("%d words", n)
+		}
+		boundedText(t, data, sanitizeHTTPValue(image), sanitizeHTTPValue(cmd))
+	})
+}
+
+func FuzzFormCommand(f *testing.F) {
+	f.Add([]byte("cmd=id&cmd=whoami"))
+	f.Add([]byte("command=sh&x=%zz&cmd=%"))
+	f.Add([]byte(""))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		vals := formCommand(data)
+		joined := joinStrings(vals, maxKubeCmdItems, maxKubeCmdBytes)
+		if limit := maxKubeCmdBytes + len(data); len(joined) > limit {
+			t.Fatalf("joined %d bytes for %d input bytes", len(joined), len(data))
+		}
+		boundedText(t, data, sanitizeHTTPValue(joined))
 	})
 }

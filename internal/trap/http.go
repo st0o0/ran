@@ -478,3 +478,20 @@ input[type=submit]{width:100%;padding:8px;background:#333;color:#fff;border:none
 <label for="password">Password</label>
 <input type="password" name="password" id="password">
 <input type="submit" value="Sign In"></form></div></body></html>`
+
+// setHandler replaces the request handler of the server while keeping the
+// per-connection session, limiter, timeout and shutdown handling. The docker and
+// kubernetes traps use it, so the connection plumbing exists once.
+func (t *HTTPTrap) setHandler(h http.HandlerFunc) {
+	t.srv.Handler = recoverHandler(t.logger, t.metrics, t.proto, h)
+}
+
+// connSession returns the session of the connection that carried r, or nil when
+// the connection was not admitted (for example by the limiter).
+func connSession(r *http.Request) *Session {
+	hc, _ := r.Context().Value(httpConnKey{}).(*httpConn)
+	if hc == nil {
+		return nil
+	}
+	return hc.sess
+}

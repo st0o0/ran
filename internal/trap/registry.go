@@ -101,6 +101,15 @@ var Registry = map[string]Factory{
 	"minecraft": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
 		return NewMinecraft(cfg, logger, m, limiter, alerter), nil
 	},
+	"docker": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewDocker(cfg, logger, m, limiter, alerter), nil
+	},
+	"kubernetes": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewKubernetes(cfg, logger, m, limiter, alerter), nil
+	},
+	"mongodb": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewMongoDB(cfg, logger, m, limiter, alerter), nil
+	},
 }
 
 func CreateTraps(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) ([]Trap, error) {

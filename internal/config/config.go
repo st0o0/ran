@@ -18,7 +18,7 @@ var DefaultPorts = map[string]string{
 	"https":         ":8443",
 	"mysql":         ":3307",
 	"ftp":           ":21",
-	"telnet":        ":23",
+	"telnet":        ":23,:2323",
 	"smtp":          ":25",
 	"dns":           ":53",
 	"pop3":          ":110",
@@ -43,6 +43,9 @@ var DefaultPorts = map[string]string{
 	"memcached":     ":11211",
 	"adb":           ":5555",
 	"minecraft":     ":25565",
+	"docker":        ":2375",
+	"kubernetes":    ":6443",
+	"mongodb":       ":27017",
 }
 
 var ValidTraps = func() map[string]bool {
