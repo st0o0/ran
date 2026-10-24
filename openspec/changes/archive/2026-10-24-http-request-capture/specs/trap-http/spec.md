@@ -27,14 +27,14 @@ A request whose path matches the built-in exploit path list, or whose request li
 - **THEN** the session stays a `probe` and no alert is raised
 
 ### Requirement: Basic authorization capture
-A request with an HTTP Basic `Authorization` header SHALL be recorded as an auth attempt with the decoded username. The password SHALL follow `RAN_LOG_PASSWORDS`.
+A request with an HTTP Basic `Authorization` header SHALL be recorded as an auth attempt with the decoded username (a value without a colon is a bare username; invalid base64 is ignored). The password SHALL follow `RAN_LOG_PASSWORDS` and never becomes alert meta.
 
 #### Scenario: Basic credentials
 - **WHEN** a client sends `Authorization: Basic YWRtaW46aHVudGVyMg==`
 - **THEN** an auth attempt for user `admin` is logged and the session is classified `attack`
 
 ### Requirement: Non-form body as payload
-A `POST`, `PUT` or `PATCH` body that is not a form login SHALL be read up to the 16 KiB limit and counted as payload bytes.
+A `POST`, `PUT` or `PATCH` body that is not a form login SHALL be read up to the 16 KiB limit and counted as payload bytes. A form login is a `POST` with an `application/x-www-form-urlencoded` body that has a credential field, or a `POST` with an empty body; both keep the existing auth attempt behavior.
 
 #### Scenario: JSON body
 - **WHEN** a client POSTs a 300 byte JSON body to `/api/login`

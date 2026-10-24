@@ -247,16 +247,20 @@ func (s *Session) Log(msg string, attrs ...slog.Attr) {
 }
 
 func (s *Session) LogPayload(payloadType string, attrs ...slog.Attr) {
-	s.payloads++
 	n := 0
 	for _, a := range attrs {
 		if a.Value.Kind() == slog.KindString {
 			n += len(a.Value.String())
 		}
 	}
-	if n == 0 {
-		n = 1
-	}
+	s.LogPayloadSize(payloadType, n, attrs...)
+}
+
+// LogPayloadSize is LogPayload for callers that log only a bounded sample of the
+// data: size is the number of bytes received (at least 1 is counted).
+func (s *Session) LogPayloadSize(payloadType string, size int, attrs ...slog.Attr) {
+	s.payloads++
+	n := max(size, 1)
 	s.payloadBytes += n
 	s.flushConnect()
 	args := make([]any, 0, 2+len(attrs))

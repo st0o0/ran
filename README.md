@@ -133,7 +133,7 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `http` | `:8081` | Credentials from `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path). Only `POST` counts as a login: the form body is capped at 16 KiB, JSON bodies yield empty credentials. `GET` paths and `User-Agent` are not logged. Responses carry `Server: Apache/2.4.62` |
+| `http` | `:8081` | Every request is logged with method, path (no query string), `Host`, `User-Agent` and a header subset (values cut to 256 bytes, control characters replaced). Requests for known exploit and recon paths (`/.env`, `/.git/`, `/actuator`, `/cgi-bin/`, `/phpmyadmin`, traversal and so on) and requests carrying a JNDI lookup (`${jndi:`, also nested or percent encoded) in the request line or a header value are commands, so they classify as `attack`. Basic `Authorization` is captured as credentials, `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path) as before. A `POST`, `PUT` or `PATCH` body that is not a form login (JSON, XML) counts as payload bytes, read up to 16 KiB. Any other `GET`/`HEAD` stays a `probe`. Alert meta adds `path`, `method` and `user_agent`. Responses carry `Server: Apache/2.4.62` |
 | `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
 | `elasticsearch` | `:9200` | API requests with fake cluster responses. Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
 
@@ -313,7 +313,7 @@ Input limits (fixed, not configurable):
 | `mysql`, `postgres`, `mqtt`, `smb` | 1 MiB per packet |
 | `mssql`, `oracle` | 64 KiB per packet (the length field has 16 bits) |
 | `minecraft` | 32767 bytes per packet |
-| `http` | 16 KiB for the request body and for the headers |
+| `http` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes |
 | `adb` | 4096 bytes of identity data |
 | `rdp` | 1024 bytes per TPKT packet |
 | UDP traps | 4096 bytes per packet (the rest is cut off) |
@@ -455,7 +455,7 @@ Sessions are classified from the counters when they end, so a trap that logs a
 command, payload or auth attempt ends as `attack` even if it did not alert
 mid-session (redis, memcached, imap and irc alert on the first command with only
 the command name as meta). Pure fingerprinting stays a `probe`: Elasticsearch
-plain GET requests without a body and Minecraft server-list pings. Per-trap
+plain GET requests without a body, HTTP `GET`/`HEAD` requests that match no exploit path or JNDI string, and Minecraft server-list pings. Per-trap
 tuning for single-request protocols (a modbus request, an ADB CONNECT) is a
 planned follow-up.
 

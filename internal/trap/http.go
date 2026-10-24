@@ -2,11 +2,15 @@ package trap
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -42,14 +46,9 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 		alerter: alerter,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/wp-login.php", t.handleLogin("wordpress"))
-	mux.HandleFunc("/admin", t.handleLogin("admin"))
-	mux.HandleFunc("/", t.handleLogin("generic"))
-
 	t.srv = &http.Server{
 		Addr:         cfg.TrapAddr("http"),
-		Handler:      recoverHandler(logger, m, "http", mux),
+		Handler:      recoverHandler(logger, m, "http", http.HandlerFunc(t.handleRequest)),
 		ReadTimeout:  cfg.ResolveSessionTimeout("http"),
 		WriteTimeout: cfg.ResolveSessionTimeout("http"),
 		ConnState:    t.connState,
@@ -136,45 +135,183 @@ func (t *HTTPTrap) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (t *HTTPTrap) handleLogin(style string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		hc, _ := r.Context().Value(httpConnKey{}).(*httpConn)
-		if hc == nil || hc.sess == nil {
-			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
-			return
+// httpHeaderSubset lists the request headers that are logged (values cut and
+// sanitized). Everything else, notably Cookie and Authorization, is never logged.
+var httpHeaderSubset = []string{
+	"Accept", "Accept-Language", "Content-Type", "Content-Length", "Referer", "Origin",
+	"X-Forwarded-For", "X-Real-IP", "X-Forwarded-Host", "X-Api-Version",
+}
+
+// httpJNDIHeaders lists the header values scanned for JNDI lookup strings.
+var httpJNDIHeaders = []string{
+	"User-Agent", "Referer", "Origin", "Cookie", "X-Api-Version", "X-Forwarded-For",
+	"X-Real-IP", "X-Forwarded-Host", "Accept", "Accept-Language", "Authorization",
+	"X-Requested-With", "Content-Type",
+}
+
+// httpStyle picks the login page style for a request path.
+func httpStyle(p string) string {
+	switch p {
+	case "/wp-login.php":
+		return "wordpress"
+	case "/admin":
+		return "admin"
+	default:
+		return "generic"
+	}
+}
+
+// handleRequest logs and classifies every request, then serves the login page.
+// It replaces a ServeMux so that unclean paths (traversal attempts) are logged
+// instead of being redirected before they reach the handler.
+func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
+	hc, _ := r.Context().Value(httpConnKey{}).(*httpConn)
+	if hc == nil || hc.sess == nil {
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	sess := hc.sess
+
+	w.Header().Set("Server", "Apache/2.4.62")
+	w.Header().Set("X-Powered-By", "PHP/8.3.6")
+
+	reqPath := sanitizeHTTPValue(r.URL.Path)
+	meta := map[string]string{
+		"path":       reqPath,
+		"method":     sanitizeHTTPValue(r.Method),
+		"user_agent": sanitizeHTTPValue(r.UserAgent()),
+	}
+	attrs := []slog.Attr{
+		slog.String("method", meta["method"]),
+		slog.String("path", reqPath),
+		slog.String("host", sanitizeHTTPValue(r.Host)),
+		slog.String("user_agent", meta["user_agent"]),
+		slog.Group("headers", httpHeaderAttrs(r)...),
+	}
+	// Headers are attacker-controlled: log them, never use them as alert identity.
+	if claimed := claimedClientIP(r); claimed != "" {
+		attrs = append(attrs, slog.String("claimed_client_ip", claimed))
+	}
+
+	alerted := false
+	if matchExploitPath(r.URL.Path) || httpHasJNDI(r) {
+		sess.LogCommand(meta["method"]+" "+reqPath, attrs...)
+		alerted = true
+	} else {
+		sess.Log("http request", attrs...)
+	}
+
+	if user, pass, ok := basicAuth(r); ok {
+		sess.LogAuthAttempt(slog.String("username", sanitizeHTTPValue(user)), slog.String("password", pass), slog.String("path", reqPath))
+		sess.RecordCredentials(t.metrics)
+		meta["username"] = sanitizeHTTPValue(user)
+		alerted = true
+	}
+
+	formLogin := false
+	if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+		body, n, truncated := readHTTPBody(w, r)
+		form := url.Values{}
+		if !truncated {
+			// An oversized body yields empty credentials, as ParseForm did.
+			form, _ = url.ParseQuery(string(body))
 		}
-		sess := hc.sess
-
-		w.Header().Set("Server", "Apache/2.4.62")
-		w.Header().Set("X-Powered-By", "PHP/8.3.6")
-
-		if r.Method == http.MethodPost {
-			r.Body = http.MaxBytesReader(w, r.Body, maxHTTPBody)
-			_ = r.ParseForm()
-			username := firstOf(r.PostForm, "username", "user", "log")
-			password := firstOf(r.PostForm, "password", "pass", "pwd")
-			attrs := []slog.Attr{
+		isForm := isFormContent(r) && (truncated || form.Has("username") || form.Has("user") || form.Has("log") ||
+			form.Has("password") || form.Has("pass") || form.Has("pwd"))
+		switch {
+		case r.Method == http.MethodPost && (isForm || n == 0):
+			formLogin = true
+			username := firstOf(form, "username", "user", "log")
+			password := firstOf(form, "password", "pass", "pwd")
+			loginAttrs := []slog.Attr{
 				slog.String("username", username),
 				slog.String("password", password),
-				slog.String("path", r.URL.Path),
+				slog.String("path", reqPath),
 			}
-			// Headers are attacker-controlled: log them, never use them as alert identity.
 			if claimed := claimedClientIP(r); claimed != "" {
-				attrs = append(attrs, slog.String("claimed_client_ip", claimed))
+				loginAttrs = append(loginAttrs, slog.String("claimed_client_ip", claimed))
 			}
-			sess.LogAuthAttempt(attrs...)
+			sess.LogAuthAttempt(loginAttrs...)
 			sess.RecordCredentials(t.metrics)
-			sess.Alert(r.Context(), map[string]string{"username": username, "password": password, "path": r.URL.Path})
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, loginErrorPage(style))
-			return
+			meta["username"] = username
+			meta["password"] = password
+			alerted = true
+		case n > 0:
+			// Only a bounded sample is logged; the full size counts as payload.
+			sess.LogPayloadSize("http_body", n,
+				slog.String("path", reqPath),
+				slog.String("sample", sanitizeHTTPValue(string(body))),
+				slog.Int("bytes", n))
+			alerted = true
 		}
-
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, loginPage(style))
 	}
+
+	if alerted {
+		sess.Alert(r.Context(), meta)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	style := httpStyle(r.URL.Path)
+	if formLogin {
+		fmt.Fprint(w, loginErrorPage(style))
+		return
+	}
+	fmt.Fprint(w, loginPage(style))
+}
+
+// readHTTPBody reads the request body up to maxHTTPBody bytes and returns it with
+// its length. The third result is true when the body exceeded the limit or could
+// not be read completely; the rest is never read.
+func readHTTPBody(w http.ResponseWriter, r *http.Request) ([]byte, int, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxHTTPBody)
+	body, err := io.ReadAll(r.Body)
+	return body, len(body), err != nil
+}
+
+func isFormContent(r *http.Request) bool {
+	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return mt == "application/x-www-form-urlencoded"
+}
+
+// httpHeaderAttrs returns the logged header subset as a slog group.
+func httpHeaderAttrs(r *http.Request) []any {
+	out := make([]any, 0, len(httpHeaderSubset))
+	for _, name := range httpHeaderSubset {
+		if v := r.Header.Get(name); v != "" {
+			out = append(out, slog.String(strings.ToLower(name), sanitizeHTTPValue(v)))
+		}
+	}
+	return out
+}
+
+// httpHasJNDI checks the request line and a bounded set of header values.
+func httpHasJNDI(r *http.Request) bool {
+	if matchJNDI(r.RequestURI) || matchJNDI(r.Host) {
+		return true
+	}
+	for _, name := range httpJNDIHeaders {
+		if matchJNDI(r.Header.Get(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// basicAuth decodes an HTTP Basic Authorization header. A value without a colon
+// is treated as a bare username.
+func basicAuth(r *http.Request) (user, pass string, ok bool) {
+	h := r.Header.Get("Authorization")
+	scheme, rest, found := strings.Cut(h, " ")
+	if !found || !strings.EqualFold(scheme, "Basic") {
+		return "", "", false
+	}
+	dec, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rest))
+	if err != nil {
+		return "", "", false
+	}
+	user, pass, _ = strings.Cut(string(dec), ":")
+	return user, pass, true
 }
 
 // claimedClientIP returns the forwarding header IP if it is syntactically valid, else "".

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"testing"
+	"unicode/utf8"
 )
 
 // Fuzz targets for the parsers that handle raw attacker bytes. All of them share
@@ -136,6 +137,21 @@ func FuzzReadMQTTVarInt(f *testing.F) {
 		v, err := readMQTTVarInt(bytes.NewReader(data))
 		if err == nil && (v < 0 || v > 268435455) {
 			t.Fatalf("value %d out of MQTT range", v)
+		}
+	})
+}
+
+func FuzzHTTPMatchers(f *testing.F) {
+	f.Add("/.env")
+	f.Add("/a/../../etc/passwd")
+	f.Add("${${lower:j}ndi:ldap://x/a}")
+	f.Add("%24%7Bjndi:")
+	f.Add("a/b c")
+	f.Fuzz(func(t *testing.T, s string) {
+		_ = matchExploitPath(s)
+		_ = matchJNDI(s)
+		if out := sanitizeHTTPValue(s); len(out) > maxHTTPValue || !utf8.ValidString(out) {
+			t.Fatalf("sanitized value of %d bytes (valid utf8: %v)", len(out), utf8.ValidString(out))
 		}
 	})
 }
