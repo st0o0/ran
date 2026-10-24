@@ -71,7 +71,7 @@ func (t *HTTPProxyTrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, port := ParseAddr(r.RemoteAddr)
 	destPort := DestPortFromContext(r.Context())
 	sess := NewSession("httpproxy", alert.TransportTCP, host, port, destPort, t.logger)
-	sess.Sensor = t.alerter
+	sess.UseSensor(t.alerter)
 
 	if !t.limiter.Acquire(host) {
 		LogRejected(t.logger, t.metrics, "httpproxy", alert.TransportTCP, destPort, host, "rate_limit")

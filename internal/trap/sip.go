@@ -22,7 +22,7 @@ func NewSIP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 	handler := &sipHandler{
 		logger: logger,
 	}
-	return NewUDP("sip", cfg.TrapAddrs("sip"), logger, m, limiter, newUDPRateLimiter(cfg), handler)
+	return NewUDP("sip", cfg.TrapAddrs("sip"), logger, m, limiter, newUDPRateLimiter(cfg), handler).withIgnore(cfg)
 }
 
 func (h *sipHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {

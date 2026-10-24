@@ -57,7 +57,31 @@ type Session struct {
 
 	alertedClass   alert.Class
 	connectPending bool
+	// ignored is set when the source is in RAN_IGNORE_IPS: the session is served
+	// and logged with ignored=true but the sensor never records it.
+	ignored bool
 }
+
+// ignoreChecker is implemented by sensors that know the ignore list.
+type ignoreChecker interface{ Ignored(ip string) bool }
+
+// UseSensor wires the sensor into the session. If the sensor reports the
+// source as ignored, the session is marked so that its log lines carry
+// ignored=true and RecordStart counts it.
+func (s *Session) UseSensor(r Reporter) {
+	s.Sensor = r
+	if ic, ok := r.(ignoreChecker); ok && ic.Ignored(s.SourceIP) {
+		s.markIgnored()
+	}
+}
+
+func (s *Session) markIgnored() {
+	s.ignored = true
+	s.Logger = s.Logger.With("ignored", true)
+}
+
+// Ignored reports whether the session source is in the ignore list.
+func (s *Session) Ignored() bool { return s.ignored }
 
 // Info returns the session snapshot handed to the sensor.
 func (s *Session) Info() alert.SessionInfo {
@@ -366,6 +390,9 @@ func LogErrorStandalone(logger *slog.Logger, protocol, errorType string, err err
 
 func (s *Session) RecordStart(m *metrics.Metrics) {
 	m.ActiveSessions.WithLabelValues(s.Protocol).Inc()
+	if s.ignored {
+		m.IgnoredSessions.WithLabelValues(s.Protocol).Inc()
+	}
 }
 
 func (s *Session) RecordEnd(m *metrics.Metrics) {

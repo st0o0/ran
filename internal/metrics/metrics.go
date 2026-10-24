@@ -17,6 +17,7 @@ type Metrics struct {
 	PanicsRecovered     *prometheus.CounterVec
 	ProxyDropped        *prometheus.CounterVec
 	UDPRateLimited      *prometheus.CounterVec
+	IgnoredSessions     *prometheus.CounterVec
 
 	CrowdSecPushDuration prometheus.Histogram
 	CrowdSecPushErrors   prometheus.Counter
@@ -74,6 +75,11 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 		Help: "Total number of UDP packets dropped by the packet rate limiter.",
 	}, []string{"protocol"})
 
+	m.IgnoredSessions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_ignored_sessions_total",
+		Help: "Total number of sessions from sources in RAN_IGNORE_IPS (served and logged, never alerted).",
+	}, []string{"protocol"})
+
 	m.CrowdSecPushDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "ran_crowdsec_push_duration_seconds",
 		Help:    "Duration of CrowdSec LAPI alert push requests in seconds.",
@@ -112,6 +118,6 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, m.CrowdSecPushDuration, m.CrowdSecPushErrors, m.CrowdSecQueueLength, m.TrackedEntries, m.TrackedEvictions, m.ProbeSuppressed, m.SessionsRejected, buildInfo)
+	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, m.IgnoredSessions, m.CrowdSecPushDuration, m.CrowdSecPushErrors, m.CrowdSecQueueLength, m.TrackedEntries, m.TrackedEvictions, m.ProbeSuppressed, m.SessionsRejected, buildInfo)
 	return m
 }

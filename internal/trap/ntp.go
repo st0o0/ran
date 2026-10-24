@@ -19,7 +19,7 @@ func NewNTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 	handler := &ntpHandler{
 		logger: logger,
 	}
-	return NewUDP("ntp", cfg.TrapAddrs("ntp"), logger, m, limiter, newUDPRateLimiter(cfg), handler)
+	return NewUDP("ntp", cfg.TrapAddrs("ntp"), logger, m, limiter, newUDPRateLimiter(cfg), handler).withIgnore(cfg)
 }
 
 func (h *ntpHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {

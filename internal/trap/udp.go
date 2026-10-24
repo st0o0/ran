@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/st0o0/ran/internal/alert"
+	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -24,8 +25,11 @@ type UDPTrap struct {
 	limiter  *Limiter
 	rate     *udpRateLimiter
 	handler  PacketHandler
+	// ignore reports sources in RAN_IGNORE_IPS. UDP never alerts, so it only
+	// marks the session log and counts it; nil means no ignore list.
+	ignore func(ip string) bool
 
-	mu       sync.Mutex
+	mu      sync.Mutex
 	conns    []net.PacketConn
 	stopping bool
 	done     chan struct{}
@@ -131,6 +135,9 @@ func (t *UDPTrap) readLoop(ctx context.Context, conn net.PacketConn) {
 		}
 
 		sess := NewSession(t.protocol, alert.TransportUDP, host, port, destPort, t.logger)
+		if t.ignore != nil && t.ignore(host) {
+			sess.markIgnored()
+		}
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 
@@ -181,4 +188,12 @@ func (t *UDPTrap) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// withIgnore wires the RAN_IGNORE_IPS list of cfg into the trap.
+func (t *UDPTrap) withIgnore(cfg *config.Config) *UDPTrap {
+	if len(cfg.IgnoreIPs) > 0 {
+		t.ignore = cfg.IsIgnored
+	}
+	return t
 }

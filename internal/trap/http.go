@@ -111,7 +111,7 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 			return
 		}
 		sess := NewSession(t.proto, alert.TransportTCP, host, port, destPort, t.logger)
-		sess.Sensor = t.alerter
+		sess.UseSensor(t.alerter)
 		hc.sess = sess
 		if hc.hello != nil {
 			// Set before the connection goroutine starts, so the handshake sees it.

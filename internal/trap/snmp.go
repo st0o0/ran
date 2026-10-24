@@ -19,7 +19,7 @@ func NewSNMP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 	handler := &snmpHandler{
 		logger: logger,
 	}
-	return NewUDP("snmp", cfg.TrapAddrs("snmp"), logger, m, limiter, newUDPRateLimiter(cfg), handler)
+	return NewUDP("snmp", cfg.TrapAddrs("snmp"), logger, m, limiter, newUDPRateLimiter(cfg), handler).withIgnore(cfg)
 }
 
 func (h *snmpHandler) HandlePacket(ctx context.Context, sess *Session, data []byte, respond func([]byte)) {

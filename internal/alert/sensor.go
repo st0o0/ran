@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -25,6 +26,9 @@ type SensorConfig struct {
 	SummaryWindow time.Duration
 	// Metrics receives the tracking map gauges and counters; nil disables them.
 	Metrics *metrics.Metrics
+	// IgnoreIPs lists sources that never alert, never enter the scan tracker and
+	// never enter the probe summary (RAN_IGNORE_IPS).
+	IgnoreIPs []netip.Prefix
 }
 
 // Sensor classifies sessions (probe, attack, scan), detects scans, aggregates
@@ -35,6 +39,7 @@ type Sensor struct {
 	logger *slog.Logger
 	scan   *scanTracker
 	probes *probeLog
+	ignore []netip.Prefix
 
 	// interval overrides the maintenance interval (tests only).
 	interval time.Duration
@@ -62,6 +67,7 @@ func newSensor(cfg SensorConfig, sink Sink, logger *slog.Logger) *Sensor {
 		logger: lg,
 		scan:   newScanTracker(scanWindow, scanProtocols, maxTracked),
 		probes: newProbeLog(cfg.SummaryWindow, maxTracked, lg),
+		ignore: cfg.IgnoreIPs,
 		stop:   make(chan struct{}),
 	}
 	s.scan.stats = newTrackStats(cfg.Metrics, mapScan)
@@ -112,7 +118,7 @@ func (s *Sensor) start() {
 // scanner. UDP and non-bannable sources never count: UDP is spoofable and the
 // other addresses are never real scanners.
 func (s *Sensor) touchScan(info SessionInfo) bool {
-	if info.Transport != TransportTCP {
+	if info.Transport != TransportTCP || s.Ignored(info.SourceIP) {
 		return false
 	}
 	addr, ok := parseBannableIP(info.SourceIP)
@@ -120,6 +126,12 @@ func (s *Sensor) touchScan(info SessionInfo) bool {
 		return false
 	}
 	return s.scan.Touch(addr.String(), info.Protocol)
+}
+
+// Ignored reports whether ip is in the ignore list. IPv4-mapped IPv6 addresses
+// are unmapped before matching.
+func (s *Sensor) Ignored(ip string) bool {
+	return config.MatchesPrefixes(s.ignore, ip)
 }
 
 func (s *Sensor) classify(info SessionInfo) Class {
@@ -142,6 +154,11 @@ func (s *Sensor) Alert(ctx context.Context, info SessionInfo, meta map[string]st
 	if info.Transport != TransportTCP {
 		return ""
 	}
+	// An ignored source is served and logged but never classified, tracked or
+	// reported.
+	if s.Ignored(info.SourceIP) {
+		return ""
+	}
 	class := s.classify(info)
 	s.submit(ctx, Event{Class: class, Info: info, Meta: meta})
 	return class
@@ -151,7 +168,8 @@ func (s *Sensor) Alert(ctx context.Context, info SessionInfo, meta map[string]st
 // the last Alert call (including pure probes and scans whose triggering session
 // sent nothing) and aggregates the log output of probe sessions.
 func (s *Sensor) SessionEnd(info SessionInfo) bool {
-	if info.Transport != TransportTCP {
+	// Ignored sources are never summarized: their sessions log per session.
+	if info.Transport != TransportTCP || s.Ignored(info.SourceIP) {
 		return false
 	}
 	class := s.classify(info)

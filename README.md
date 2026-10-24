@@ -282,6 +282,23 @@ session timeout restarts for the handshake.
 
 Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
+### Ignore list
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RAN_IGNORE_IPS` | | Comma-separated IP addresses and CIDR ranges (IPv4 and IPv6) whose sessions never alert. Invalid entries fail startup and `ran check-config` and name the entry |
+
+Use it for your own monitoring, scanners and admin hosts. A session from an
+ignored source is still served, logged with `ignored=true`, counted in the
+connection metrics and in `ran_ignored_sessions_total`, and it still counts
+against `RAN_MAX_SESSIONS` and `RAN_MAX_PER_IP`. It never raises an alert, never
+enters the scan tracker and never enters the probe summary (its probe sessions
+keep their per-session log lines). IPv4-mapped IPv6 peers (`::ffff:8.8.8.8`) match
+their IPv4 entry. With `RAN_PROXY_PROTOCOL` on, the address from the PROXY header
+is matched. UDP traps never alert anyway; for them the list only adds
+`ignored=true` to the log lines and counts the metric. The list is read once at
+startup (no reload) and the startup log reports the number of ranges.
+
 ### Limits
 
 <details>
@@ -353,6 +370,7 @@ runtime and process collectors:
 - `ran_udp_rate_limited_total{protocol}`: UDP packets dropped by the packet rate limiter
 - `ran_sessions_rejected_total{protocol}`: TCP connections and UDP packets rejected by the session limiter (`RAN_MAX_SESSIONS`, `RAN_MAX_PER_IP`)
 - `ran_probe_summary_suppressed_sessions_total`: probe sessions whose per-session log lines were replaced by a summary
+- `ran_ignored_sessions_total{protocol}`: sessions from sources in `RAN_IGNORE_IPS` (served and logged, never alerted; also counted in `ran_connections_total`)
 - `ran_tracked_entries{map}`: entries in the bounded tracking maps (`map`: `scan`, `probe`, `cooldown`)
 - `ran_tracked_evictions_total{map}`: live entries evicted because a map was full; a rising rate means `RAN_CROWDSEC_MAX_TRACKED` is too small
 - `ran_crowdsec_push_duration_seconds`: histogram of CrowdSec LAPI push request durations
@@ -476,6 +494,8 @@ their full per-event lines (credentials, commands, payloads). A probe session th
 triggers a scan alert is still summarized in the logs. UDP sessions are never
 summarized: they always log `connect` and `disconnect` lines. The `ran_*`
 metrics are still updated per session, so dashboards are unaffected.
+Sessions from `RAN_IGNORE_IPS` sources are excluded from the summary and keep their
+per-session lines, marked `ignored=true`.
 
 </details>
 
@@ -490,6 +510,10 @@ trap session ──▶ Classify (probe / attack / scan) ──▶ Alert pipeline
    IP validation ─▶ class filter (RAN_BAN_ON) ─▶ cooldown ─▶ batch queue
         invalid          filtered                  cooldown       queued / dropped
 ```
+
+Sources in `RAN_IGNORE_IPS` never enter the pipeline: the sensor drops them
+before classification, so there is no pipeline stage for them. Use
+`ran_ignored_sessions_total` to see how many sessions were ignored.
 
 1. **IP validation**: addresses in a denylist of non-global ranges are dropped
    (stage `invalid`, see below).

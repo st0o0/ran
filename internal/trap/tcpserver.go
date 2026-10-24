@@ -170,7 +170,7 @@ func (s *tcpServer) serve(ctx context.Context, cancel context.CancelFunc, conn n
 
 	safely(s.logger, s.metrics, s.proto, func() {
 		sess := NewSession(s.proto, alert.TransportTCP, host, port, destPort, s.logger)
-		sess.Sensor = s.reporter
+		sess.UseSensor(s.reporter)
 
 		sess.LogConnect()
 		sess.RecordStart(s.metrics)

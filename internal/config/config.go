@@ -1,9 +1,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -114,6 +116,10 @@ type Config struct {
 
 	LogPasswords string
 
+	// IgnoreIPs are sources that are served and logged but never alert and never
+	// enter the scan tracker or the probe summary (RAN_IGNORE_IPS).
+	IgnoreIPs []netip.Prefix
+
 	UDPRatePerSource int
 	UDPRateBurst     int
 	UDPRateGlobal    int
@@ -162,6 +168,87 @@ func ValidateAddr(name, raw string) error {
 		return fmt.Errorf("%s must be a single listen address such as :9550, got %q; remove the comma separated list", name, raw)
 	}
 	return ValidateAddrList(name, raw)
+}
+
+// ParseIgnoreList parses a comma-separated list of IP addresses and CIDR ranges
+// (IPv4 and IPv6). Empty entries and surrounding whitespace are skipped, as in
+// the other list variables. Entries are normalized: IPv4-mapped IPv6 forms
+// become IPv4, CIDRs are masked and duplicates are dropped, so the result holds
+// one prefix per distinct range in input order. name is the environment
+// variable, used in the error message.
+func ParseIgnoreList(name, raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	seen := map[netip.Prefix]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		p, err := parseIgnoreEntry(part)
+		if err != nil {
+			return nil, fmt.Errorf("%s has an invalid entry %q (%v); use IP addresses or CIDR ranges such as 8.8.8.8,1.1.1.0/24,2606:4700:4700::/48", name, part, err)
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func parseIgnoreEntry(s string) (netip.Prefix, error) {
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		if p.Addr().Zone() != "" {
+			return netip.Prefix{}, errors.New("zones are not supported")
+		}
+		addr, bits := p.Addr(), p.Bits()
+		if addr.Is4In6() {
+			if bits < 96 {
+				return netip.Prefix{}, errors.New("IPv4-mapped ranges need a prefix length of at least 96")
+			}
+			addr, bits = addr.Unmap(), bits-96
+		}
+		return netip.PrefixFrom(addr, bits).Masked(), nil
+	}
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	if addr.Zone() != "" {
+		return netip.Prefix{}, errors.New("zones are not supported")
+	}
+	addr = addr.Unmap()
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
+}
+
+// IsIgnored reports whether ip (a textual socket peer address) is covered by
+// RAN_IGNORE_IPS. IPv4-mapped IPv6 addresses are unmapped first.
+func (c *Config) IsIgnored(ip string) bool {
+	return MatchesPrefixes(c.IgnoreIPs, ip)
+}
+
+// MatchesPrefixes reports whether the textual address ip is inside any prefix.
+// Unparsable addresses never match; a zone is dropped and an IPv4-mapped IPv6
+// address is unmapped before matching.
+func MatchesPrefixes(prefixes []netip.Prefix, ip string) bool {
+	if len(prefixes) == 0 {
+		return false
+	}
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	addr = addr.WithZone("").Unmap()
+	for _, p := range prefixes {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) EnabledTraps() []string {
@@ -254,6 +341,11 @@ func Load(getenv func(string) string) (*Config, error) {
 	if err := ValidateAddr("RAN_METRICS_ADDR", c.MetricsAddr); err != nil {
 		return nil, err
 	}
+	ignore, err := ParseIgnoreList("RAN_IGNORE_IPS", getenv("RAN_IGNORE_IPS"))
+	if err != nil {
+		return nil, err
+	}
+	c.IgnoreIPs = ignore
 	for _, name := range RemovedEnvVars {
 		if strings.TrimSpace(getenv(name)) != "" {
 			c.RemovedEnvVars = append(c.RemovedEnvVars, name)

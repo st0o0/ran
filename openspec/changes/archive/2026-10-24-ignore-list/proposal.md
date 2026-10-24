@@ -6,7 +6,7 @@ Operators scan their own hosts: uptime monitors, vulnerability scanners, health 
 
 - New `RAN_IGNORE_IPS`: comma-separated IPs and CIDRs (v4 and v6). Parsed and validated at startup; an invalid entry fails `check-config` and names the offending value.
 - Sessions from an ignored source are still served, logged (with an `ignored` marker) and counted in connection metrics, but never alert, never feed the scan tracker and never enter the probe summary.
-- New metric `ran_ignored_sessions_total{protocol}` and a pipeline stage `ignored` in `ran_crowdsec_pipeline_total`.
+- New metric `ran_ignored_sessions_total{protocol}`. No CrowdSec pipeline stage: ignored sessions never reach the sink (see design.md).
 - The startup log states how many ranges are ignored.
 
 ## Capabilities

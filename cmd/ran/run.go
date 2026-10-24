@@ -48,6 +48,10 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 		logger.Warn("ignoring removed environment variable; ran no longer decides ban durations, use a CrowdSec profile", "variable", name)
 	}
 
+	if len(cfg.IgnoreIPs) > 0 {
+		logger.Info("ignore list active; these sources are served and logged but never alert", "ignored_ranges", len(cfg.IgnoreIPs))
+	}
+
 	var sink alert.Sink
 	if cfg.CrowdSec {
 		banOn := make([]alert.Class, len(cfg.BanOn))
@@ -75,6 +79,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 		MaxTracked:    cfg.CrowdSecMaxTracked,
 		SummaryWindow: cfg.ProbeSummaryWindow,
 		Metrics:       m,
+		IgnoreIPs:     cfg.IgnoreIPs,
 	}, sink, logger)
 	// Runs last: traps are stopped first, so the final events still reach the
 	// sink. The sink gets the remainder of the shared shutdown deadline.
