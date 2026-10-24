@@ -50,6 +50,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 
 	if len(cfg.IgnoreIPs) > 0 {
 		logger.Info("ignore list active; these sources are served and logged but never alert", "ignored_ranges", len(cfg.IgnoreIPs))
+		for _, p := range config.WideIgnoreRanges(cfg.IgnoreIPs) {
+			logger.Warn("RAN_IGNORE_IPS contains a very wide range; sessions from it never alert", "range", p.String())
+		}
 	}
 
 	var sink alert.Sink

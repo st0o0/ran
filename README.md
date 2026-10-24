@@ -286,7 +286,7 @@ Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RAN_IGNORE_IPS` | | Comma-separated IP addresses and CIDR ranges (IPv4 and IPv6) whose sessions never alert. Invalid entries fail startup and `ran check-config` and name the entry |
+| `RAN_IGNORE_IPS` | | Comma-separated IP addresses and CIDR ranges (IPv4 and IPv6) whose sessions never alert. At most 1024 distinct entries. Invalid entries or a longer list fail startup and `ran check-config` and name the entry or the limit |
 
 Use it for your own monitoring, scanners and admin hosts. A session from an
 ignored source is still served, logged with `ignored=true`, counted in the
@@ -297,7 +297,9 @@ keep their per-session log lines). IPv4-mapped IPv6 peers (`::ffff:8.8.8.8`) mat
 their IPv4 entry. With `RAN_PROXY_PROTOCOL` on, the address from the PROXY header
 is matched. UDP traps never alert anyway; for them the list only adds
 `ignored=true` to the log lines and counts the metric. The list is read once at
-startup (no reload) and the startup log reports the number of ranges.
+startup (no reload) and the startup log reports the number of ranges. A very
+wide range (fewer than 8 bits, such as `0.0.0.0/0` or `::/0`) is accepted but
+logged as a warning at startup and printed by `ran check-config` on stderr.
 
 ### Limits
 

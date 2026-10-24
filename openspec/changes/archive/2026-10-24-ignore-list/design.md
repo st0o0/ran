@@ -14,4 +14,4 @@ The sensor is the only component that decides what becomes an alert, so the igno
 
 ## Risks
 
-- A wide range (for example `0.0.0.0/0`) silences all alerts; this is the operator's explicit choice and is visible in the startup log.
+- A wide range (for example `0.0.0.0/0`) silences all alerts; this is the operator's explicit choice and is accepted. A range with fewer than 8 bits is logged as a warning at startup and printed by `ran check-config` on stderr. The list is bounded to 1024 distinct entries.

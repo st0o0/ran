@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -60,6 +61,44 @@ func TestParseIgnoreListInvalid(t *testing.T) {
 		if !strings.Contains(err.Error(), "RAN_IGNORE_IPS") || !strings.Contains(err.Error(), bad) {
 			t.Errorf("error for %q must name the variable and the entry: %v", bad, err)
 		}
+	}
+}
+
+func distinctIPv4s(n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("8.8.%d.%d", i/256, i%256)
+	}
+	return strings.Join(parts, ",")
+}
+
+func TestParseIgnoreListLimit(t *testing.T) {
+	got, err := ParseIgnoreList("RAN_IGNORE_IPS", distinctIPv4s(MaxIgnoreEntries))
+	if err != nil || len(got) != MaxIgnoreEntries {
+		t.Fatalf("%d entries: got %d, err %v, want accepted", MaxIgnoreEntries, len(got), err)
+	}
+	// Duplicates of accepted entries do not count against the limit.
+	if _, err := ParseIgnoreList("RAN_IGNORE_IPS", distinctIPv4s(MaxIgnoreEntries)+",8.8.0.0,::ffff:8.8.0.1"); err != nil {
+		t.Errorf("duplicates at the limit: %v", err)
+	}
+	_, err = ParseIgnoreList("RAN_IGNORE_IPS", distinctIPv4s(MaxIgnoreEntries+1))
+	if err == nil || !strings.Contains(err.Error(), "1024") || !strings.Contains(err.Error(), "RAN_IGNORE_IPS") {
+		t.Errorf("%d entries: want an error naming the variable and the limit, got %v", MaxIgnoreEntries+1, err)
+	}
+}
+
+func TestWideIgnoreRanges(t *testing.T) {
+	got, err := ParseIgnoreList("RAN_IGNORE_IPS", "8.8.8.8,0.0.0.0/0,::/0,::ffff:0:0/96,1.0.0.0/7,2000::/3,1.0.0.0/8,2606:4700::/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The mapped /96 becomes 0.0.0.0/0 and is dropped as a duplicate; 1.0.0.0/7 is masked.
+	want := pfx("0.0.0.0/0", "::/0", "0.0.0.0/7", "2000::/3")
+	if w := WideIgnoreRanges(got); !reflect.DeepEqual(w, want) {
+		t.Errorf("WideIgnoreRanges = %v, want %v", w, want)
+	}
+	if w := WideIgnoreRanges(pfx("1.0.0.0/8", "8.8.8.8/32")); len(w) != 0 {
+		t.Errorf("/8 and host entries are not wide, got %v", w)
 	}
 }
 

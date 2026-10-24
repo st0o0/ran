@@ -170,12 +170,34 @@ func ValidateAddr(name, raw string) error {
 	return ValidateAddrList(name, raw)
 }
 
+// MaxIgnoreEntries bounds RAN_IGNORE_IPS (distinct entries after dedupe), so the
+// per-session prefix scan stays cheap and a typo cannot load a huge list.
+const MaxIgnoreEntries = 1024
+
+// wideIgnoreBits is the prefix length below which an ignore entry counts as a
+// very wide range (fewer than 8 bits, for example 0.0.0.0/0 or ::/0).
+const wideIgnoreBits = 8
+
+// WideIgnoreRanges returns the prefixes that cover a very large part of the
+// address space (fewer than 8 bits, after IPv4-mapped entries are unmapped).
+// Such a range is accepted, but the caller should warn about it.
+func WideIgnoreRanges(prefixes []netip.Prefix) []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range prefixes {
+		if p.Bits() < wideIgnoreBits {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // ParseIgnoreList parses a comma-separated list of IP addresses and CIDR ranges
 // (IPv4 and IPv6). Empty entries and surrounding whitespace are skipped, as in
 // the other list variables. Entries are normalized: IPv4-mapped IPv6 forms
 // become IPv4, CIDRs are masked and duplicates are dropped, so the result holds
-// one prefix per distinct range in input order. name is the environment
-// variable, used in the error message.
+// one prefix per distinct range in input order. More than MaxIgnoreEntries
+// distinct entries are rejected. name is the environment variable, used in the
+// error message.
 func ParseIgnoreList(name, raw string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	seen := map[netip.Prefix]bool{}
@@ -189,6 +211,9 @@ func ParseIgnoreList(name, raw string) ([]netip.Prefix, error) {
 			return nil, fmt.Errorf("%s has an invalid entry %q (%v); use IP addresses or CIDR ranges such as 8.8.8.8,1.1.1.0/24,2606:4700:4700::/48", name, part, err)
 		}
 		if !seen[p] {
+			if len(out) >= MaxIgnoreEntries {
+				return nil, fmt.Errorf("%s has more than %d distinct entries; shorten the list or use wider CIDR ranges", name, MaxIgnoreEntries)
+			}
 			seen[p] = true
 			out = append(out, p)
 		}

@@ -64,10 +64,9 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 	for _, name := range cfg.RemovedEnvVars {
 		fmt.Fprintf(stderr, "ran: warning: %s is removed and ignored; use a CrowdSec profile for ban durations\n", name)
 	}
-	if len(cfg.IgnoreIPs) > 0 {
-		fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
-		return 0
+	for _, p := range config.WideIgnoreRanges(cfg.IgnoreIPs) {
+		fmt.Fprintf(stderr, "ran: warning: RAN_IGNORE_IPS contains a very wide range %s; sessions from it never alert\n", p)
 	}
-	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v)\n", len(cfg.Traps), cfg.Traps)
+	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
 	return 0
 }

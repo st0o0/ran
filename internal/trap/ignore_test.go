@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,5 +242,109 @@ func TestNonIgnoredSessionsAreNotCounted(t *testing.T) {
 	waitFor(t, func() bool { return counterVal(t, m.Connections, "telnet", "completed") == 1 })
 	if got := counterVal(t, m.IgnoredSessions, "telnet"); got != 0 {
 		t.Errorf("ignored sessions = %v, want 0", got)
+	}
+}
+
+// captureSink records every event the sensor forwards.
+type captureSink struct {
+	mu     sync.Mutex
+	events []alert.Event
+}
+
+func (c *captureSink) Submit(_ context.Context, ev alert.Event) {
+	c.mu.Lock()
+	c.events = append(c.events, ev)
+	c.mu.Unlock()
+}
+
+func (c *captureSink) Close() {}
+
+func (c *captureSink) sources() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, ev := range c.events {
+		out = append(out, ev.Info.SourceIP)
+	}
+	return out
+}
+
+// rawHTTPRequest sends one request behind a PROXY header and reads the reply
+// until the server closes the connection.
+func rawHTTPRequest(t *testing.T, addr, proxySource, request string) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(conn, "PROXY TCP4 %s 127.0.0.1 40000 80\r\n%s", proxySource, request)
+	_, _ = io.Copy(io.Discard, bufio.NewReader(conn))
+}
+
+// TestHTTPTrapsIgnoredSourceLeavesNoAlertOrState drives the real HTTP trap and
+// the real HTTP proxy trap (both create their sessions per connection or per
+// request) behind a real Sensor: an ignored source that probes and attacks
+// produces no event, no scan entry and no probe entry, while a neighbor does.
+func TestHTTPTrapsIgnoredSourceLeavesNoAlertOrState(t *testing.T) {
+	cases := []struct {
+		name  string
+		proto string
+		build func(*config.Config, *metrics.Metrics, *Limiter, Reporter) Trap
+		probe string
+		raid  string
+	}{
+		{
+			name: "http", proto: "http",
+			build: func(cfg *config.Config, m *metrics.Metrics, l *Limiter, r Reporter) Trap {
+				return NewHTTP(cfg, quietLogger(), m, l, r)
+			},
+			probe: "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+			raid:  "GET /.env HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+		},
+		{
+			name: "httpproxy", proto: "httpproxy",
+			build: func(cfg *config.Config, m *metrics.Metrics, l *Limiter, r Reporter) Trap {
+				return NewHTTPProxy(cfg, quietLogger(), m, l, r)
+			},
+			probe: "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+			raid:  "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nConnection: close\r\n\r\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := metrics.New(prometheus.NewRegistry(), "test")
+			cfg := ignoreTelnetConfig(10, "8.8.8.8")
+			cfg.Addrs = map[string]string{tc.proto: "127.0.0.1:0"}
+			sink := &captureSink{}
+			sensor := alert.NewSensor(alert.SensorConfig{SummaryWindow: time.Hour, Metrics: m, IgnoreIPs: cfg.IgnoreIPs}, sink, quietLogger())
+			defer sensor.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			addr := serveTrap(t, ctx, tc.build(cfg, m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), sensor))
+
+			rawHTTPRequest(t, addr, "8.8.8.8", tc.probe)
+			rawHTTPRequest(t, addr, "8.8.8.8", tc.raid)
+			waitFor(t, func() bool { return counterVal(t, m.IgnoredSessions, tc.proto) >= 2 })
+			waitFor(t, func() bool { return gaugeVal(t, m.ActiveSessions, tc.proto) == 0 })
+
+			if got := sink.sources(); len(got) != 0 {
+				t.Fatalf("ignored source produced events: %v", got)
+			}
+			for _, name := range []string{"scan", "probe"} {
+				if got := gaugeVal(t, m.TrackedEntries, name); got != 0 {
+					t.Errorf("tracked %s entries = %v, want 0 for an ignored source", name, got)
+				}
+			}
+
+			// Control: a neighbor outside the list is alerted and tracked.
+			rawHTTPRequest(t, addr, "8.8.4.4", tc.raid)
+			waitFor(t, func() bool { return len(sink.sources()) == 1 })
+			if got := sink.sources(); got[0] != "8.8.4.4" {
+				t.Errorf("event source = %v, want the neighbor 8.8.4.4", got)
+			}
+			waitFor(t, func() bool { return gaugeVal(t, m.TrackedEntries, "scan") == 1 })
+		})
 	}
 }
