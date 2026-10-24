@@ -32,7 +32,7 @@ Docs: the README comparison, positioning section and collapsible reference secti
 | 10 | `proxy-protocol-allowlist` | Source CIDR allowlist for who may send PROXY headers (already in AGENTS.md follow-ups) | S | internal |
 | 11 | `fingerprint-realism` | Vary SSH banner, MySQL and Elasticsearch versions; per-trap class meta for vnc and single-request traps | S | audit |
 | 12 | `ics-and-printer-traps` | S7comm 102, EtherNet/IP 44818, JetDirect/PJL 9100, IPP 631 (TCP only; BACnet and IPMI are UDP and would log only) | M | T-Pot (Conpot), qeeqbox |
-| 13 | `webhook-sink` | One generic webhook, rate limited, no passwords | S | OpenCanary, Beelzebub |
+| 13 | `webhook-sink` | One generic webhook, rate limited, no passwords. **Deferred by decision**: the change is written, do not implement it yet | S | OpenCanary, Beelzebub |
 
 ## To discuss next (all other changes are written)
 
