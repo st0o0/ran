@@ -123,7 +123,7 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `ssh` | `:2222` | Credentials (OpenSSH banner, password auth only; public-key and keyboard-interactive attempts are rejected without being logged) |
+| `ssh` | `:2222` | Credentials (OpenSSH banner; password and keyboard-interactive answers, and the SHA256 fingerprint and type of every offered public key, are logged as auth attempts and always rejected). Client identity: the client version string (`client_version`) and the HASSH of its KEXINIT (`hassh`) go to the log and the alert meta. Passwords never go to CrowdSec meta |
 | `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session |
 | `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response |
 | `telnet` | `:23` | Credentials (login/password prompts) |
@@ -255,7 +255,7 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 `RAN_AUTH_DELAY` and their `RAN_<PROTO>_` variants apply to `ssh`, `telnet`,
 `mssql` and `smb` only. `0` means unlimited attempts until the session timeout
 for all four (for `ssh` too: `ran` maps it to an unlimited setting, because
-the SSH library would otherwise fall back to 6). The other traps ignore them:
+the SSH library would otherwise fall back to 6). For `ssh` every rejected password, keyboard-interactive and distinct public-key offer counts as one attempt. The other traps ignore them:
 
 - `ftp`, `pop3`, `imap`, `smtp`, `ldap`, `irc`, `redis`, `http`, `https` and `httpproxy`
   accept unlimited attempts until the session timeout.

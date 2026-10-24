@@ -186,3 +186,24 @@ func FuzzParseClientHello(f *testing.F) {
 		boundedText(t, data, h.SNI)
 	})
 }
+
+func FuzzParseKexInit(f *testing.F) {
+	f.Add(buildKexInitStream("SSH-2.0-libssh_0.9.6", [8]string{"a,b", "c", "d", "e", "f", "g", "h", "i"}, 4))
+	f.Add([]byte("SSH-2.0-x\r\n"))
+	f.Add(append([]byte("SSH-2.0-x\r\n"), 0xff, 0xff, 0xff, 0xff, 4, 20))
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		h, done := scanKexInit(data)
+		if h != "" && (!done || len(h) != 32) {
+			t.Fatalf("hassh %q done=%v", h, done)
+		}
+		if out := sanitizeClientVersion(string(data)); len(out) > maxSSHClientVersion || len(out) > len(data) {
+			t.Fatalf("sanitized version of %d bytes from %d", len(out), len(data))
+		}
+		c := newKexSniffConn(nil)
+		c.feed(data)
+		if len(c.buf) > sshKexScanLimit {
+			t.Fatalf("buffer of %d bytes", len(c.buf))
+		}
+	})
+}

@@ -1,0 +1,288 @@
+package trap
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/binary"
+	"fmt"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/st0o0/ran/internal/metrics"
+	gossh "golang.org/x/crypto/ssh"
+)
+
+// Published HASSH example from github.com/salesforce/hassh (README, "Example 1"):
+// Cyberduck 6.7.1 (28683) has HASSH 8a8ae540028bf433cd68356c1b9e8d5b.
+const (
+	cyberduckKex  = "curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group14-sha256,diffie-hellman-group15-sha512,diffie-hellman-group16-sha512,diffie-hellman-group17-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256@ssh.com,diffie-hellman-group15-sha256,diffie-hellman-group15-sha256@ssh.com,diffie-hellman-group15-sha384@ssh.com,diffie-hellman-group16-sha256,diffie-hellman-group16-sha384@ssh.com,diffie-hellman-group16-sha512@ssh.com,diffie-hellman-group18-sha512@ssh.com"
+	cyberduckEnc  = "aes128-cbc,aes128-ctr,aes192-cbc,aes192-ctr,aes256-cbc,aes256-ctr,blowfish-cbc,blowfish-ctr,cast128-cbc,cast128-ctr,idea-cbc,idea-ctr,serpent128-cbc,serpent128-ctr,serpent192-cbc,serpent192-ctr,serpent256-cbc,serpent256-ctr,3des-cbc,3des-ctr,twofish128-cbc,twofish128-ctr,twofish192-cbc,twofish192-ctr,twofish256-cbc,twofish256-ctr,twofish-cbc,arcfour,arcfour128,arcfour256"
+	cyberduckMAC  = "hmac-sha1,hmac-sha1-96,hmac-md5,hmac-md5-96,hmac-sha2-256,hmac-sha2-512"
+	cyberduckComp = "zlib@openssh.com,zlib,none"
+	cyberduckHash = "8a8ae540028bf433cd68356c1b9e8d5b"
+)
+
+func buildKexInitStream(version string, lists [8]string, pad int) []byte {
+	var payload bytes.Buffer
+	payload.WriteByte(sshMsgKexInit)
+	payload.Write(make([]byte, 16))
+	for _, l := range lists {
+		var n [4]byte
+		binary.BigEndian.PutUint32(n[:], uint32(len(l)))
+		payload.Write(n[:])
+		payload.WriteString(l)
+	}
+	payload.WriteByte(0)
+	payload.Write(make([]byte, 4))
+	var out bytes.Buffer
+	out.WriteString(version + "\r\n")
+	var n [4]byte
+	binary.BigEndian.PutUint32(n[:], uint32(1+payload.Len()+pad))
+	out.Write(n[:])
+	out.WriteByte(byte(pad))
+	out.Write(payload.Bytes())
+	out.Write(make([]byte, pad))
+	return out.Bytes()
+}
+
+func TestHasshPublishedVector(t *testing.T) {
+	t.Parallel()
+	if got := hasshOf(cyberduckKex, cyberduckEnc, cyberduckMAC, cyberduckComp); got != cyberduckHash {
+		t.Fatalf("hassh = %s, want %s", got, cyberduckHash)
+	}
+	lists := [8]string{cyberduckKex, "ssh-ed25519", cyberduckEnc, "other-enc", cyberduckMAC, "other-mac", cyberduckComp, "other-comp"}
+	stream := buildKexInitStream("SSH-2.0-Cyberduck/6.7.1.28683", lists, 6)
+	if got, done := scanKexInit(stream); !done || got != cyberduckHash {
+		t.Fatalf("scanKexInit = %q, %v; want %s, true", got, done, cyberduckHash)
+	}
+	for i := 0; i < len(stream); i++ {
+		if got, done := scanKexInit(stream[:i]); done || got != "" {
+			t.Fatalf("prefix of %d bytes = %q, %v; want need-more", i, got, done)
+		}
+	}
+	pre := append([]byte("banner line\r\n"), stream...)
+	if got, _ := scanKexInit(pre); got != cyberduckHash {
+		t.Errorf("with a pre-version line: %q", got)
+	}
+}
+
+func TestScanKexInitRejectsGarbage(t *testing.T) {
+	t.Parallel()
+	valid := buildKexInitStream("SSH-2.0-x", [8]string{"a", "b", "c", "d", "e", "f", "g", "h"}, 4)
+	huge := append([]byte("SSH-2.0-x\r\n"), 0xff, 0xff, 0xff, 0xff, 4, sshMsgKexInit)
+	notKex := append([]byte("SSH-2.0-x\r\n"), 0, 0, 0, 12, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	badList := append([]byte(nil), valid...)
+	badList[len("SSH-2.0-x\r\n")+4+1+1+16+3] = 0xff // first name-list length
+	for name, in := range map[string][]byte{"huge length": huge, "not kexinit": notKex, "bad list": badList} {
+		if got, done := scanKexInit(in); got != "" || !done {
+			t.Errorf("%s: %q, %v; want empty, done", name, got, done)
+		}
+	}
+}
+
+func TestSanitizeClientVersion(t *testing.T) {
+	t.Parallel()
+	if got := sanitizeClientVersion("SSH-2.0-libssh_0.9.6"); got != "SSH-2.0-libssh_0.9.6" {
+		t.Errorf("got %q", got)
+	}
+	if got := sanitizeClientVersion(strings.Repeat("A", 300)); len(got) != maxSSHClientVersion {
+		t.Errorf("len = %d, want %d", len(got), maxSSHClientVersion)
+	}
+	if got := sanitizeClientVersion("SSH-2.0-a\x00\x1b[31m\xffz"); got != "SSH-2.0-a[31mz" {
+		t.Errorf("control bytes kept: %q", got)
+	}
+}
+
+type sshIDTrap struct {
+	addr string
+	rec  *recordingAlerter
+	logs *syncBuffer
+	reg  *prometheus.Registry
+}
+
+func startSSHIdentityTrap(t *testing.T, retries int, delay time.Duration) sshIDTrap {
+	t.Helper()
+	cfg := testConfig(t)
+	cfg.MaxAuthRetries = retries
+	cfg.AuthDelay = delay
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg, "test")
+	rec := &recordingAlerter{}
+	logs := &syncBuffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, nil))
+	sshTrap, err := NewSSH(cfg, logger, m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return sshIDTrap{addr: serveTrap(t, ctx, sshTrap), rec: rec, logs: logs, reg: reg}
+}
+
+func newSigners(t *testing.T, n int) []gossh.Signer {
+	t.Helper()
+	var out []gossh.Signer
+	for i := 0; i < n; i++ {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := gossh.NewSignerFromKey(priv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func dialSSH(addr, user string, methods ...gossh.AuthMethod) {
+	c, err := gossh.Dial("tcp", addr, &gossh.ClientConfig{
+		User:            user,
+		Auth:            methods,
+		ClientVersion:   "SSH-2.0-libssh_0.9.6",
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		Timeout:         3 * time.Second,
+	})
+	if err == nil {
+		c.Close()
+	}
+}
+
+func interactive(answer string) gossh.AuthMethod {
+	return gossh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+		out := make([]string, len(questions))
+		for i := range out {
+			out[i] = answer
+		}
+		return out, nil
+	})
+}
+
+// Not parallel: it switches the package-level password log mode.
+func TestSSHIdentityCapture(t *testing.T) {
+	signers := newSigners(t, 1)
+	fp := gossh.FingerprintSHA256(signers[0].PublicKey())
+	cases := []struct {
+		name    string
+		methods []gossh.AuthMethod
+		attempt int
+		method  string
+		secret  string
+		keyFP   string
+	}{
+		{"key only", []gossh.AuthMethod{gossh.PublicKeys(signers...)}, 1, "publickey", "", fp},
+		{"interactive", []gossh.AuthMethod{interactive("hunter2")}, 1, "keyboard-interactive", "hunter2", ""},
+		{"password", []gossh.AuthMethod{gossh.Password("hunter2")}, 1, "", "hunter2", ""},
+		{"mixed", []gossh.AuthMethod{gossh.PublicKeys(signers...), interactive("hunter2"), gossh.Password("hunter2")}, 3, "", "hunter2", fp},
+	}
+	SetPasswordLogMode("on")
+	defer SetPasswordLogMode("off")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := startSSHIdentityTrap(t, 6, 0)
+			dialSSH(tr.addr, "root", tc.methods...)
+			waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= tc.attempt })
+			alerts := tr.rec.snapshot()
+			if len(alerts) != tc.attempt {
+				t.Fatalf("alerts = %d, want %d", len(alerts), tc.attempt)
+			}
+			for _, a := range alerts {
+				if a.Meta["username"] != "root" || a.Meta["client_version"] != "SSH-2.0-libssh_0.9.6" {
+					t.Errorf("meta = %v", a.Meta)
+				}
+				if len(a.Meta["hassh"]) != 32 {
+					t.Errorf("hassh meta = %q", a.Meta["hassh"])
+				}
+				if m := a.Meta["method"]; m == "keyboard-interactive" || m == "publickey" {
+					if _, ok := a.Meta["password"]; ok {
+						t.Errorf("password in %s meta: %v", m, a.Meta)
+					}
+				}
+			}
+			last := alerts[len(alerts)-1]
+			if tc.method != "" && last.Meta["method"] != tc.method {
+				t.Errorf("method = %q, want %q", last.Meta["method"], tc.method)
+			}
+			if tc.keyFP != "" {
+				found := false
+				for _, a := range alerts {
+					if a.Meta["fingerprint"] == tc.keyFP && a.Meta["key_type"] == "ssh-ed25519" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("no alert with fingerprint %s: %v", tc.keyFP, alerts)
+				}
+			}
+			waitUntil(t, func() bool { return strings.Count(tr.logs.String(), `"action":"auth_attempt"`) >= tc.attempt })
+			out := tr.logs.String()
+			for _, want := range []string{`"client_version":"SSH-2.0-libssh_0.9.6"`, `"hassh":"`} {
+				if !strings.Contains(out, want) {
+					t.Errorf("log lacks %s:\n%s", want, out)
+				}
+			}
+			if tc.keyFP != "" && !strings.Contains(out, tc.keyFP) {
+				t.Errorf("log lacks fingerprint")
+			}
+			if tc.secret != "" && !strings.Contains(out, `"password":"`+tc.secret+`"`) {
+				t.Errorf("log lacks password with mode on:\n%s", out)
+			}
+			if got := counterSum(t, tr.reg, "ran_credentials_captured_total", "protocol", "ssh"); got != float64(tc.attempt) {
+				t.Errorf("credentials metric = %v, want %d", got, tc.attempt)
+			}
+		})
+	}
+}
+
+// Not parallel: it reads the package-level password log mode.
+func TestSSHInteractivePasswordOffByDefault(t *testing.T) {
+	SetPasswordLogMode("off")
+	tr := startSSHIdentityTrap(t, 3, 0)
+	dialSSH(tr.addr, "root", interactive("hunter2"))
+	waitUntil(t, func() bool { return strings.Contains(tr.logs.String(), `"action":"auth_attempt"`) })
+	if strings.Contains(tr.logs.String(), "hunter2") {
+		t.Errorf("password logged with mode off:\n%s", tr.logs.String())
+	}
+	for _, a := range tr.rec.snapshot() {
+		for k, v := range a.Meta {
+			if strings.Contains(v, "hunter2") {
+				t.Errorf("secret in meta %s", k)
+			}
+		}
+	}
+}
+
+func TestSSHKeyAttemptLimits(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ retries, offered, want int }{{3, 5, 3}, {0, 9, 9}} {
+		t.Run(fmt.Sprintf("retries_%d", tc.retries), func(t *testing.T) {
+			t.Parallel()
+			tr := startSSHIdentityTrap(t, tc.retries, 0)
+			dialSSH(tr.addr, "root", gossh.PublicKeys(newSigners(t, tc.offered)...))
+			waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= tc.want })
+			time.Sleep(100 * time.Millisecond)
+			if got := len(tr.rec.snapshot()); got != tc.want {
+				t.Errorf("attempts = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSSHKeyAttemptDelayGrows(t *testing.T) {
+	t.Parallel()
+	const delay = 40 * time.Millisecond
+	tr := startSSHIdentityTrap(t, 3, delay)
+	start := time.Now()
+	dialSSH(tr.addr, "root", gossh.PublicKeys(newSigners(t, 3)...))
+	waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= 3 })
+	// Delays of 1x, 2x and 4x the base are applied to the three rejections.
+	if elapsed := time.Since(start); elapsed < 7*delay {
+		t.Errorf("elapsed %v, want at least %v", elapsed, 7*delay)
+	}
+}

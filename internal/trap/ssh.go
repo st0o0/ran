@@ -68,30 +68,89 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	authDelay := t.cfg.ResolveAuthDelay("ssh")
 	maxRetries := sshMaxAuthTries(t.cfg.ResolveMaxAuthRetries("ssh"))
 
+	sniff := newKexSniffConn(conn)
+
+	// identity returns the log attributes and alert meta that describe the
+	// client implementation: version string and HASSH, both bounded.
+	identity := func(c gossh.ConnMetadata) (attrs []slog.Attr, meta map[string]string) {
+		meta = map[string]string{"username": c.User()}
+		if v := sanitizeClientVersion(string(c.ClientVersion())); v != "" {
+			attrs = append(attrs, slog.String("client_version", v))
+			meta["client_version"] = v
+		}
+		if h := sniff.HASSH(); h != "" {
+			attrs = append(attrs, slog.String("hassh", h))
+			meta["hassh"] = h
+		}
+		return attrs, meta
+	}
+
+	// record logs, counts and reports one rejected attempt and applies the
+	// auth delay. A secret is passed only as a "password" log attribute, so
+	// RAN_LOG_PASSWORDS governs it, and is never added to the alert meta.
+	record := func(c gossh.ConnMetadata, method string, extra []slog.Attr, extraMeta map[string]string) error {
+		authSeen = true
+		idAttrs, meta := identity(c)
+		attrs := append([]slog.Attr{slog.String("username", c.User()), slog.String("method", method)}, extra...)
+		attrs = append(attrs, idAttrs...)
+		sess.LogAuthAttempt(attrs...)
+		sess.RecordCredentials(t.metrics)
+		meta["method"] = method
+		for k, v := range extraMeta {
+			meta[k] = v
+		}
+		sess.Alert(ctx, meta)
+		if authDelay > 0 {
+			_ = authSleep(ctx, authDelay, attempt)
+		}
+		attempt++
+		return errors.New("access denied")
+	}
+
 	sshCfg := &gossh.ServerConfig{
 		ServerVersion: "SSH-2.0-OpenSSH_9.6",
 		MaxAuthTries:  maxRetries,
 		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
 			authSeen = true
-			sess.LogAuthAttempt(
+			idAttrs, meta := identity(c)
+			attrs := append([]slog.Attr{
 				slog.String("username", c.User()),
 				slog.String("password", string(pass)),
-			)
+			}, idAttrs...)
+			sess.LogAuthAttempt(attrs...)
 			sess.RecordCredentials(t.metrics)
-			sess.Alert(ctx, map[string]string{"username": c.User(), "password": string(pass)})
+			meta["password"] = string(pass)
+			sess.Alert(ctx, meta)
 			if authDelay > 0 {
-				if err := authSleep(ctx, authDelay, attempt); err != nil {
-					attempt++
-					return nil, errors.New("access denied")
-				}
+				_ = authSleep(ctx, authDelay, attempt)
 			}
 			attempt++
 			return nil, errors.New("access denied")
 		},
+		// x/crypto caches the result per (user, key), so each distinct key is
+		// logged once even though clients query and then sign.
+		PublicKeyCallback: func(c gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+			keyType := sanitizeClientVersion(key.Type())
+			fp := gossh.FingerprintSHA256(key)
+			return nil, record(c, "publickey",
+				[]slog.Attr{slog.String("key_type", keyType), slog.String("fingerprint", fp)},
+				map[string]string{"key_type": keyType, "fingerprint": fp})
+		},
+		KeyboardInteractiveCallback: func(c gossh.ConnMetadata, challenge gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
+			answers, err := challenge("", "", []string{"Password: "}, []bool{false})
+			if err != nil {
+				return nil, errors.New("access denied")
+			}
+			var extra []slog.Attr
+			if len(answers) > 0 {
+				extra = append(extra, slog.String("password", answers[0]))
+			}
+			return nil, record(c, "keyboard-interactive", extra, nil)
+		},
 	}
 	sshCfg.AddHostKey(t.signer)
 
-	sshConn, _, _, err := gossh.NewServerConn(conn, sshCfg)
+	sshConn, _, _, err := gossh.NewServerConn(sniff, sshCfg)
 	if err != nil {
 		if authSeen {
 			sess.SetOutcome("completed")
