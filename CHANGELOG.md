@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0](https://github.com/st0o0/ran/compare/v0.3.8...v0.4.0) (2026-10-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* push decision-less sensor alerts classified attack/probe/scan and add shared TCP trap skeleton
+
+### Features
+
+* push decision-less sensor alerts classified attack/probe/scan and add shared TCP trap skeleton ([821539b](https://github.com/st0o0/ran/commit/821539b3c159429075d26ff730a9b8987e10ee30))
+
+
+### Bug Fixes
+
+* validate durations, allow unlimited SSH retries, downgrade unbanned scans, default cooldown 1h ([c4ff95f](https://github.com/st0o0/ran/commit/c4ff95f7053a66138860b9704818bf422be86bf0))
+
+
+### Documentation
+
+* add AGENTS.md contributor and agent notes ([0143013](https://github.com/st0o0/ran/commit/0143013127f2fdb12e9e65c1b901e4b5647ad231))
+* document config validation, SSH limits, scan downgrade and 1h alert cooldown ([bfe3a62](https://github.com/st0o0/ran/commit/bfe3a621d38fcca964b67e5ddd9e3de3a3b424b6))
+* **openspec:** sync sensor and trap lifecycle specs and archive changes ([541a51c](https://github.com/st0o0/ran/commit/541a51c8392e6d71b7906365821bf57ad9a92ff3))
+* update SECURITY.md ([1623919](https://github.com/st0o0/ran/commit/1623919330d424a3ebee48b14d69505a1ce6e049))
+
 ## [0.3.8](https://github.com/st0o0/ran/compare/v0.3.7...v0.3.8) (2026-10-23)
 
 
