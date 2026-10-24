@@ -36,7 +36,7 @@ The `mcp` trap SHALL answer JSON-RPC 2.0 `initialize`, `ping`, `notifications/in
 
 #### Scenario: Request id
 - **WHEN** the id is an integer of at most 15 digits or a string of at most 64 characters from `A-Za-z0-9._:-`
-- **THEN** it is echoed
+- **THEN** it is echoed as the decoded string re-encoded, never longer than 66 bytes, even if the request used escapes
 - **WHEN** it is anything else
 - **THEN** `null` is answered
 
@@ -48,7 +48,7 @@ The `mcp` trap SHALL answer JSON-RPC 2.0 `initialize`, `ping`, `notifications/in
 - **THEN** one `endpoint` event is sent and the response ends
 
 ### Requirement: Tool calls are attacks
-A `tools/call` request SHALL be recorded as a command with the tool name (64 bytes) and a bounded argument summary (at most 8 keys in sorted order, 128 bytes per string value, objects and arrays not descended into, values of secret-looking keys replaced by `***`), answered with an `isError` result that reflects no client text, and SHALL classify the session as `attack`. Nothing SHALL be executed. The alert meta SHALL contain `command` and `tool` besides the common HTTP keys.
+A `tools/call` request SHALL be recorded as a command with the tool name (64 bytes) and a bounded argument summary (at most 8 keys in sorted order, 128 bytes per string value, objects and arrays not descended into, values of secret-looking keys, matched case-insensitively by substring, replaced by `***`; credential-looking text in the command string such as `Authorization: Bearer x`, `Cookie: x`, `KEY=value` with a secret-like name, `--token x` or URL userinfo replaced by `***`, always in the alert meta and in the log unless `RAN_LOG_PASSWORDS=on`), answered with an `isError` result that reflects no client text, and SHALL classify the session as `attack`. Nothing SHALL be executed. The alert meta SHALL contain `command` and `tool` besides the common HTTP keys.
 
 #### Scenario: Command tool
 - **WHEN** a client calls `run_command` with `{"command":"cat /etc/passwd"}`

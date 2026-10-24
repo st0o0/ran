@@ -62,9 +62,10 @@ func newStubRequest(w http.ResponseWriter, r *http.Request) (*stubRequest, bool)
 
 // command logs a command and marks the session for an alert.
 func (q *stubRequest) command(cmd string) {
-	cmd = sanitizeHTTPValue(cmd)
-	q.meta["command"] = cmd
-	q.sess.LogCommand(cmd, q.attrs...)
+	// The meta goes to CrowdSec and is always scrubbed; the log follows
+	// RAN_LOG_PASSWORDS.
+	q.meta["command"] = metaCommandText(cmd)
+	q.sess.LogCommand(logCommandText(cmd), q.attrs...)
 }
 
 // stubTokenHashLen is the number of hex characters kept from a token hash.

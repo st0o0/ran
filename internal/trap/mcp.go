@@ -165,7 +165,13 @@ func sanitizeRPCID(raw json.RawMessage) json.RawMessage {
 				return nullID
 			}
 		}
-		return raw
+		// Echo the validated string, not the raw JSON: escapes in the raw text
+		// would make it longer than the bound.
+		out, err := json.Marshal(str)
+		if err != nil {
+			return nullID
+		}
+		return out
 	}
 	digits := strings.TrimPrefix(s, "-")
 	if len(digits) == 0 || len(digits) > maxMCPIDDigits {
@@ -185,18 +191,9 @@ func sanitizeMCPText(s string, n int) string {
 	return sanitizeHTTPValue(truncateRunes(s, n))
 }
 
-// secretArgKeyParts mark argument keys whose value is not recorded.
-var secretArgKeyParts = []string{"password", "passwd", "secret", "token", "api_key", "apikey", "authorization", "credential", "private_key"}
-
-func secretArgKey(k string) bool {
-	k = strings.ToLower(k)
-	for _, p := range secretArgKeyParts {
-		if strings.Contains(k, p) {
-			return true
-		}
-	}
-	return false
-}
+// secretArgKey reports whether the value of an argument key is not recorded (see
+// secretNameParts). String values of other keys are scrubbed when logged.
+func secretArgKey(k string) bool { return secretName(k) }
 
 // summarizeMCPArgs returns "key=value" pairs for at most maxMCPArgKeys keys of the
 // arguments object (sorted, so the result is deterministic). String values are cut
@@ -427,13 +424,14 @@ func (q *mcpRequest) recordToolCall(c rpcCall, attrs []slog.Attr) {
 	if args != "" {
 		line += " " + args
 	}
-	line = sanitizeHTTPValue(line)
-	attrs = append(attrs, slog.String("tool", tool), slog.String("arguments", args))
-	q.req.sess.LogCommand(line, attrs...)
+	// The meta goes to CrowdSec and is always scrubbed; the log follows
+	// RAN_LOG_PASSWORDS.
+	attrs = append(attrs, slog.String("tool", tool), slog.String("arguments", logScrubSecrets(args)))
+	q.req.sess.LogCommand(logCommandText(line), attrs...)
 	q.alerted = true
 	if !q.commandSet {
 		q.commandSet = true
-		q.req.meta["command"] = line
+		q.req.meta["command"] = metaCommandText(line)
 		q.req.meta["tool"] = tool
 	}
 }

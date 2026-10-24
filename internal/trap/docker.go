@@ -100,7 +100,7 @@ func (t *DockerTrap) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && route == "/containers/create":
 		image, cmd := parseDockerBody(req.body)
 		image = truncateRunes(sanitizeHTTPValue(image), maxDockerImageBytes)
-		req.meta["image"] = image
+		req.meta["image"] = metaCommandText(image)
 		req.command("docker create image=" + image + " cmd=" + cmd)
 		alerted = true
 	case r.Method == http.MethodPost && isDockerExec(route):

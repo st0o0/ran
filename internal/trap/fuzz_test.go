@@ -351,6 +351,7 @@ func FuzzParseJSONRPC(f *testing.F) {
 	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"x","version":"1"}}}`))
 	f.Add([]byte(`{"jsonrpc":"2.0","id":"a","method":"tools/call","params":{"name":"run_command","arguments":{"command":"id","n":[1],"o":{}}}}`))
 	f.Add([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"},{"bad":1},7,null]`))
+	f.Add([]byte(`{"jsonrpc":"2.0","id":"abcabcabcabcabcabcabcabcabc","method":"ping"}`))
 	f.Add([]byte(`[[[[[[`))
 	f.Add([]byte("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"a\u200b\\u202e\"}"))
 	f.Fuzz(func(t *testing.T, data []byte) {

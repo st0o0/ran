@@ -495,13 +495,51 @@ func TestMCPAuthorizationHeaderNotStored(t *testing.T) {
 	}
 }
 
-func TestMCPSessionHeaderAloneIsProbe(t *testing.T) {
+func TestMCPEscapedIDIsEchoedBounded(t *testing.T) {
 	t.Parallel()
 	h := startMCP(t)
-	mcpPost(t, h, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, map[string]string{"Mcp-Session-Id": "abc"})
+	id := `"` + strings.Repeat(`a`, 64) + `"`
+	res := mcpPost(t, h, `{"jsonrpc":"2.0","id":`+id+`,"method":"ping"}`, nil)
+	r := decodeReply(t, res.body)
+	if want := `"` + strings.Repeat("a", 64) + `"`; string(r.ID) != want {
+		t.Errorf("id = %s, want %s", r.ID, want)
+	}
+	if len(r.ID) > maxMCPName+2 {
+		t.Errorf("id is %d bytes", len(r.ID))
+	}
+}
+
+func TestMCPSessionHeaderAloneIsProbe(t *testing.T) {
+	t.Parallel()
+	const sessionID = "mcp-sess-7f3a9c1d-distinct"
+	h := startMCP(t)
+	mcpPost(t, h, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, map[string]string{"Mcp-Session-Id": sessionID})
 	h.waitClass(t, false)
-	if strings.Contains(h.logs.String(), `"abc"`) {
-		t.Error("Mcp-Session-Id logged")
+	if strings.Contains(h.logs.String(), sessionID) {
+		t.Errorf("Mcp-Session-Id logged:\n%s", h.logs.String())
+	}
+	// An attack in the same kind of request must not carry it into the alert meta.
+	mcpPost(t, h, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file"}}`, map[string]string{"Mcp-Session-Id": sessionID})
+	ev := waitAttack(t, h.sink)
+	for k, v := range ev.Meta {
+		if strings.Contains(v, sessionID) || strings.Contains(k, sessionID) {
+			t.Errorf("meta %s=%q holds the session header", k, v)
+		}
+	}
+	if strings.Contains(h.logs.String(), sessionID) {
+		t.Errorf("Mcp-Session-Id logged:\n%s", h.logs.String())
+	}
+}
+
+func TestMCPSSEEndpointEvent(t *testing.T) {
+	t.Parallel()
+	h := startMCP(t)
+	res := stubDo(t, h.addr, "GET", "/sse", nil, "")
+	if want := "event: endpoint\ndata: /mcp\n\n"; res.body != want {
+		t.Errorf("body = %q, want %q", res.body, want)
+	}
+	if res.header.Get("Cache-Control") != "no-cache" {
+		t.Errorf("Cache-Control = %q", res.header.Get("Cache-Control"))
 	}
 }
 
@@ -653,6 +691,14 @@ func TestSanitizeRPCID(t *testing.T) {
 		`1`: `1`, `-5`: `-5`, `"abc-1_2.3:4"`: `"abc-1_2.3:4"`, `null`: `null`,
 		`1.5`: `null`, `1e3`: `null`, `"a b"`: `null`, `"<x>"`: `null`, `""`: `null`,
 		`"` + strings.Repeat("a", 65) + `"`: `null`, `1234567890123456`: `null`, `true`: `null`, `[1]`: `null`, `-`: `null`,
+		// Escapes are decoded and the validated string is re-marshaled, so the echo
+		// is never longer than maxMCPName+2.
+		`"abc"`:                             `"abc"`,
+		`"<x"`:                              `null`,
+		`"a\"b"`:                            `null`,
+		`"a\\b"`:                            `null`,
+		`"` + strings.Repeat(`a`, 64) + `"`: `"` + strings.Repeat("a", 64) + `"`,
+		`"` + strings.Repeat(`a`, 65) + `"`: `null`,
 	}
 	for in, want := range cases {
 		if got := string(sanitizeRPCID(json.RawMessage(in))); got != want {

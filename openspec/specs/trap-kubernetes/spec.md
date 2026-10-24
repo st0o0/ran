@@ -11,7 +11,7 @@ The `kubernetes` trap SHALL answer `/version`, `/healthz` (also `/livez` and `/r
 - **THEN** a JSON version document is returned and the session stays a `probe`
 
 ### Requirement: Kubelet execution attempts
-A request to `/run/`, `/exec/` or `/attach/` paths of the kubelet API (any method) SHALL be recorded as a command (method, path and the `cmd` or `command` values of the query string or form body, bounded to 256 bytes) and refused.
+A request to `/run/`, `/exec/` or `/attach/` paths of the kubelet API (any method) SHALL be recorded as a command (method, path and the `cmd` or `command` values of the query string or form body, bounded to 256 bytes; credential-looking text such as bearer tokens, `KEY=value` with a secret-like name and URL userinfo is replaced by `***` in the meta and, unless `RAN_LOG_PASSWORDS=on`, in the log) and refused.
 
 #### Scenario: Remote exec attempt
 - **WHEN** a client posts to `/run/default/pod/container` with `cmd=id`
