@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
@@ -16,6 +17,9 @@ import (
 const (
 	maxDockerCmdItems = 64
 	maxDockerCmdBytes = 1024
+	// maxDockerImageBytes keeps a long image name from crowding the command out
+	// of the (bounded) command meta.
+	maxDockerImageBytes = 64
 )
 
 // DockerTrap is a stub of the Docker Engine API. It reuses the HTTP trap for
@@ -86,7 +90,7 @@ func (t *DockerTrap) handle(w http.ResponseWriter, r *http.Request) {
 	h.Set("Ostype", "linux")
 	h.Set("Docker-Experimental", "false")
 
-	readOnly := r.Method == http.MethodGet || r.Method == http.MethodHead
+	readOnly := isReadOnlyMethod(r.Method)
 	alerted := false
 
 	switch {
@@ -95,7 +99,8 @@ func (t *DockerTrap) handle(w http.ResponseWriter, r *http.Request) {
 		alerted = true
 	case r.Method == http.MethodPost && route == "/containers/create":
 		image, cmd := parseDockerBody(req.body)
-		req.meta["image"] = sanitizeHTTPValue(image)
+		image = truncateRunes(sanitizeHTTPValue(image), maxDockerImageBytes)
+		req.meta["image"] = image
 		req.command("docker create image=" + image + " cmd=" + cmd)
 		alerted = true
 	case r.Method == http.MethodPost && isDockerExec(route):
@@ -159,7 +164,7 @@ func parseDockerBody(body []byte) (image, cmd string) {
 		return "", ""
 	}
 	parts := append(dockerWords(v.Entrypoint), dockerWords(v.Cmd)...)
-	return truncateBytes(v.Image, maxHTTPValue), joinStrings(parts, maxDockerCmdItems, maxDockerCmdBytes)
+	return truncateRunes(v.Image, maxHTTPValue), joinStrings(parts, maxDockerCmdItems, maxDockerCmdBytes)
 }
 
 func dockerWords(x any) []string {
@@ -181,11 +186,22 @@ func dockerWords(x any) []string {
 	return nil
 }
 
-// truncateBytes cuts s to at most n bytes (the result may split a rune; callers
-// sanitize it before it is logged).
-func truncateBytes(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+// truncateRunes cuts s to at most n bytes at a rune boundary, so valid UTF-8
+// stays valid.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return s
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// isReadOnlyMethod reports whether a method never changes state. OPTIONS is
+// included because crawlers and CORS preflights send it. State-changing methods
+// (POST, PUT, PATCH, DELETE) and the unusual ones (PROPFIND, CONNECT, TRACE and
+// anything else) are not read-only and count as an attack.
+func isReadOnlyMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }

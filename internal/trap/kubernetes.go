@@ -68,7 +68,7 @@ func (t *KubernetesTrap) handle(w http.ResponseWriter, r *http.Request) {
 	if len(r.URL.Path) <= maxHTTPPath {
 		route = path.Clean("/" + r.URL.Path)
 	}
-	readOnly := r.Method == http.MethodGet || r.Method == http.MethodHead
+	readOnly := isReadOnlyMethod(r.Method)
 	alerted := false
 
 	tokenHash := bearerTokenHash(r)

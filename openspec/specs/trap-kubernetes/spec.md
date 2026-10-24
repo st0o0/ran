@@ -4,7 +4,7 @@
 TBD - created by archiving change new-scan-targets. Update Purpose after archive.
 ## Requirements
 ### Requirement: Kubernetes API and kubelet stub
-The `kubernetes` trap SHALL answer `/version`, `/healthz` (also `/livez` and `/readyz`) and `/api` with plausible static responses and return `403` (`401` when a bearer token was presented) for other paths. Kubelet paths `/pods` and `/runningpods` SHALL return `401`. It SHALL reuse the request handling of the `http` trap (one session per connection, 16 KiB limits, `Stop(ctx)` closes live connections). The `10250` kubelet port is reachable by listing it in `RAN_KUBERNETES_ADDR`.
+The `kubernetes` trap SHALL answer `/version`, `/healthz` (also `/livez` and `/readyz`) and `/api` with plausible static responses and return `403` (`401` when a bearer token was presented) for other paths. Kubelet paths `/pods` and `/runningpods` SHALL return `401`. `GET`, `HEAD` and `OPTIONS` are read-only and stay probes; every other method (`POST`, `PUT`, `PATCH`, `DELETE`, `PROPFIND`, `CONNECT`, `TRACE`, unknown) is recorded as `METHOD /path`, counts as an attack and is refused. It SHALL reuse the request handling of the `http` trap (one session per connection, 16 KiB limits, `Stop(ctx)` closes live connections). The `10250` kubelet port is reachable by listing it in `RAN_KUBERNETES_ADDR`.
 
 #### Scenario: Version probe
 - **WHEN** a client requests `GET /version`

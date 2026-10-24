@@ -24,8 +24,16 @@ func TestTelnetMultiPortBindFailureIsAllOrNothing(t *testing.T) {
 	}
 	defer busy.Close()
 
+	// The first address is free and binds; it must be released again.
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	freeAddr := free.Addr().String()
+	free.Close()
+
 	cfg := &config.Config{
-		Addrs:          map[string]string{"telnet": "127.0.0.1:0," + busy.Addr().String()},
+		Addrs:          map[string]string{"telnet": freeAddr + "," + busy.Addr().String()},
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    10,
 		MaxPerIP:       10,
@@ -48,6 +56,17 @@ func TestTelnetMultiPortBindFailureIsAllOrNothing(t *testing.T) {
 	case <-tr.Ready():
 		t.Error("trap reported ready after a failed bind")
 	default:
+	}
+	// The port that did bind is released: nothing accepts there and it can be bound again.
+	if c, err := net.DialTimeout("tcp", freeAddr, time.Second); err == nil {
+		c.Close()
+		t.Errorf("%s still accepts connections after the failed start", freeAddr)
+	}
+	again, err := net.Listen("tcp", freeAddr)
+	if err != nil {
+		t.Errorf("%s was not released: %v", freeAddr, err)
+	} else {
+		again.Close()
 	}
 }
 

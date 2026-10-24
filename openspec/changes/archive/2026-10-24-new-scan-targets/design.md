@@ -10,7 +10,7 @@ Three new targets (Docker, Kubernetes, MongoDB) and a second telnet port. Two of
 
 The `http` trap handler itself is not reused: it answers every request with a login page and classifies by exploit path, which does not fit an API stub (`/containers/json` is even on the exploit path list).
 
-Classification: read-only requests to known endpoints are probes (`Session.Log`); create/exec, any state-changing method, JNDI and a request body count as command or payload and raise an alert. Bodies are not logged; only the parsed `Image`/`Cmd` of a create or exec, cut to 256 bytes, reach the log and the alert meta.
+Classification: read-only requests (`GET`, `HEAD`, `OPTIONS`) to known endpoints are probes (`Session.Log`); create/exec, any other method, JNDI and a request body count as command or payload and raise an alert. Bodies are not logged; only the parsed `Image`/`Cmd` of a create or exec, cut to 256 bytes, reach the log and the alert meta.
 
 The bearer token is hashed (SHA-256, first 8 hex characters) before it is used anywhere; `Authorization` is never in the logged header subset.
 
@@ -30,3 +30,10 @@ The BSON walk is top level only: nested documents, arrays and every other value 
 
 - A deployment that already used `:2323` for something else loses telnet until `RAN_TELNET_ADDR` is set.
 - The Kubernetes stub speaks plain HTTP; real clients use TLS and will fail the handshake on `:6443` (non-goal, follows `tls-traps`).
+
+## Review follow-ups
+
+- Methods: `GET`, `HEAD` and `OPTIONS` are read-only for docker and kubernetes (`isReadOnlyMethod`), so a crawler's `OPTIONS` is a probe. `POST`, `PUT`, `PATCH` and `DELETE` change state and are attacks. `PROPFIND`, `CONNECT`, `TRACE` and unknown methods are not part of either API and are treated as attacks too, because nothing legitimate sends them to a container API.
+- SASL PLAIN: only the full `authzid NUL authcid NUL passwd` form is parsed (the `authcid` is taken). Every other shape yields no user name, so a two part payload can never put the password into the `username` log field or alert meta.
+- Docker create: the image name is cut to 64 bytes at a rune boundary so the `cmd` part is not pushed out of the 256 byte command meta. Meta values are cut at rune boundaries (`truncateRunes`) so they stay valid UTF-8.
+- The fuzz target for the BSON message reader is named `FuzzReadMongoMessage` (it was planned as `FuzzParseMongoMessage`), after `readMongoMessage`.

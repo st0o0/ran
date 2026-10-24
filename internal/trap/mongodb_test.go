@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 	"net"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
@@ -229,6 +232,15 @@ func TestMongoDBSaslStartIsAuthAttempt(t *testing.T) {
 		{"plain", cmdDoc("saslStart", func(d *bsonDoc) {
 			d.str("mechanism", "PLAIN").binary("payload", []byte("\x00root\x00hunter2pw"))
 		}), "root", []string{"hunter2pw"}},
+		{"plain with authzid", cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "PLAIN").binary("payload", []byte("admin\x00root\x00hunter2pw"))
+		}), "root", []string{"hunter2pw"}},
+		{"plain two parts", cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "PLAIN").binary("payload", []byte("root\x00hunter2pw"))
+		}), "", []string{"hunter2pw"}},
+		{"plain four parts", cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "PLAIN").binary("payload", []byte("a\x00root\x00hunter2pw\x00x"))
+		}), "", []string{"hunter2pw"}},
 		{"legacy authenticate", cmdDoc("authenticate", func(d *bsonDoc) {
 			d.str("user", "mongo").str("nonce", "abc").str("key", "deadbeefproof")
 		}), "mongo", []string{"deadbeefproof"}},
@@ -517,7 +529,12 @@ func TestMongoSASLUser(t *testing.T) {
 		"n,a=authz,n=al,r=x":   "al",
 		"n,,n=a=2Cb=3Dc,r=x":   "a,b=c",
 		"\x00root\x00secret":   "root",
-		"\x00root":             "root",
+		"\x00root":             "",
+		"root\x00hunter2":      "",
+		"a\x00b\x00c":          "b",
+		"a\x00b\x00c\x00d":     "",
+		"\x00\x00pw":           "",
+		"\x00\x00\x00":         "",
 		"\x00":                 "",
 		"garbage without user": "",
 		"":                     "",
@@ -530,6 +547,119 @@ func TestMongoSASLUser(t *testing.T) {
 	long := append([]byte("n,,n="), bytes.Repeat([]byte("u"), 5000)...)
 	if got := mongoSASLUser(long); len(got) > maxMongoSASLPayload {
 		t.Errorf("user of %d bytes is not bounded", len(got))
+	}
+	// A very long PLAIN payload: the user is bounded and the password never returned.
+	longPlain := append([]byte("\x00"+strings.Repeat("u", 3000)+"\x00"), bytes.Repeat([]byte("p"), 5000)...)
+	if got := mongoSASLUser(longPlain); len(got) > maxMongoSASLPayload || strings.Contains(got, "p") {
+		t.Errorf("long PLAIN user = %d bytes", len(got))
+	}
+	// Two NUL separated parts: the second one is a password, never a user name.
+	if got := mongoSASLUser([]byte(strings.Repeat("r", 3000) + "\x00" + strings.Repeat("p", 3000))); got != "" {
+		t.Errorf("long two part payload returned %d bytes", len(got))
+	}
+}
+
+func TestMongoDBAuthUserKeepsUTF8(t *testing.T) {
+	t.Parallel()
+	h := startMongoDB(t)
+	conn := dialTrap(t, h.addr)
+	user := strings.Repeat("€", 43) // 129 bytes, one over maxMongoAuthField
+	doc := cmdDoc("saslStart", func(d *bsonDoc) {
+		d.str("mechanism", "PLAIN").binary("payload", []byte("\x00"+user+"\x00pw"))
+	})
+	if _, err := conn.Write(opMsg(doc, 0)); err != nil {
+		t.Fatal(err)
+	}
+	readReply(t, conn)
+	ev := waitAttack(t, h.sink)
+	got := ev.Meta["username"]
+	if !utf8.ValidString(got) || len(got) > maxMongoAuthField || got == "" {
+		t.Errorf("username meta = %q (%d bytes)", got, len(got))
+	}
+}
+
+// Not parallel: it switches the package-level password log mode.
+// No secret of a SASL or legacy authentication reaches CrowdSec, whatever the
+// payload shape.
+func TestMongoDBNoPasswordReachesCrowdSec(t *testing.T) {
+	SetPasswordLogMode("on")
+	defer SetPasswordLogMode("off")
+	lapi := &fakeLAPI{}
+	srv := httptest.NewServer(lapi.handler())
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := metrics.New(prometheus.NewRegistry(), "test")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink, err := alert.NewCrowdSec(ctx, alert.CrowdSecConfig{
+		URL: srv.URL, MachineID: "ran", Password: "lapi-secret", BatchInterval: 50 * time.Millisecond, BatchSize: 1,
+	}, logger, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sensor := alert.NewSensor(alert.SensorConfig{SummaryWindow: time.Hour}, sink, logger)
+	defer sensor.Close()
+
+	cfg := &config.Config{
+		Addrs:          map[string]string{"mongodb": "127.0.0.1:0"},
+		PerProto:       make(map[string]config.ProtoConfig),
+		ProxyProtocol:  true,
+		SessionTimeout: 5 * time.Second,
+		MaxSessions:    100,
+		MaxPerIP:       10,
+	}
+	tr := NewMongoDB(cfg, logger, m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), sensor)
+	addr := serveTrap(t, ctx, tr)
+
+	docs := [][]byte{
+		cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "SCRAM-SHA-256").binary("payload", []byte("n,,n=admin,r=nonce-s3cret"))
+		}),
+		cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "PLAIN").binary("payload", []byte("\x00root\x00pw-three-part"))
+		}),
+		cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "PLAIN").binary("payload", []byte("root\x00pw-two-part"))
+		}),
+		cmdDoc("saslStart", func(d *bsonDoc) {
+			d.str("mechanism", "PLAIN").binary("payload", []byte("a\x00root\x00pw-four\x00part"))
+		}),
+		cmdDoc("authenticate", func(d *bsonDoc) {
+			d.str("user", "mongo").str("nonce", "abc").str("key", "proof-s3cret")
+		}),
+	}
+	for i, doc := range docs {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		fmt.Fprintf(conn, "PROXY TCP4 %s 127.0.0.1 40000 27017\r\n", fmt.Sprintf("8.8.8.%d", i+1))
+		if _, err := conn.Write(opMsg(doc, 0)); err != nil {
+			t.Fatal(err)
+		}
+		readReply(t, conn)
+		conn.Close()
+	}
+	waitFor(t, func() bool { return lapi.acceptedCount() >= len(docs) })
+	time.Sleep(300 * time.Millisecond)
+
+	lapi.mu.Lock()
+	defer lapi.mu.Unlock()
+	raw, err := json.Marshal(lapi.accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"nonce-s3cret", "pw-three-part", "pw-two-part", "pw-four", "proof-s3cret", `"key":"password"`} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("%q reached CrowdSec: %s", secret, raw)
+		}
+	}
+	for _, want := range []string{`"admin"`, `"root"`, `"mongo"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("expected user %s in the pushed alerts: %s", want, raw)
+		}
 	}
 }
 

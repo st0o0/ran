@@ -32,3 +32,7 @@ Commands other than the handshake commands (`hello`, `isMaster`, `buildInfo`, `p
 #### Scenario: PLAIN start
 - **WHEN** a client sends `saslStart` with a PLAIN payload for user `root`
 - **THEN** only `root` is recorded and the password never appears in logs or alert meta
+
+#### Scenario: Unexpected PLAIN shape
+- **WHEN** a PLAIN payload does not have exactly the three NUL separated parts `authzid`, `authcid`, `passwd`
+- **THEN** no user name is recorded (the field stays empty) and no part of the payload appears in logs or alert meta

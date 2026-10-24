@@ -46,13 +46,13 @@ profile can act on.
 | Protocols | SSH, Telnet (SFTP/SCP) | multi-protocol, list not verified | 29 modules | 31 honeypots listed | SSH, HTTP, TCP, Telnet, MCP | 33 stubs |
 | Post-login shell, file capture | yes | no | no | via Cowrie, Dionaea | optional LLM shell | no (by design) |
 | CrowdSec | log parsing via the Hub | none found | none found | none found | none found | native LAPI alerts, classified |
-| Footprint | Python process | Python process | Python process | 8 GB (sensor) to 16 GB (hive) RAM | Go binary | about 13 MB working set idle, all 29 traps |
+| Footprint | Python process | Python process | Python process | 8 GB (sensor) to 16 GB (hive) RAM | Go binary | about 16 MB working set idle, all 33 traps |
 | Prometheus metrics | no | no | no | via the stack | optional | built in |
 | Licence | see repo | BSD-3 | AGPL-3.0 | GPL-3.0 | GPL-3.0 | MIT |
 
 Read from the projects' own READMEs in October 2026; check them for current
 details. "None found" means the README does not mention it. The memory figure
-for rán was measured on Windows with all 29 traps enabled and no traffic.
+for rán was measured on Windows with a freshly built binary, all 33 traps enabled and no traffic (steady state after startup).
 
 What rán does better:
 

@@ -375,8 +375,11 @@ func mongoSASLUser(payload []byte) string {
 		payload = payload[:maxMongoSASLPayload]
 	}
 	if bytes.IndexByte(payload, 0) >= 0 {
-		parts := bytes.SplitN(payload, []byte{0}, 3)
-		if len(parts) >= 2 {
+		// Only the full form authzid NUL authcid NUL passwd is understood. Any
+		// other shape is not guessed at: a two part payload would put the
+		// password where a user name is expected.
+		parts := bytes.Split(payload, []byte{0})
+		if len(parts) == 3 {
 			return string(parts[1])
 		}
 		return ""
@@ -560,8 +563,8 @@ func (t *MongoDBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) 
 			if lower == "saslstart" {
 				user = mongoSASLUser(req.payload)
 			}
-			user = truncateBytes(sanitizeHTTPValue(user), maxMongoAuthField)
-			mech := truncateBytes(sanitizeHTTPValue(req.mechanism), maxCommandNameBytes)
+			user = truncateRunes(sanitizeHTTPValue(user), maxMongoAuthField)
+			mech := truncateRunes(sanitizeHTTPValue(req.mechanism), maxCommandNameBytes)
 			sess.LogAuthAttempt(slog.String("username", user), slog.String("mechanism", mech), slog.String("db", db))
 			sess.RecordCredentials(t.metrics)
 			sess.Alert(ctx, map[string]string{"username": user, "mechanism": mech})

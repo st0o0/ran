@@ -8,7 +8,7 @@ Several services are scanned heavily for exploitation and cryptominer campaigns,
 - New trap `kubernetes` (default `:6443`, also usable for `:10250`): HTTP stub answering `/version`, `/api`, `/healthz`, kubelet `/pods` and `/run` with plausible responses and `401`/`403` for the rest. A request carrying a bearer token is an auth attempt (token never stored, only a hash prefix).
 - New trap `mongodb` (default `:27017`): `OP_MSG`/`OP_QUERY` handshake (`isMaster`/`hello`, `buildInfo`, `listDatabases`) with an authentication-required answer; `saslStart` is an auth attempt (username only).
 - `telnet` default listen address becomes `:23,:2323` (if one of them cannot bind, behavior follows the existing multi-port rules).
-- All traps use the shared TCP skeleton, registered in `config.DefaultPorts`, `config.ValidTraps` and `trap.Registry`, documented in the README, with fuzz targets for the two binary parsers where applicable.
+- `mongodb` uses the shared TCP skeleton; `docker` and `kubernetes` embed `HTTPTrap`. All are registered in `config.DefaultPorts`, `config.ValidTraps` and `trap.Registry`, documented in the README, with fuzz targets for the two binary parsers where applicable.
 
 ## Capabilities
 
