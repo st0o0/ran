@@ -50,6 +50,9 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn, sess *Session)
 	maxRetries := t.cfg.ResolveMaxAuthRetries("postgres")
 	authDelay := t.cfg.ResolveAuthDelay("postgres")
 
+	// Every iteration blocks on a client read (bounded by the session deadline)
+	// and, with an auth delay, on authSleep, so unlimited retries cannot spin.
+	prev := ""
 	for attempt := 0; maxRetries == 0 || attempt < maxRetries; attempt++ {
 		// AuthenticationCleartextPassword. A rejected password is followed by a
 		// new request on the same connection (no error in between), so a client
@@ -69,10 +72,18 @@ func (t *PostgresTrap) handle(ctx context.Context, conn net.Conn, sess *Session)
 			return
 		}
 
+		// libpq and pgx answer a repeated request with the same stored
+		// password. That is not a new attempt: end the session instead of
+		// logging it again.
+		if attempt > 0 && password == prev {
+			break
+		}
+		prev = password
+
 		sess.Cred(ctx, t.metrics, username, password)
 
 		if authDelay > 0 {
-			if err := authSleep(ctx, authDelay, attempt); err != nil {
+			if err := sess.authSleep(ctx, authDelay, attempt); err != nil {
 				sess.SetOutcome("timeout")
 				return
 			}

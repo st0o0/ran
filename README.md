@@ -184,7 +184,7 @@ which keeps the attack surface of the honeypot minimal.
 |---|---|---|
 | `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass) |
 | `modbus` | `:502` | Function codes with start address and quantity (capped at the Modbus maximum). Reads (1 to 4) and device identification (43) are fingerprinting and stay a `probe`; writes (5, 6, 15, 16, 22, 23) and unknown function codes are payload and make the session an `attack` |
-| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only the SHA-256 of the key is kept), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload |
+| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only a SHA-256 is kept: `key_hash` for a public key, `signature_hash` for a signature), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload |
 | `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload |
 
 ### UDP
@@ -281,7 +281,11 @@ the SSH library would otherwise fall back to 6). For `ssh` every rejected passwo
 - `mysql` asks for another password with an authentication switch to
   `mysql_clear_password`; `postgres` repeats the cleartext password request
   (without an error in between). A client that does not answer ends the session
-  after the attempts it made.
+  after the attempts it made. A password identical to the previous attempt of
+  the session (clients such as libpq and pgx resend the stored password) is not
+  a new attempt: it is not logged again and the session ends. `mysql` sends the
+  authentication switch only to clients that set `CLIENT_PLUGIN_AUTH` and
+  answers all others with the error immediately.
 
 **SSH tarpit.** With `RAN_SSH_TARPIT=on` the trap first writes a random 32
 character line every 10 seconds, for at most `RAN_SSH_TARPIT_DURATION`, and then
@@ -745,6 +749,29 @@ cooldown notes above). `RAN_MAX_AUTH_RETRIES=0` is now really unlimited for `ssh
 `RAN_METRICS_ADDR` and a zero `RAN_SESSION_TIMEOUT` are now rejected at startup,
 and with `scan` missing from `RAN_BAN_ON` a scanner's attacks are reported as
 attack instead of being dropped.
+
+Behavior changes in the release after 0.4.0 (existing deployments):
+
+- `mysql` and `postgres` now honor `RAN_MAX_AUTH_RETRIES` and accept up to 3
+  attempts per session by default (they used to take one). Set
+  `RAN_MYSQL_MAX_AUTH_RETRIES=1` and `RAN_POSTGRES_MAX_AUTH_RETRIES=1` to keep
+  one attempt. A client that resends the same password ends the session and is
+  counted once. `mysql` only asks again for clients that set `CLIENT_PLUGIN_AUTH`.
+  `rdp` stays a single attempt.
+- `modbus` read-only sessions (function codes 1 to 4 and 43) are now `probe`
+  and no longer produce an alert under the default `RAN_BAN_ON=attack,scan`.
+  Writes, function code 17 and unknown codes still count as `attack`.
+- A source that touches 5 distinct destination ports within the scan window is
+  now classified `scan`, in addition to the 3 distinct protocols rule.
+- `ssh` auth attempts carry a `method` log attribute and alert meta key.
+  `adb` auth attempts carry `method` plus `key_hash` (public key) or
+  `signature_hash` (signature); `adb` now also records `shell:` and `exec:` opens.
+- `telnet` listens on `:23` and `:2323` by default (set `RAN_TELNET_ADDR=:23` to
+  keep one port) and strips IAC option bytes from the captured credentials.
+- `http` requests for known exploit and recon paths or with a JNDI string are
+  now commands and classify as `attack`.
+- New traps `docker`, `kubernetes` and `mongodb` are available (see the trap
+  table; add them to `RAN_TRAPS` to enable them).
 
 Upgrading from 0.3.7: UDP traps (`dns`, `ntp`, `snmp`, `sip`) no longer raise
 alerts, so the `custom/ran-{dns,ntp,snmp,sip}-trap` scenarios stop appearing.

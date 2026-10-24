@@ -5,7 +5,7 @@ Several traps classify too coarsely or end too early, which costs signal or prod
 - `modbus` marks every parseable frame as `attack`; a harmless read counts like a write.
 - `adb` ends after the AUTH token, so the `OPEN shell:` command that follows is never captured.
 - `telnet` does no option negotiation: IAC bytes of Mirai-style clients leak into the username.
-- `mysql`, `postgres` and `rdp` end after one attempt although brute-force clients retry.
+- `mysql` and `postgres` end after one attempt although brute-force clients retry (`rdp` cannot, see design).
 - Scan detection counts distinct protocols only and ignores slow scanners and multi-port spread.
 
 ## What Changes
@@ -13,7 +13,7 @@ Several traps classify too coarsely or end too early, which costs signal or prod
 - `modbus`: read function codes (1 to 4) and device identification (43) are logged as `probe`-level fingerprinting; write codes (5, 6, 15, 16, 22, 23) are `attack`. Meta gains the start address and quantity.
 - `adb`: after the AUTH token the trap reads the next packet; `AUTH` signature/public key and `OPEN` with `shell:`/`exec:` destinations are recorded (bounded) and answered with `CLSE`.
 - `telnet`: IAC sequences are parsed and answered with `WONT`/`DONT`, never reach the username; the terminal type reply is logged.
-- `mysql`, `postgres`, `rdp`: honor `RAN_MAX_AUTH_RETRIES` like `ssh`, `telnet`, `mssql` and `smb` (the README list of retry-capable traps changes).
+- `mysql`, `postgres`: honor `RAN_MAX_AUTH_RETRIES` like `ssh`, `telnet`, `mssql` and `smb` (the README list of retry-capable traps changes). `rdp` stays a single attempt.
 - Scan detection additionally counts distinct destination ports of one source within the window (threshold documented, configurable later) in addition to distinct protocols.
 
 ## Capabilities
@@ -24,7 +24,7 @@ Several traps classify too coarsely or end too early, which costs signal or prod
 
 ## Impact
 
-- `modbus.go`, `adb.go`, `telnet.go`, `mysql.go`, `postgres.go`, `rdp.go`, `internal/alert/scan.go`, README (classification notes, retry list) and `trap-*` specs. `Known follow-ups` entries for modbus/adb in `AGENTS.md` are removed when this ships.
+- `modbus.go`, `adb.go`, `telnet.go`, `mysql.go`, `postgres.go`, `internal/alert/scan.go`, README (classification notes, retry list) and `trap-*` specs. `Known follow-ups` entries for modbus/adb in `AGENTS.md` are removed when this ships.
 
 ## Non-goals
 

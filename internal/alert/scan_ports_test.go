@@ -44,9 +44,10 @@ func TestScanPortsWindowExpiry(t *testing.T) {
 		s.Alert(ctx, portInfo("8.8.8.8", "http", port), nil)
 		clk.Advance(3 * time.Minute)
 	}
-	// The first two ports are older than the window now.
+	// The clock is 12 minutes on: all four earlier ports are older than the
+	// one minute window, so only port 5 is live.
 	if got := s.Alert(ctx, portInfo("8.8.8.8", "http", 5), nil); got == ClassScan {
-		t.Errorf("class = scan with only 3 live ports")
+		t.Errorf("class = scan with only 1 live port")
 	}
 }
 

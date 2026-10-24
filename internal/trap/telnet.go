@@ -52,7 +52,7 @@ func (t *TelnetTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		sess.Cred(ctx, t.metrics, username, password)
 
 		if authDelay > 0 {
-			if err := authSleep(ctx, authDelay, attempt); err != nil {
+			if err := sess.authSleep(ctx, authDelay, attempt); err != nil {
 				sess.SetOutcome("timeout")
 				return
 			}

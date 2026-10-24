@@ -3,6 +3,7 @@ package trap
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -150,4 +151,31 @@ func TestSSHTarpitClientDisconnect(t *testing.T) {
 		t.Fatal("tarpit did not detect client disconnect")
 	}
 	server.Close()
+}
+
+// authSleep never runs past the session deadline: a delay that would cross it
+// ends at the deadline with DeadlineExceeded.
+func TestAuthSleepEndsAtSessionDeadline(t *testing.T) {
+	t.Parallel()
+	sess := &Session{Deadline: time.Now().Add(100 * time.Millisecond)}
+	start := time.Now()
+	err := sess.authSleep(context.Background(), 10*time.Second, 3)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("slept %v, want about 100ms", elapsed)
+	}
+	// An already passed deadline returns at once; a far deadline sleeps in full.
+	past := &Session{Deadline: time.Now().Add(-time.Second)}
+	if err := past.authSleep(context.Background(), 10*time.Second, 0); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("past deadline err = %v", err)
+	}
+	far := &Session{Deadline: time.Now().Add(time.Hour)}
+	if err := far.authSleep(context.Background(), time.Millisecond, 0); err != nil {
+		t.Errorf("far deadline err = %v", err)
+	}
+	if err := (&Session{}).authSleep(context.Background(), time.Millisecond, 0); err != nil {
+		t.Errorf("no deadline err = %v", err)
+	}
 }

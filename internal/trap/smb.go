@@ -76,7 +76,7 @@ func (t *SMBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 					return
 				}
 				if authDelay > 0 {
-					if err := authSleep(ctx, authDelay, authAttempt-1); err != nil {
+					if err := sess.authSleep(ctx, authDelay, authAttempt-1); err != nil {
 						sess.SetOutcome("timeout")
 						return
 					}

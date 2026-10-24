@@ -67,7 +67,15 @@ func (t *ADBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		return
 	}
 
-	dataLen := min(binary.LittleEndian.Uint32(hdr[12:16]), adbMaxData)
+	// A declared length above the cap would leave its data in the stream to be
+	// misparsed as packets: end the session as too_long, as after the token.
+	dataLen, ok := fitsInt(binary.LittleEndian.Uint32(hdr[12:16]), adbMaxData)
+	if !ok {
+		sess.LogPayload("adb_identity", slog.String("identity", ""))
+		sess.Alert(ctx, map[string]string{"identity": ""})
+		sess.SetOutcome(outcomeTooLong)
+		return
+	}
 
 	var identity string
 	if dataLen > 0 {
@@ -180,10 +188,16 @@ func (t *ADBTrap) postAuth(ctx context.Context, conn net.Conn, sess *Session) {
 				continue
 			}
 			sum := sha256.Sum256(data)
-			keyHash := hex.EncodeToString(sum[:])
-			sess.LogAuthAttempt(slog.String("method", method), slog.String("key_hash", keyHash))
+			hash := hex.EncodeToString(sum[:])
+			// A signature answers a per-token challenge, so its hash is not a
+			// stable key identifier.
+			hashKey := "key_hash"
+			if arg0 == adbAuthSignature {
+				hashKey = "signature_hash"
+			}
+			sess.LogAuthAttempt(slog.String("method", method), slog.String(hashKey, hash))
 			sess.RecordCredentials(t.metrics)
-			sess.Alert(ctx, map[string]string{"method": method, "key_hash": keyHash})
+			sess.Alert(ctx, map[string]string{"method": method, hashKey: hash})
 			if arg0 == adbAuthSignature {
 				// A real adbd answers a rejected signature with a new token,
 				// after which the client offers its public key.

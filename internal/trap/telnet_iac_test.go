@@ -40,6 +40,9 @@ func TestParseTelnetIACTable(t *testing.T) {
 		{"truncated option", []byte("ab\xff\xfb"), "ab", nil, ""},
 		{"truncated iac", []byte("ab\xff"), "ab", nil, ""},
 		{"unterminated subneg", []byte("ab\xff\xfa\x18\x00xterm"), "ab", nil, ""},
+		{"subneg cut by newline", []byte("ab\xff\xfa\x18\x00xt\n"), "ab", nil, ""},
+		{"truncated sb header", []byte("ab\xff\xfa"), "ab", nil, ""},
+		{"dangling SE", []byte("\xff\xf0x\n"), "x\n", nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,7 +123,60 @@ func TestTelnetTerminalTypeLogged(t *testing.T) {
 	}
 }
 
-func TestTelnetTruncatedSequenceEndsNormally(t *testing.T) {
+// A subnegotiation that contains a newline is cut by the line reader: the
+// unterminated start is dropped and the rest (including a stray IAC SE) is the
+// next line. Nothing leaks into the username and no terminal type is logged.
+func TestTelnetSubnegotiationSplitByNewline(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "telnet", nil, buildTelnetTrap)
+	conn := dialTrap(t, d.addr)
+	buf := make([]byte, 64)
+	_, _ = conn.Read(buf)
+	_, _ = conn.Write([]byte("root\xff\xfa\x18\x00xt\n"))
+	_, _ = conn.Read(buf)
+	_, _ = conn.Write([]byte("erm\xff\xf0\n"))
+	d.waitCredentials(t, "telnet", 1)
+	evs := d.sink.waitEvents(t, func(e []alert.Event) bool { return len(e) > 0 })
+	if evs[0].Meta["username"] != "root" || evs[0].Meta["password"] != "erm" {
+		t.Errorf("meta = %v", evs[0].Meta)
+	}
+	if strings.Contains(d.logs.String(), "terminal_type") || strings.Contains(d.logs.String(), "\xff") {
+		t.Errorf("unexpected terminal type or IAC byte in the log:\n%s", d.logs.String())
+	}
+}
+
+// A client that disconnects in the middle of an IAC sequence (no newline) never
+// completes the line: no credential is recorded and the trap closes cleanly.
+func TestTelnetCutOffMidSequenceRecordsNothing(t *testing.T) {
+	t.Parallel()
+	for name, tail := range map[string]string{
+		"lone iac":      "\xff",
+		"option":        "\xff\xfb",
+		"subneg":        "\xff\xfa\x18\x00xterm",
+		"after newline": "pw\xff\xfd",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			d := startDepthTrap(t, "telnet", nil, buildTelnetTrap)
+			conn := dialTrap(t, d.addr)
+			buf := make([]byte, 64)
+			_, _ = conn.Read(buf)
+			_, _ = conn.Write([]byte("root\r\n" + tail))
+			if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+				_ = cw.CloseWrite()
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			_, _ = io.Copy(io.Discard, conn)
+			if got := d.credentials("telnet"); got != 0 {
+				t.Errorf("credentials = %v, want 0", got)
+			}
+		})
+	}
+}
+
+// The line "root\xff\xfb\n" is a complete WILL, "pw\xff\n" a two byte command
+// IAC takes it as a command: the text before is kept either way.
+func TestTelnetIACBeforeNewlineEndsNormally(t *testing.T) {
 	t.Parallel()
 	d := startDepthTrap(t, "telnet", nil, buildTelnetTrap)
 	conn := dialTrap(t, d.addr)

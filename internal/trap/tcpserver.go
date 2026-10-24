@@ -177,7 +177,8 @@ func (s *tcpServer) serve(ctx context.Context, cancel context.CancelFunc, conn n
 		defer sess.RecordEnd(s.metrics)
 		defer sess.LogDisconnect()
 
-		_ = conn.SetDeadline(deadlineFromContext(ctx, s.cfg.ResolveSessionTimeout(s.proto)))
+		sess.Deadline = deadlineFromContext(ctx, s.cfg.ResolveSessionTimeout(s.proto))
+		_ = conn.SetDeadline(sess.Deadline)
 		s.handler(ctx, conn, sess)
 	})
 }

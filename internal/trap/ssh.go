@@ -61,7 +61,8 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 			sess.SetOutcome("timeout")
 			return
 		}
-		_ = conn.SetDeadline(deadlineFromContext(ctx, timeout))
+		sess.Deadline = deadlineFromContext(ctx, timeout)
+		_ = conn.SetDeadline(sess.Deadline)
 	}
 
 	var authSeen bool
@@ -102,7 +103,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		}
 		sess.Alert(ctx, meta)
 		if authDelay > 0 {
-			_ = authSleep(ctx, authDelay, attempt)
+			_ = sess.authSleep(ctx, authDelay, attempt)
 		}
 		attempt++
 		return errors.New("access denied")
@@ -125,7 +126,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 			meta["password"] = string(pass)
 			sess.Alert(ctx, meta)
 			if authDelay > 0 {
-				_ = authSleep(ctx, authDelay, attempt)
+				_ = sess.authSleep(ctx, authDelay, attempt)
 			}
 			attempt++
 			return nil, errors.New("access denied")

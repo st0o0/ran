@@ -3,7 +3,7 @@
 - [x] 1.1 Modbus: function code tables, address and quantity parsing with bounds, meta keys
 - [x] 1.2 ADB: read the post-token packet, AUTH key hash, OPEN `shell:`/`exec:` capture, `CLSE` reply
 - [x] 1.3 Telnet: IAC parser (shared helper), replies, TTYPE capture
-- [x] 1.4 mysql, postgres, rdp: retry loop with `ResolveMaxAuthRetries`/`ResolveAuthDelay`; README retry list
+- [x] 1.4 mysql, postgres: retry loop with `ResolveMaxAuthRetries`/`ResolveAuthDelay`; README retry list (rdp stays a single attempt)
 - [x] 1.5 Scan tracker: bounded per-entry port set, threshold constant, tests with an injectable clock
 - [x] 1.6 README classification notes; remove the modbus/adb follow-up from `AGENTS.md`
 

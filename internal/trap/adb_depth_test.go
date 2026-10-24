@@ -199,3 +199,80 @@ func TestReadADBPacketBounds(t *testing.T) {
 		t.Error("truncated data must fail")
 	}
 }
+
+// A signature answers a per-token challenge, so its hash is reported as
+// signature_hash and never as key_hash.
+func TestADBSignatureHashMetaKey(t *testing.T) {
+	t.Parallel()
+	sig := bytes.Repeat([]byte{7}, 256)
+	sum := sha256.Sum256(sig)
+	want := hex.EncodeToString(sum[:])
+	d := startDepthTrap(t, "adb", nil, buildADBTrap)
+	conn := dialTrap(t, d.addr)
+	adbHandshake(t, conn)
+	_, _ = conn.Write(adbPacket(adbCmdAUTH, adbAuthSignature, 0, sig))
+	evs := d.sink.waitEvents(t, func(e []alert.Event) bool {
+		for _, ev := range e {
+			if ev.Meta["method"] == "adb_signature" {
+				return true
+			}
+		}
+		return false
+	})
+	for _, ev := range evs {
+		if ev.Meta["method"] != "adb_signature" {
+			continue
+		}
+		if ev.Meta["signature_hash"] != want {
+			t.Errorf("signature_hash = %q, want %q", ev.Meta["signature_hash"], want)
+		}
+		if _, ok := ev.Meta["key_hash"]; ok {
+			t.Errorf("key_hash present for a signature: %v", ev.Meta)
+		}
+	}
+	if !strings.Contains(d.logs.String(), `"signature_hash":"`+want+`"`) || strings.Contains(d.logs.String(), `"key_hash"`) {
+		t.Errorf("log attributes wrong:\n%s", d.logs.String())
+	}
+}
+
+func TestADBClientHangsUpAfterTokenIsCompleted(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "adb", nil, buildADBTrap)
+	conn := dialTrap(t, d.addr)
+	adbHandshake(t, conn)
+	conn.Close()
+	d.waitOutcomeLabel(t, "adb", "completed")
+}
+
+// A first CNXN that declares more than 4096 bytes ends the session instead of
+// letting the leftover bytes be parsed as later packets.
+func TestADBOversizedCNXNEnds(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "adb", nil, buildADBTrap)
+	conn := dialTrap(t, d.addr)
+	pkt := adbPacket(adbCmdCNXN, 0x01000000, 4096, nil)
+	binary.LittleEndian.PutUint32(pkt[12:16], 5000)
+	// The "data" is a complete OPEN shell: packet that must not be parsed.
+	pkt = append(pkt, adbPacket(adbCmdOPEN, 1, 0, []byte("shell:id"))...)
+	_, _ = conn.Write(pkt)
+	d.waitOutcomeLabel(t, "adb", "too_long")
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if n, _ := io.Copy(io.Discard, conn); n != 0 {
+		t.Errorf("trap wrote %d bytes after an oversized CNXN", n)
+	}
+	if commandMeta(d.sink.snapshot()) != "" {
+		t.Error("leftover bytes were parsed as a command")
+	}
+}
+
+func TestADBCNXNAtLimitIsAccepted(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "adb", nil, buildADBTrap)
+	conn := dialTrap(t, d.addr)
+	if _, err := conn.Write(adbPacket(adbCmdCNXN, 0x01000000, 4096, bytes.Repeat([]byte("a"), adbMaxData))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(conn, make([]byte, adbHdrSize+20)); err != nil {
+		t.Fatalf("no AUTH token for a CNXN at the limit: %v", err)
+	}
+}

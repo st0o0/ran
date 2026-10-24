@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,9 +48,17 @@ func readMySQLFrame(t *testing.T, conn net.Conn) (seq byte, payload []byte) {
 	return hdr[3], payload
 }
 
+// mysqlCapsPluginAuth is a typical client capability set; it includes
+// CLIENT_PLUGIN_AUTH (0x00080000).
+const mysqlCapsPluginAuth = 0x000FA68D
+
 func mysqlLoginPacket(user, password string) []byte {
+	return mysqlLoginPacketCaps(mysqlCapsPluginAuth, user, password)
+}
+
+func mysqlLoginPacketCaps(caps uint32, user, password string) []byte {
 	var resp []byte
-	resp = binary.LittleEndian.AppendUint32(resp, 0x000FA68D)
+	resp = binary.LittleEndian.AppendUint32(resp, caps)
 	resp = binary.LittleEndian.AppendUint32(resp, 1<<24)
 	resp = append(resp, 0x21)
 	resp = append(resp, make([]byte, 23)...)
@@ -105,7 +114,7 @@ func TestMySQLUnlimitedRetries(t *testing.T) {
 			t.Fatalf("got 0x%02x, want auth switch", payload[0])
 		}
 		seq += 2
-		_, _ = conn.Write(wrapMySQLPacket(seq, []byte("x\x00")))
+		_, _ = conn.Write(wrapMySQLPacket(seq, []byte("x"+strconv.Itoa(int(seq))+"\x00")))
 	}
 	d.waitCredentials(t, "mysql", 11)
 }
@@ -132,6 +141,9 @@ func TestMySQLRetryClientHangsUpIsCompleted(t *testing.T) {
 	readMySQLFrame(t, conn) // auth switch
 	conn.Close()
 	d.waitOutcomeLabel(t, "mysql", "completed")
+	if got := d.credentials("mysql"); got != 1 {
+		t.Errorf("credentials = %v, want exactly 1", got)
+	}
 }
 
 func TestMySQLRetryTimeout(t *testing.T) {
@@ -173,7 +185,7 @@ func TestPostgresRetriesAskAgain(t *testing.T) {
 			if auth[0] != 'R' || binary.BigEndian.Uint32(auth[5:9]) != 3 {
 				t.Fatalf("retries=%d attempt %d: got %v, want cleartext password request", retries, attempt, auth)
 			}
-			pgPassword(conn, "pw")
+			pgPassword(conn, "pw"+strconv.Itoa(attempt))
 		}
 		tag := make([]byte, 1)
 		if _, err := io.ReadFull(conn, tag); err != nil || tag[0] != 'E' {
@@ -189,11 +201,11 @@ func TestPostgresUnlimitedRetries(t *testing.T) {
 	d := startDepthTrap(t, "postgres", unlimitedRetries("postgres"), buildPostgresTrap)
 	conn := dialTrap(t, d.addr)
 	pgStartup(conn, "admin")
-	for range 10 {
+	for i := range 10 {
 		if _, err := io.ReadFull(conn, make([]byte, 9)); err != nil {
 			t.Fatal(err)
 		}
-		pgPassword(conn, "pw")
+		pgPassword(conn, "pw"+strconv.Itoa(i))
 	}
 	d.waitCredentials(t, "postgres", 10)
 }
@@ -230,5 +242,167 @@ func TestRDPStaysSingleAttempt(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got := d.credentials("rdp"); got != 1 {
 		t.Errorf("credentials = %v, want 1", got)
+	}
+}
+
+// libpq and pgx answer a repeated password request with the same stored
+// password. That ends the session after the first repeat with one credential.
+func TestPostgresRepeatedPasswordEndsSession(t *testing.T) {
+	t.Parallel()
+	for name, tweak := range map[string]func(*config.Config){
+		"default":   nil,
+		"unlimited": unlimitedRetries("postgres"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			d := startDepthTrap(t, "postgres", tweak, buildPostgresTrap)
+			conn := dialTrap(t, d.addr)
+			pgStartup(conn, "admin")
+			for range 2 {
+				if _, err := io.ReadFull(conn, make([]byte, 9)); err != nil {
+					t.Fatal(err)
+				}
+				pgPassword(conn, "stored")
+			}
+			tag := make([]byte, 1)
+			if _, err := io.ReadFull(conn, tag); err != nil || tag[0] != 'E' {
+				t.Fatalf("tag %q err %v, want E", tag, err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if _, err := io.Copy(io.Discard, conn); err != nil {
+				t.Errorf("connection not closed after the error: %v", err)
+			}
+			d.waitOutcomeLabel(t, "postgres", "completed")
+			if got := d.credentials("postgres"); got != 1 {
+				t.Errorf("credentials = %v, want 1", got)
+			}
+			if n := strings.Count(d.logs.String(), `"action":"auth_attempt"`); n != 1 {
+				t.Errorf("%d auth_attempt log lines, want 1", n)
+			}
+		})
+	}
+}
+
+func TestPostgresDifferentPasswordsAreCounted(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "postgres", nil, buildPostgresTrap)
+	conn := dialTrap(t, d.addr)
+	pgStartup(conn, "admin")
+	for _, pw := range []string{"a", "b", "a"} { // a repeat of an older password is new
+		if _, err := io.ReadFull(conn, make([]byte, 9)); err != nil {
+			t.Fatal(err)
+		}
+		pgPassword(conn, pw)
+	}
+	tag := make([]byte, 1)
+	if _, err := io.ReadFull(conn, tag); err != nil || tag[0] != 'E' {
+		t.Fatalf("tag %q err %v, want E", tag, err)
+	}
+	d.waitCredentials(t, "postgres", 3)
+}
+
+func TestPostgresHangUpAfterOneOfThreeIsCompleted(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "postgres", nil, buildPostgresTrap)
+	conn := dialTrap(t, d.addr)
+	pgStartup(conn, "admin")
+	_, _ = io.ReadFull(conn, make([]byte, 9))
+	pgPassword(conn, "pw")
+	_, _ = io.ReadFull(conn, make([]byte, 9)) // second request
+	conn.Close()
+	d.waitOutcomeLabel(t, "postgres", "completed")
+	if got := d.credentials("postgres"); got != 1 {
+		t.Errorf("credentials = %v, want exactly 1", got)
+	}
+}
+
+// Unlimited mode loops on client reads: a client that keeps trying different
+// passwords and then goes quiet ends at the session timeout.
+func TestPostgresUnlimitedEndsAtSessionTimeout(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "postgres", func(c *config.Config) {
+		unlimitedRetries("postgres")(c)
+		c.SessionTimeout = 300 * time.Millisecond
+	}, buildPostgresTrap)
+	conn := dialTrap(t, d.addr)
+	pgStartup(conn, "admin")
+	for i := range 3 {
+		_, _ = io.ReadFull(conn, make([]byte, 9))
+		pgPassword(conn, "pw"+strconv.Itoa(i))
+	}
+	d.waitOutcomeLabel(t, "postgres", "timeout")
+	if got := d.credentials("postgres"); got != 3 {
+		t.Errorf("credentials = %v, want 3", got)
+	}
+}
+
+func TestMySQLUnlimitedEndsAtSessionTimeout(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "mysql", func(c *config.Config) {
+		unlimitedRetries("mysql")(c)
+		c.SessionTimeout = 300 * time.Millisecond
+	}, buildMySQLTrap)
+	conn := dialTrap(t, d.addr)
+	readMySQLFrame(t, conn)
+	_, _ = conn.Write(mysqlLoginPacket("root", "pw"))
+	readMySQLFrame(t, conn) // auth switch, then silence
+	d.waitOutcomeLabel(t, "mysql", "timeout")
+}
+
+func TestMySQLRepeatedPasswordEndsSession(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "mysql", unlimitedRetries("mysql"), buildMySQLTrap)
+	conn := dialTrap(t, d.addr)
+	readMySQLFrame(t, conn)
+	_, _ = conn.Write(mysqlLoginPacket("root", "stored"))
+	_, payload := readMySQLFrame(t, conn)
+	if payload[0] != 0xFE {
+		t.Fatalf("got 0x%02x, want auth switch", payload[0])
+	}
+	_, _ = conn.Write(wrapMySQLPacket(3, []byte("stored\x00")))
+	_, payload = readMySQLFrame(t, conn)
+	if payload[0] != 0xFF {
+		t.Fatalf("got 0x%02x, want ERR after the repeated password", payload[0])
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.Copy(io.Discard, conn); err != nil {
+		t.Errorf("connection not closed: %v", err)
+	}
+	d.waitOutcomeLabel(t, "mysql", "completed")
+	if got := d.credentials("mysql"); got != 1 {
+		t.Errorf("credentials = %v, want 1", got)
+	}
+}
+
+// Without CLIENT_PLUGIN_AUTH the client cannot parse an authentication switch,
+// so the trap answers ERR 1045 right away even when more attempts are allowed.
+func TestMySQLNoPluginAuthStaysSingleAttempt(t *testing.T) {
+	t.Parallel()
+	d := startDepthTrap(t, "mysql", nil, buildMySQLTrap)
+	conn := dialTrap(t, d.addr)
+	readMySQLFrame(t, conn)
+	_, _ = conn.Write(mysqlLoginPacketCaps(mysqlCapsPluginAuth&^0x00080000, "root", "pw"))
+	_, payload := readMySQLFrame(t, conn)
+	if payload[0] != 0xFF || binary.LittleEndian.Uint16(payload[1:3]) != 1045 {
+		t.Fatalf("payload % x, want ERR 1045", payload[:3])
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.Copy(io.Discard, conn); err != nil {
+		t.Errorf("connection not closed: %v", err)
+	}
+	d.waitCredentials(t, "mysql", 1)
+	d.waitOutcomeLabel(t, "mysql", "completed")
+	if got := d.credentials("mysql"); got != 1 {
+		t.Errorf("credentials = %v, want 1", got)
+	}
+}
+
+func TestMySQLClientPluginAuth(t *testing.T) {
+	t.Parallel()
+	if mysqlClientPluginAuth(nil) || mysqlClientPluginAuth([]byte{1, 2}) {
+		t.Error("short response must not allow a switch")
+	}
+	if !mysqlClientPluginAuth(binary.LittleEndian.AppendUint32(nil, mysqlCapsPluginAuth)) {
+		t.Error("CLIENT_PLUGIN_AUTH not detected")
 	}
 }

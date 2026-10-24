@@ -54,18 +54,24 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	authDelay := t.cfg.ResolveAuthDelay("mysql")
 
 	username, password := parseHandshakeResponse(response, challenge)
+	// An authentication switch needs CLIENT_PLUGIN_AUTH; without it the client
+	// cannot parse the request, so the session stays a single attempt.
+	canSwitch := mysqlClientPluginAuth(response)
 	seq := byte(1) // sequence number of the last packet received
+	// Every iteration blocks on a client read (bounded by the session deadline)
+	// and, with an auth delay, on authSleep, so unlimited retries cannot spin.
 	for attempt := 0; ; attempt++ {
 		sess.Cred(ctx, t.metrics, username, password)
+		prev := password
 
 		if authDelay > 0 {
-			if err := authSleep(ctx, authDelay, attempt); err != nil {
+			if err := sess.authSleep(ctx, authDelay, attempt); err != nil {
 				sess.SetOutcome("timeout")
 				return
 			}
 		}
 
-		if maxRetries != 0 && attempt+1 >= maxRetries {
+		if !canSwitch || (maxRetries != 0 && attempt+1 >= maxRetries) {
 			_, _ = conn.Write(buildErrPacket(seq+1, 1045, "28000", "Access denied for user '"+username+"'"))
 			return
 		}
@@ -83,7 +89,18 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		}
 		seq += 2
 		password = parseAuthSwitchReply(reply)
+		// A client that resends the same stored password is not a new attempt.
+		if password == prev {
+			_, _ = conn.Write(buildErrPacket(seq+1, 1045, "28000", "Access denied for user '"+username+"'"))
+			return
+		}
 	}
+}
+
+// mysqlClientPluginAuth reports whether the handshake response sets
+// CLIENT_PLUGIN_AUTH (0x00080000) in its capability flags.
+func mysqlClientPluginAuth(response []byte) bool {
+	return len(response) >= 4 && binary.LittleEndian.Uint32(response[:4])&0x00080000 != 0
 }
 
 // buildAuthSwitchRequest asks the client to authenticate again with

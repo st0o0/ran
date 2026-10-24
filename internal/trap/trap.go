@@ -43,6 +43,9 @@ type Session struct {
 	Start     time.Time
 	Logger    *slog.Logger
 	Outcome   string
+	// Deadline is the connection deadline of the session; the zero value means
+	// none. authSleep ends at it.
+	Deadline time.Time
 
 	// Sensor classifies the session and aggregates probe log output. TCP traps
 	// set it; UDP sessions leave it nil because UDP sources are spoofable.
@@ -572,6 +575,19 @@ func newMultiListener(listeners []net.Listener, logger *slog.Logger, m *metrics.
 }
 
 func authSleep(ctx context.Context, baseDelay time.Duration, attempt int) error {
+	return authSleepUntil(ctx, time.Time{}, baseDelay, attempt)
+}
+
+// authSleep waits like the package function but never past the session
+// deadline: a delay that would cross it ends at the deadline with
+// context.DeadlineExceeded.
+func (s *Session) authSleep(ctx context.Context, baseDelay time.Duration, attempt int) error {
+	return authSleepUntil(ctx, s.Deadline, baseDelay, attempt)
+}
+
+// authSleepUntil sleeps the escalating auth delay, ending early when ctx is
+// done or at deadline (zero means none).
+func authSleepUntil(ctx context.Context, deadline time.Time, baseDelay time.Duration, attempt int) error {
 	if baseDelay <= 0 {
 		return nil
 	}
@@ -580,11 +596,17 @@ func authSleep(ctx context.Context, baseDelay time.Duration, attempt int) error 
 		multiplier = 4
 	}
 	delay := baseDelay * time.Duration(multiplier)
+	var err error
+	if !deadline.IsZero() {
+		if remaining := time.Until(deadline); remaining < delay {
+			delay, err = max(remaining, 0), context.DeadlineExceeded
+		}
+	}
 	t := time.NewTimer(delay)
 	defer t.Stop()
 	select {
 	case <-t.C:
-		return nil
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}

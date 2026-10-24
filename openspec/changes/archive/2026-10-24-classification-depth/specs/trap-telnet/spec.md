@@ -11,6 +11,10 @@ The Telnet trap SHALL parse IAC sequences in the input, answer `DO` with `WONT` 
 - **WHEN** the input ends inside an IAC sequence
 - **THEN** the sequence is dropped and the session ends normally
 
+#### Scenario: Subnegotiation containing a newline
+- **WHEN** a subnegotiation contains `0x0A` before its `IAC SE`
+- **THEN** the line reader cuts it there: the unterminated start is dropped, the remainder is the next line (a stray `IAC SE` is dropped), and no terminal type is logged
+
 #### Scenario: Reply bound
 - **WHEN** a line carries more options than fit in 192 bytes of replies
 - **THEN** the surplus options are dropped without an answer
