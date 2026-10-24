@@ -66,7 +66,7 @@ Duration fields SHALL use Go `time.ParseDuration` format (e.g. `30s`, `1m`). Aff
 - **THEN** the metrics server listens on port 9999
 
 ### Requirement: CrowdSec configuration
-The config SHALL include `RAN_CROWDSEC` (on/off, default off), `RAN_CROWDSEC_URL`, `RAN_CROWDSEC_MACHINE_ID` and `RAN_CROWDSEC_PASSWORD` (the last three required when enabled), `RAN_CROWDSEC_BATCH_INTERVAL` and `RAN_CROWDSEC_BATCH_SIZE` (unchanged), `RAN_BAN_ON` (comma-separated subset of `probe,attack,scan`, default `attack,scan`) and `RAN_ALERT_COOLDOWN` (Go duration, default `4h`, `0s` disables) and `RAN_PROBE_SUMMARY_WINDOW` (Go duration, default `60s`, `0s` disables aggregation). `RAN_CROWDSEC_BAN_DURATION`, `RAN_CROWDSEC_DECISION_CACHE` and `RAN_CROWDSEC_DEDUP_WINDOW` SHALL have no effect and are only checked for presence to log the warning.
+The config SHALL include `RAN_CROWDSEC` (on/off, default off), `RAN_CROWDSEC_URL`, `RAN_CROWDSEC_MACHINE_ID` and `RAN_CROWDSEC_PASSWORD` (the last three required when enabled), `RAN_CROWDSEC_BATCH_INTERVAL` and `RAN_CROWDSEC_BATCH_SIZE` (unchanged), `RAN_BAN_ON` (comma-separated subset of `probe,attack,scan`, default `attack,scan`) and `RAN_ALERT_COOLDOWN` (Go duration, default `1h`, `0s` disables) and `RAN_PROBE_SUMMARY_WINDOW` (Go duration, default `60s`, `0s` disables aggregation). `RAN_CROWDSEC_BAN_DURATION`, `RAN_CROWDSEC_DECISION_CACHE` and `RAN_CROWDSEC_DEDUP_WINDOW` SHALL have no effect and are only checked for presence to log the warning.
 
 #### Scenario: CrowdSec enabled with all vars
 - **WHEN** `RAN_CROWDSEC=on` with URL, machine ID and password set
@@ -98,7 +98,7 @@ The config SHALL include `RAN_CROWDSEC` (on/off, default off), `RAN_CROWDSEC_URL
 
 #### Scenario: Default cooldown
 - **WHEN** `RAN_ALERT_COOLDOWN` is not set
-- **THEN** the cooldown is 4 hours
+- **THEN** the cooldown is 1 hour
 
 #### Scenario: Removed variable set
 - **WHEN** `RAN_CROWDSEC_BAN_DURATION` is set in the environment

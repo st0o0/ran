@@ -28,5 +28,5 @@ results appear in the repository's Security tab.
 ran is a sensor: it does not protect its host. Run the image with a read-only
 root filesystem, `cap_drop: [ALL]` and the default non-root user (`65532`), and
 enable `RAN_PROXY_PROTOCOL` only when the listener is reachable solely from a
-trusted proxy. See the threat model in the README. CI runs `govulncheck` and a
+trusted proxy (a forged PROXY header lets any peer pick the source address ran reports, and so get an arbitrary public IP banned). See the threat model in the README. CI runs `govulncheck` and a
 short fuzz smoke test on the protocol parsers.

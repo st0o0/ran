@@ -50,7 +50,7 @@ binary, no shell, no runtime, just protocol stubs and a CrowdSec LAPI client.
 |---|:---:|:---:|:---:|
 | Single binary / container | 31 containers | Python + deps | yes |
 | Protocol coverage | 31 honeypots | 30 protocols | 29 protocols |
-| RAM | 8+ GB | ~500 MB | ~20 MB |
+| RAM | 8+ GB | ~500 MB | ~20 MB idle |
 | CrowdSec | via log parser | no | native LAPI push |
 | Selective traps | edition-based | yes | yes |
 | External deps | Docker Compose stack | Python, pip | none (static binary) |
@@ -61,7 +61,7 @@ binary, no shell, no runtime, just protocol stubs and a CrowdSec LAPI client.
 Pick your traps, start the container:
 
 ```bash
-docker run --rm \
+docker run --rm --name ran \
   -e RAN_TRAPS=ssh,http,ftp \
   -p 2222:2222 -p 8081:8081 -p 21:21 -p 9550:9550 \
   ghcr.io/st0o0/ran:latest
@@ -96,28 +96,31 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `ssh` | `:2222` | Credentials (OpenSSH banner, password auth) |
-| `rdp` | `:3389` | Username (X.224 cookie extraction) |
-| `vnc` | `:5900` | Auth challenge/response (VNC Authentication) |
+| `ssh` | `:2222` | Credentials (OpenSSH banner, password auth only) |
+| `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session |
+| `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response |
 | `telnet` | `:23` | Credentials (login/password prompts) |
+| `ftp` | `:21` | Credentials (`USER` / `PASS`). Banner `220 FTP Server ready.`, lines up to 512 bytes. Every other command except `QUIT` gets `530` and is not logged |
 
 ### Web & proxy
 
 | Name | Port | Captures |
 |---|---|---|
-| `http` | `:8081` | Credentials (WordPress + admin login pages) |
-| `httpproxy` | `:8080` | Proxy targets + Proxy-Authorization credentials |
-| `elasticsearch` | `:9200` | API requests (fake cluster responses). A plain `GET` without a body (`/`, `/_cluster/health`, other fingerprinting GETs) is a probe; any other method, or any request with a body, counts as a command |
+| `http` | `:8081` | Credentials from `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path). Only `POST` counts as a login: the form body is capped at 16 KiB, JSON bodies yield empty credentials. `GET` paths and `User-Agent` are not logged. Responses carry `Server: Apache/2.4.62` |
+| `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
+| `elasticsearch` | `:9200` | API requests with fake cluster responses. Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
+
+`http`, `httpproxy` and `elasticsearch` start a session per connection (`http`) or per request (`httpproxy`, `elasticsearch`).
 
 ### Databases
 
 | Name | Port | Captures |
 |---|---|---|
-| `mysql` | `:3307` | Credentials (wire protocol, cleartext password) |
+| `mysql` | `:3307` | Username and the client's auth response (greeting reports version `8.0.36` and offers `mysql_clear_password`; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response) |
 | `postgres` | `:5432` | Credentials (cleartext password auth) |
 | `mssql` | `:1433` | Credentials (TDS Login7 with password decode) |
-| `oracle` | `:1521` | Credentials (TNS connect descriptor) |
-| `redis` | `:6379` | AUTH credentials + RESP command logging |
+| `oracle` | `:1521` | `USER` and `SERVICE_NAME` from the TNS CONNECT descriptor; no password |
+| `redis` | `:6379` | `AUTH` credentials + RESP and inline command logging |
 | `memcached` | `:11211` | Command logging (text protocol) |
 
 ### Mail
@@ -126,16 +129,16 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 |---|---|---|
 | `smtp` | `:25` | Credentials (AUTH LOGIN / PLAIN) |
 | `pop3` | `:110` | Credentials (USER / PASS) |
-| `imap` | `:143` | Credentials (LOGIN command) |
+| `imap` | `:143` | Credentials (LOGIN command); other commands except `CAPABILITY`, `NOOP` and `LOGOUT` are logged as commands |
 
 ### Directory & network
 
 | Name | Port | Captures |
 |---|---|---|
 | `ldap` | `:389` | Credentials (simple bind DN + password) |
-| `smb` | `:445` | Credentials (NTLMSSP domain\user + workstation) |
-| `socks5` | `:1080` | Credentials + proxy target addresses |
-| `irc` | `:6667` | PASS credentials + NICK/USER/JOIN commands |
+| `smb` | `:445` | SMB2 Session Setup: user, domain and workstation, taken only from an NTLMSSP Type 3 message. No password or hash is captured and no challenge is issued. Every Session Setup with a well-formed security buffer counts as an auth attempt (attack), whether or not it carries NTLMSSP |
+| `socks5` | `:1080` | Username/password from clients that offer that method, or the `CONNECT` target of clients that offer no authentication |
+| `irc` | `:6667` | `PASS` credentials (the username is the `NICK` seen so far) and other commands such as `JOIN`. `NICK`/`USER` registration alone is not logged |
 
 ### IoT & industrial
 
@@ -143,7 +146,7 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 |---|---|---|
 | `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass) |
 | `modbus` | `:502` | ICS payloads (function codes + registers) |
-| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge) |
+| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). A first packet that is not CNXN is logged as an `adb_unknown` payload |
 | `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload |
 
 ### UDP
@@ -151,13 +154,15 @@ no filesystem emulation. This keeps the attack surface of the honeypot minimal.
 | Name | Port | Captures |
 |---|---|---|
 | `dns` | `:53` | Query domains + types (responds REFUSED) |
-| `snmp` | `:161` | Community strings (v1/v2c GetRequest) |
-| `sip` | `:5060` | SIP URIs + digest credentials |
-| `ntp` | `:123` | Request metadata (drops monlist amplification) |
+| `snmp` | `:161` | Community string and version (v1/v2c `GetRequest` and `GetNextRequest`) |
+| `sip` | `:5060` | Method, `From`/`To` headers and the Digest `username`. The Digest response is not captured, and the credentials counter stays 0 for SIP |
+| `ntp` | `:123` | Version and mode of mode 3 client packets; answers with a Kiss-o'-Death `DENY`. `monlist` (mode 7) and other modes only log a `parse_failed` error |
 
 UDP source addresses are spoofable, so UDP traps log and count metrics only.
 They never raise CrowdSec alerts (the UDP constructors take no alerter at all).
 Inbound packets are rate limited per source and globally (see [Limits](#limits)).
+Every UDP packet that passes the rate limiter is its own session with `connect`
+and `disconnect` log lines; probe summarization applies to TCP only.
 
 ## Configuration
 
@@ -179,25 +184,59 @@ RAN_SMTP_ADDR=:25,:587                  # SMTP on standard + submission port
 ```
 
 Listen addresses are validated at startup (`host:port` or `:port`, port 1 to 65535).
-Check a configuration without starting the traps: `ran check-config` prints the
-problem and how to fix it, and exits 0 (valid) or 1 (invalid). The container
-health check (`ran healthcheck`) also exits 1 when the configuration is invalid.
+Further validation: `RAN_SESSION_TIMEOUT` must be greater than zero;
+`RAN_AUTH_DELAY`, `RAN_SSH_TARPIT_DURATION`, `RAN_CROWDSEC_BATCH_INTERVAL` and the
+per-trap delay overrides must not be negative; `RAN_<PROTO>_SESSION_TIMEOUT` must be
+greater than zero; `RAN_METRICS_ADDR` must be a single `host:port` (no comma list).
+A trailing slash on `RAN_CROWDSEC_URL` is trimmed.
+
+Command line helpers:
+
+- `ran check-config` validates the environment without starting the traps. It
+  prints the problem and how to fix it and exits 0 (valid) or 1 (invalid). It
+  also warns on stderr when a removed variable is still set.
+- `ran healthcheck` is the container health check. It exits 1 when the
+  configuration is invalid or when `GET /healthz` on the metrics address does
+  not answer `200` within 2 seconds (a wildcard host is queried as `127.0.0.1`).
+- `ran version` prints the version.
+
+`/healthz` is served on the metrics address next to `/metrics` and returns JSON
+with `status`, `version`, `uptime` and the enabled `traps`.
 
 ### Authentication behavior and PROXY protocol
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RAN_MAX_AUTH_RETRIES` | `3` | Credential attempts per session before the trap disconnects (`0` = unlimited until the session timeout) |
-| `RAN_AUTH_DELAY` | `0s` | Delay before answering a failed login; grows up to 4x per attempt |
-| `RAN_SSH_TARPIT` | `off` | Hold SSH clients in an endless banner instead of the key exchange |
-| `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection |
-| `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start, so the directory must be writable (the image declares `/data` as a volume) |
+| `RAN_MAX_AUTH_RETRIES` | `3` | Credential attempts per session before the trap disconnects (`0` = unlimited until the session timeout). Honored only by `ssh`, `telnet`, `mssql` and `smb` (see below) |
+| `RAN_AUTH_DELAY` | `0s` | Delay before answering a failed login; grows up to 4x per attempt. Honored only by `ssh`, `telnet`, `mssql` and `smb` |
+| `RAN_SSH_TARPIT` | `off` | Hold SSH clients with slow random banner lines before the SSH handshake (see below) |
+| `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection (`0s` = no tarpit lines) |
+| `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start and persisted if the directory is writable (the image declares `/data` as a volume). Otherwise `ran` logs a warning and uses an ephemeral key that changes on every restart; this is not fatal |
 | `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)) |
 | `RAN_<PROTO>_MAX_AUTH_RETRIES` | | Per-trap override of `RAN_MAX_AUTH_RETRIES` |
 | `RAN_<PROTO>_AUTH_DELAY` | | Per-trap override of `RAN_AUTH_DELAY` |
 | `RAN_<PROTO>_SESSION_TIMEOUT` | | Per-trap override of `RAN_SESSION_TIMEOUT` |
 
 `<PROTO>` is the upper-case trap name, for example `RAN_SSH_SESSION_TIMEOUT`.
+
+**Which traps honor the retry and delay settings.** `RAN_MAX_AUTH_RETRIES`,
+`RAN_AUTH_DELAY` and their `RAN_<PROTO>_` variants apply to `ssh`, `telnet`,
+`mssql` and `smb` only. `0` means unlimited attempts until the session timeout
+for all four (for `ssh` too: `ran` maps it to an unlimited setting, because
+the SSH library would otherwise fall back to 6). The other traps ignore them:
+
+- `ftp`, `pop3`, `imap`, `smtp`, `ldap`, `irc`, `redis`, `http` and `httpproxy`
+  accept unlimited attempts until the session timeout.
+- `mysql`, `postgres`, `oracle`, `mqtt`, `rdp`, `vnc` and `socks5` take one
+  attempt and then end the session.
+
+**SSH tarpit.** With `RAN_SSH_TARPIT=on` the trap first writes a random 32
+character line every 10 seconds, for at most `RAN_SSH_TARPIT_DURATION`, and then
+continues with the normal SSH handshake. It is not endless. The tarpit never
+outlasts the session: if the tarpit duration is not shorter than the session
+timeout (the defaults are both `30s`), it stops slightly before the session
+deadline and the session ends with outcome `timeout`. With a shorter tarpit the
+session timeout restarts for the handshake.
 
 ### Logging
 
@@ -213,9 +252,9 @@ Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RAN_SESSION_TIMEOUT` | `30s` | Max session duration (Go duration) |
-| `RAN_MAX_SESSIONS` | `500` | Global concurrent session limit |
-| `RAN_MAX_PER_IP` | `10` | Per-IP concurrent session limit |
+| `RAN_SESSION_TIMEOUT` | `30s` | Max duration of a raw TCP session (Go duration, greater than zero). For `http`, `elasticsearch` and `httpproxy` it is the read and write timeout of each request. Not used by UDP traps |
+| `RAN_MAX_SESSIONS` | `500` | Concurrent session limit, global across all TCP and UDP traps |
+| `RAN_MAX_PER_IP` | `10` | Per-IP concurrent session limit, global across all TCP and UDP traps |
 | `RAN_UDP_RATE_PER_SOURCE` | `20` | UDP packets per second allowed per source address |
 | `RAN_UDP_RATE_BURST` | `40` | UDP per-source burst size (must be at least `RAN_UDP_RATE_PER_SOURCE`, otherwise startup fails) |
 | `RAN_UDP_RATE_GLOBAL` | `2000` | UDP packets per second allowed across all sources |
@@ -226,8 +265,23 @@ The limiter is per UDP trap, so "global" means per protocol: each of `dns`,
 `ntp`, `snmp` and `sip` has its own global bucket. Per-source state is capped
 at 100000 sources; once the cap is reached, packets from untracked sources are
 only subject to the global bucket.
-Request bodies are capped at 16 KiB (HTTP) and RESP, LDAP and line-based
-protocols enforce fixed input limits.
+
+Input limits (fixed, not configurable):
+
+| Trap | Limit |
+|---|---|
+| `ftp`, `smtp`, `irc` | 512 byte lines |
+| `pop3`, `imap` | 1024 byte lines |
+| `telnet`, `redis` (inline commands), `memcached` | 4096 byte lines |
+| `redis` (RESP) | 128 arguments, 4096 bytes per bulk string |
+| `ldap` | 64 KiB per BER element |
+| `mysql`, `postgres`, `mqtt`, `smb` | 1 MiB per packet |
+| `mssql`, `oracle` | 64 KiB per packet (the length field has 16 bits) |
+| `minecraft` | 32767 bytes per packet |
+| `http` | 16 KiB for the request body and for the headers |
+| `adb` | 4096 bytes of identity data |
+| `rdp` | 1024 bytes per TPKT packet |
+| UDP traps | 4096 bytes per packet (the rest is cut off) |
 
 On SIGTERM or SIGINT the listeners close and live sessions are closed at once
 (they are not drained). Shutdown shares one 9 second deadline, below Docker's
@@ -241,11 +295,12 @@ LAPI was failing). If every trap exits on its own while nothing asked to stop,
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RAN_METRICS_ADDR` | `:9550` | Prometheus metrics listen address |
+| `RAN_METRICS_ADDR` | `:9550` | Prometheus metrics listen address (a single `host:port`; also serves `/healthz`) |
 
-Exposed metrics:
+Exposed metrics, besides `ran_build_info{version,goversion}` and the standard Go
+runtime and process collectors:
 
-- `ran_connections_total{protocol,outcome}`: connection counter
+- `ran_connections_total{protocol,outcome}`: connection counter. Outcomes: `completed`, `timeout`, `error`, `too_long` (line over the read limit), `probe` (the client did not speak the protocol)
 - `ran_credentials_captured_total{protocol}`: credential capture counter
 - `ran_active_sessions{protocol}`: active session gauge
 - `ran_session_duration_seconds{protocol}`: session duration histogram (buckets 0.1 s to 120 s)
@@ -253,12 +308,12 @@ Exposed metrics:
 - `ran_panics_recovered_total{protocol}`: panics recovered at connection and packet boundaries
 - `ran_proxy_protocol_dropped_total{protocol}`: connections closed by the PROXY protocol listener (no valid header, deadline, handshake limit, stalled consumer)
 - `ran_udp_rate_limited_total{protocol}`: UDP packets dropped by the packet rate limiter
-- `ran_sessions_rejected_total{protocol}`: TCP connections rejected by the session limiter (`RAN_MAX_SESSIONS`, `RAN_MAX_PER_IP`)
+- `ran_sessions_rejected_total{protocol}`: TCP connections and UDP packets rejected by the session limiter (`RAN_MAX_SESSIONS`, `RAN_MAX_PER_IP`)
 - `ran_probe_summary_suppressed_sessions_total`: probe sessions whose per-session log lines were replaced by a summary
 - `ran_tracked_entries{map}`: entries in the bounded tracking maps (`map`: `scan`, `probe`, `cooldown`)
 - `ran_tracked_evictions_total{map}`: live entries evicted because a map was full; a rising rate means `RAN_CROWDSEC_MAX_TRACKED` is too small
 - `ran_crowdsec_push_duration_seconds`: histogram of CrowdSec LAPI push request durations
-- `ran_crowdsec_push_errors_total`: failed LAPI pushes (transport errors and non-2xx answers)
+- `ran_crowdsec_push_errors_total`: failed LAPI pushes (transport errors, non-2xx answers and failed re-logins after a 401)
 - `ran_crowdsec_queue_length`: alerts waiting in the send queue
 - `ran_crowdsec_pipeline_total{protocol,stage}`: CrowdSec alert pipeline events. Stages: `received`, `invalid` (rejected source address), `closed` (raised after shutdown), `filtered` (class not in `RAN_BAN_ON`), `cooldown` (within `RAN_ALERT_COOLDOWN`), `queued`, `dropped`, `sent`, `failed`, `released` (cooldown slot freed after a failed push, so the source is reported again). The 0.3.x stages `cached` and `deduplicated` no longer exist. Per-class counts are not a label (cardinality); the class is in the alert meta and the logs.
 
@@ -273,27 +328,39 @@ Without a profile nothing is banned.
 | Variable | Default | Purpose |
 |---|---|---|
 | `RAN_CROWDSEC` | `off` | Enable CrowdSec LAPI alerting |
-| `RAN_CROWDSEC_URL` | | CrowdSec LAPI URL (required when enabled) |
+| `RAN_CROWDSEC_URL` | | CrowdSec LAPI URL (required when enabled). Trailing slashes are trimmed |
 | `RAN_CROWDSEC_MACHINE_ID` | | Machine ID for LAPI login (required when enabled) |
 | `RAN_CROWDSEC_PASSWORD` | | Machine password for LAPI login (required when enabled) |
-| `RAN_BAN_ON` | `attack,scan` | Classes that produce a CrowdSec alert (subset of `probe,attack,scan`). `probe` stays in logs and metrics only unless listed |
-| `RAN_ALERT_COOLDOWN` | `4h` | At most one alert per IP and class per cooldown (`0s` = disabled) |
+| `RAN_BAN_ON` | `attack,scan` | Classes that produce a CrowdSec alert (subset of `probe,attack,scan`). `probe` stays in logs and metrics only unless listed. If `scan` is not listed, a scan-classified session is reported as its own class instead (attack if it did something, otherwise probe, which is then filtered) |
+| `RAN_ALERT_COOLDOWN` | `1h` | At most one alert per IP and class per cooldown (`0s` = disabled) |
 | `RAN_PROBE_SUMMARY_WINDOW` | `60s` | Window of the aggregated probe summary log line (`0s` = one log line per probe session) |
-| `RAN_CROWDSEC_BATCH_INTERVAL` | `10s` | Batch flush interval (`0s` = immediate, no batching) |
-| `RAN_CROWDSEC_BATCH_SIZE` | `50` | Max alerts per batch POST |
-| `RAN_CROWDSEC_MAX_TRACKED` | `20000` | Max entries in each in-memory map: alert cooldown, scan tracker and probe summaries (see sizing below) |
+| `RAN_CROWDSEC_BATCH_INTERVAL` | `10s` | Batch flush interval (`0s` = immediate, one POST per alert, no batching) |
+| `RAN_CROWDSEC_BATCH_SIZE` | `50` | Max alerts per batch POST (a batch is also flushed early at about 512 KiB) |
+| `RAN_CROWDSEC_MAX_TRACKED` | `20000` | Cap of each of the three in-memory maps separately: alert cooldown, scan tracker and probe summaries (see sizing below) |
 
 `RAN_CROWDSEC_BAN_DURATION`, `RAN_CROWDSEC_DECISION_CACHE` and
 `RAN_CROWDSEC_DEDUP_WINDOW` were removed in 0.4.0. They are ignored; rán logs a
 one-time warning at startup if one is still set.
 
-**Memory sizing.** Each tracked entry costs about 400 bytes per structure, and the
-cooldown, the scan tracker and the probe log share `RAN_CROWDSEC_MAX_TRACKED`, so
-20000 entries are roughly 25 MB at the cap (a 1M unique-source flood peaked at
-227 MB heap with a cap of 100000). Size the container memory limit for the cap you
-choose, and set `GOMEMLIMIT` to about 80 percent of the container limit (for example
-`GOMEMLIMIT=100MiB` for a 128 MB limit) so the garbage collector works harder before
-the kernel OOM-kills the process.
+**Delivery and failures.** On startup `ran` logs in to the LAPI; if that first
+login fails, `ran` exits with code 1. Later outages are handled at runtime: alerts
+wait in a queue of 256 (more are dropped and counted), a failed push pauses the
+sender for `max(RAN_CROWDSEC_BATCH_INTERVAL, 1s)`, and a `401` triggers one
+re-login. A failed batch is not retried; its cooldown slots are released so the
+next qualifying session of each source is reported again. One flush is bounded
+to 5 seconds and the HTTP client timeout is 10 seconds. The token is refreshed
+in the background; a failed refresh is retried with backoff.
+
+**Memory sizing.** Each of the three maps (cooldown, scan tracker, probe summaries)
+has its own cap of `RAN_CROWDSEC_MAX_TRACKED` entries, and an entry costs about
+400 bytes, so with the default all three full are roughly 25 MB (3 x 20000 x 400
+bytes). The scan and probe maps are active even with `RAN_CROWDSEC=off`; the cooldown
+map exists only with CrowdSec enabled. The UDP rate limiter keeps a separate
+per-source map (up to 100000 sources per UDP trap) that is not part of this
+estimate. A 1M unique-source flood peaked at 227 MB heap with a cap of 100000. Size
+the container memory limit for the cap you choose, and set `GOMEMLIMIT` to about 80
+percent of the container limit (for example `GOMEMLIMIT=100MiB` for a 128 MB limit)
+so the garbage collector works harder before the kernel OOM-kills the process.
 
 #### Classification
 
@@ -307,12 +374,32 @@ Scan detection never counts UDP (spoofable) or non-public source addresses, and
 its in-memory map is capped (oldest entries are evicted first, which only delays
 a scan classification). A scan is always its own alert, even if the session that
 crossed the threshold was only a probe; its scenario uses the protocol that
-crossed it. `scan` outranks `attack`, which outranks `probe`.
+crossed it. `scan` outranks `attack`, which outranks `probe`. The scan and
+probe maps are active even with `RAN_CROWDSEC=off`.
 
-The class is sent as event meta (`class`), together with `protocol`,
-`dest_port`, `auth_attempts`, `commands` and `payload_bytes`. Scenario names stay
-`custom/ran-<protocol>-trap` for every class, and `source.ip` and `source.value`
-are both set, so geo enrichment keeps working.
+Classes are only downgraded in one case: if `scan` is not in `RAN_BAN_ON`, a
+scan-classified session is evaluated as its own class (attack if it logged an
+auth attempt, command or payload, otherwise probe), so a scanner that also
+attacks still produces attack alerts. Keep `scan` in the list if you want scan
+alerts.
+
+**Alert payload.** One alert is pushed per qualifying event, with scenario
+`custom/ran-<protocol>-trap` for every class, `events_count` 1, `capacity` 0,
+`leakspeed` `"0"`, `simulated` false, `remediation` true, no decisions, and
+exactly one event. `source.ip` and `source.value` are both set (geo enrichment
+keeps working). The event meta contains the sensor keys `class`, `protocol`,
+`dest_port`, `auth_attempts`, `commands` and `payload_bytes`, plus trap-specific
+keys where the trap has them (for example `username`, the command name, `path`,
+`target`, `identity`, `client_id`, `service_name`, `domain`, `workstation`,
+`function_code`, `player_name`). The meta is bounded:
+
+- keys named `password`, `pass`, `passwd`, `secret`, `token` or `authorization`
+  (case-insensitive) are dropped, so passwords never leave the host;
+- at most 32 keys (sensor keys always survive, surplus trap keys are dropped in
+  sorted order), keys cut to 64 bytes and values to 256 bytes, with control and
+  format characters replaced by a space.
+
+Scan and escalation alerts raised at session end carry only the sensor keys.
 
 Sessions are classified from the counters when they end, so a trap that logs a
 command, payload or auth attempt ends as `attack` even if it did not alert
@@ -324,10 +411,12 @@ planned follow-up.
 
 #### Logging of probes
 
-Probe sessions are not logged one by one. Per source IP and
+TCP probe sessions are not logged one by one. Per source IP and
 `RAN_PROBE_SUMMARY_WINDOW` rán writes one summary line
 (`action: probe_summary`, `sessions`, `protocols`). Attack and scan sessions keep
-their full per-event lines (credentials, commands, payloads). The `ran_*`
+their full per-event lines (credentials, commands, payloads). A probe session that
+triggers a scan alert is still summarized in the logs. UDP sessions are never
+summarized: they always log `connect` and `disconnect` lines. The `ran_*`
 metrics are still updated per session, so dashboards are unaffected.
 
 #### Alert pipeline
@@ -339,15 +428,22 @@ trap session ──▶ Classify (probe / attack / scan) ──▶ Alert pipeline
         invalid          filtered                  cooldown       queued / dropped
 ```
 
-1. **IP validation**: only publicly routable addresses pass (stage `invalid` otherwise).
+1. **IP validation**: addresses in a denylist of non-global ranges are dropped
+   (stage `invalid`, see below).
 2. **Class filter**: classes not in `RAN_BAN_ON` stop here (stage `filtered`).
-3. **Cooldown**: at most one alert per IP and class per `RAN_ALERT_COOLDOWN`
-   (stage `cooldown`). A move to a higher class (probe to attack, attack to scan)
-   passes once; a lower class is suppressed while a higher one is cooling down.
-   The slot is only consumed when the alert is queued; if the queue is full the
-   alert is dropped and may be retried. With the default 4h cooldown a continuous
-   attacker produces about one alert per ban period, so CrowdSec's
-   `GetDecisionsCount` counts episodes, not packets.
+3. **Cooldown**: the same class, or any higher class, still cooling down for an
+   IP suppresses the alert for the full `RAN_ALERT_COOLDOWN` (stage `cooldown`),
+   regardless of how long the resulting ban lasts. A move to a higher class (probe
+   to attack, attack to scan) passes once. The cooldown is keyed per IP and class,
+   so one IP holds up to 3 entries. The slot is only consumed when the alert is
+   queued; if the queue is full the alert is dropped and may be retried. With the
+   default 1h cooldown a continuous attacker produces about one alert per hour,
+   equal to the shortest ban step of the example profile below, so bans renew
+   without a gap and CrowdSec's `GetDecisionsCount` counts episodes, not packets.
+   Raising the cooldown reduces alert volume but leaves a renewal gap for every
+   ban step shorter than the cooldown (the attacker is unbanned until the next
+   alert). Compared with the former 4h default expect roughly 2 to 4 times more
+   alerts and faster escalation (1h, 3h, 9h and so on). `0s` disables the cooldown.
 4. **Batch queue**: alerts are flushed as one POST on a timer or at the batch size.
 
 When a map is full, the oldest entries are evicted. An evicted cooldown entry can
@@ -355,27 +451,39 @@ alert again, so a full map means more LAPI traffic.
 
 Only the TCP peer address is used as alert identity. The HTTP trap logs
 `X-Real-IP` / `X-Forwarded-For` as `claimed_client_ip` but never alerts on it
-(behind a trusted proxy, use `RAN_PROXY_PROTOCOL`). Alerts are accepted only
-for publicly routable addresses. Private (RFC 1918, ULA), CGNAT (100.64.0.0/10),
-loopback, link-local, unspecified, multicast, reserved, documentation, benchmark,
-6to4, NAT64 (including 64:ff9b:1::/48), IETF protocol assignment (2001::/23), 3fff::/20, 5f00::/16 and IPv4-compatible sources are dropped (pipeline stage `invalid`), so
-LAN-only deployments produce no CrowdSec alerts.
+(behind a trusted proxy, use `RAN_PROXY_PROTOCOL`). Address validation is a
+denylist, not a positive test for publicly routable addresses. IPv4-mapped IPv6
+addresses are unmapped first, zoned addresses are rejected, and these ranges are
+dropped:
+
+- IPv4: `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (CGNAT), `127.0.0.0/8`,
+  `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`,
+  `192.88.99.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`,
+  `203.0.113.0/24`, `224.0.0.0/4`, `240.0.0.0/4`.
+- IPv6: `::/128`, `::1/128`, `::ffff:0:0/96`, `::/96`, `64:ff9b::/96`,
+  `64:ff9b:1::/48`, `100::/64`, `2001::/23`, `2001:db8::/32`, `2002::/16`,
+  `3fff::/20`, `5f00::/16`, `fc00::/7`, `fe80::/10`, `ff00::/8`.
+
+LAN-only deployments therefore produce no CrowdSec alerts.
 
 With `RAN_PROXY_PROTOCOL`, the PROXY v1 or v2 header is required. A connection
 must send a valid header within 3 seconds; a connection that sends other bytes,
 closes early or stays silent is closed and counted in
 `ran_proxy_protocol_dropped_total`, never handled as a plain connection. A
-silent peer does not block other clients. At most 1024 connections may be
-waiting for a header (or for the trap to take them) at once; further ones are
-closed immediately and counted too. Only enable this mode when ran is reachable
-solely from a trusted proxy or tunnel: any peer that can connect directly can
-forge a header and choose its own source address. A source allowlist for
-trusted proxies is a possible future change.
+silent peer does not block other clients. At most 1024 connections per listen
+address may be waiting for a header (or for the trap to take them) at once;
+further ones are closed immediately and counted too. The mode applies to all TCP
+traps and never to UDP. `PROXY ... UNKNOWN` (v1) and `LOCAL` (v2) headers keep
+the address of the proxy itself. Only enable this mode when ran is reachable
+solely from a trusted proxy or tunnel: a forged header lets any peer that can
+connect directly choose the source address ran reports, so any public IP can be
+reported and then banned. A source allowlist for trusted proxies is a possible
+future change.
 
 Register the machine before starting rán:
 
 ```bash
-cscli machines add -m ran-honeypot -p <password>
+cscli machines add ran-honeypot --password <password>
 ```
 
 rán authenticates via machine-login (`POST /v1/watchers/login`) and
@@ -397,7 +505,7 @@ services:
       RAN_CROWDSEC_MACHINE_ID: ran-honeypot
       RAN_CROWDSEC_PASSWORD: ${CROWDSEC_PASSWORD}
       RAN_BAN_ON: attack,scan
-      RAN_ALERT_COOLDOWN: 4h
+      RAN_ALERT_COOLDOWN: 1h
 ```
 
 #### Escalation with CrowdSec profiles
@@ -504,6 +612,14 @@ cscli decisions list -o json
 5. Decisions with origin `ran` from 0.3.x expire normally;
    `GetDecisionsCount` stays inflated for old IPs because every re-push added a row.
 
+Behavior changes after 0.4.0: the default of `RAN_ALERT_COOLDOWN` changed from
+`4h` to `1h` (set `RAN_ALERT_COOLDOWN=4h` to keep the old volume; see the
+cooldown notes above). `RAN_MAX_AUTH_RETRIES=0` is now really unlimited for `ssh`
+(it used to fall back to 6 attempts). Negative durations, a comma separated
+`RAN_METRICS_ADDR` and a zero `RAN_SESSION_TIMEOUT` are now rejected at startup,
+and with `scan` missing from `RAN_BAN_ON` a scanner's attacks are reported as
+attack instead of being dropped.
+
 Upgrading from 0.3.7: UDP traps (`dns`, `ntp`, `snmp`, `sip`) no longer raise
 alerts, so the `custom/ran-{dns,ntp,snmp,sip}-trap` scenarios stop appearing.
 The HTTP log field `client_ip` is now `claimed_client_ip`. The `password` log
@@ -589,20 +705,29 @@ Structured JSON to stdout, one line per event:
 }
 ```
 
-Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`, `probe_summary`.
-Connect and disconnect lines are written for sessions that do something; probe
-sessions are summarized (see [Logging of probes](#logging-of-probes)).
+Actions: `connect`, `auth_attempt`, `command`, `payload`, `disconnect`,
+`probe_summary`, `probe` (fingerprinting events that do not count as an attack),
+`rejected` (session limiter) and `error`. TCP connect and disconnect lines are
+written for sessions that do something; TCP probe sessions are summarized (see
+[Logging of probes](#logging-of-probes)). UDP traps always log `connect` and
+`disconnect`.
 
 ## Troubleshooting
 
 **`at least one trap must be enabled`**: set `RAN_TRAPS` to a comma-separated
 list of traps. `ran check-config` validates the whole configuration.
 
-**Port already in use**: another service is on the default port. Override
-with `RAN_<PROTO>_ADDR=:<port>`.
+**Port already in use**: another service is on the default port. The failing
+trap logs `trap failed to start` and is skipped while the others keep running;
+`ran` exits with code 1 only if all traps fail or the metrics address cannot be
+bound. Override the port with `RAN_<PROTO>_ADDR=:<port>` (or `RAN_METRICS_ADDR`).
 
 **CrowdSec alerts not arriving**: verify `RAN_CROWDSEC_URL` is reachable
-from the container and the machine is registered (`cscli machines list`).
+from the container (without a trailing slash; it is trimmed anyway) and the
+machine is registered (`cscli machines list`). With `RAN_CROWDSEC=on` a failed
+first LAPI login is fatal (exit code 1); later outages are retried as described
+under [CrowdSec](#crowdsec). Check `ran_crowdsec_push_errors_total` and
+`ran_crowdsec_pipeline_total{stage="failed"}`.
 
 **Alerts arrive but nothing is banned**: rán does not create decisions. Add a
 CrowdSec profile for the `attack` and `scan` classes (see

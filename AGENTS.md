@@ -8,7 +8,7 @@ Notes for AI agents and contributors working on `ran`. Keep it short and factual
 - Use `fix:`/`feat:` for user-visible changes and `chore:`/`docs:` for the rest. Mark breaking behavior with `!` in the title, because `release-please` reads it.
 - Specs and changes live in `openspec/` (tracked). Create changes with the `openspec` CLI, run `openspec validate --all`, sync delta specs to the main specs when archiving.
 - English only in code, comments, docs and commit messages. No em dashes (use `--`).
-- No real IP addresses or personal domains in code, tests or docs. Test addresses: use well-known public addresses (for example `8.8.8.8`, `1.1.1.1`, `2606:4700:4700::1111`). Documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) are on the alert denylist and are rejected by `Alert()`, so do not use them where an alert must be accepted.
+- No real IP addresses or personal domains in code, tests or docs. Test addresses: use well-known public addresses (for example `8.8.8.8`, `1.1.1.1`, `2606:4700:4700::1111`). Documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) are on the alert denylist and are rejected by the CrowdSec sink (pipeline stage `invalid`), so do not use them where an alert must be accepted.
 
 ## Verification
 
@@ -39,7 +39,7 @@ Notes for AI agents and contributors working on `ran`. Keep it short and factual
 - LAPI profiles are skipped for alerts that already carry decisions. `ran` 0.3.x embedded a ban decision, so profile based escalation never ran for `custom/ran-*`. From 0.4.0 `ran` pushes alerts without decisions (`remediation: true`, `source.value` and `source.ip` set, class meta on the event) so profiles decide. The default profile then creates the decision with origin `crowdsec`.
 - Profiles read the class with `Alert.Events[0].GetMeta("class")`. `Alert.GetMeta` reads only alert level meta.
 - LAPI allowlists apply only to alerts without embedded decisions; an embedded decision stays ban-listed.
-- `GetDecisionsCount` counts every decision row of alerts still in the database, including expired rows and rows removed with `cscli decisions delete`. The database flush at `db_config.flush.max_items` deletes alerts without an active decision, and those rows then drop out of the count, which lowers the escalation level. Size `max_items` and `max_age` so the history covers the longest escalation step.
+- `GetDecisionsCount` counts decision rows of alerts still stored in the database, including expired rows and rows removed with `cscli decisions delete`. The database flush at `db_config.flush.max_items` deletes alerts without an active decision, and those rows then drop out of the count, which lowers the escalation level. Size `max_items` and `max_age` so the history covers the longest escalation step.
 - A profile `duration_expr` must produce a float for `Sprintf('%.0fh', ...)`. `min(168, 3 ^ n)` returns the int literal at the cap and `%.0f` then fails silently, falling back to the base duration. Use `min(168.0, ...)`. Capital `Min` does not compile and CrowdSec exits at startup. `crowdsec -t` only compiles the expression and does not catch the formatting issue.
 - Alerts flagged `simulated: true` create a decision that the bouncer stream does not enforce and are not shared to the community blocklist; any other alert is shared, even without decisions.
 - The plugin channel of the CrowdSec notification broker is unbuffered; bursts can drop notifications. This is not a `ran` problem.
