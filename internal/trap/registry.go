@@ -113,6 +113,9 @@ var Registry = map[string]Factory{
 	"banner": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
 		return NewBanner(cfg, logger, m, limiter, alerter)
 	},
+	"mcp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewMCP(cfg, logger, m, limiter, alerter), nil
+	},
 	"mongodb": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
 		return NewMongoDB(cfg, logger, m, limiter, alerter), nil
 	},

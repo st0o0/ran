@@ -86,3 +86,10 @@ The default listen addresses of `telnet` SHALL be `:23,:2323`. Binding follows t
 - **WHEN** the tests compare `DefaultPorts`, `AddresslessTraps`, `ValidTraps` and `trap.Registry`
 - **THEN** the first two are disjoint and their union equals the other two
 
+### Requirement: MCP trap
+`mcp` SHALL be a valid trap name with default port `:8000`, registered in `DefaultPorts`, `ValidTraps` and `Registry`.
+
+#### Scenario: Enable
+- **WHEN** `RAN_TRAPS=mcp` is set
+- **THEN** the trap starts on `:8000` and appears in `/healthz`
+

@@ -46,6 +46,7 @@ var DefaultPorts = map[string]string{
 	"docker":        ":2375",
 	"kubernetes":    ":6443",
 	"mongodb":       ":27017",
+	"mcp":           ":8000",
 }
 
 // AddresslessTraps are traps without a default port: they only make sense on

@@ -3,6 +3,7 @@ package trap
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -342,6 +343,41 @@ func FuzzSniffProtocol(f *testing.F) {
 		text := printableText(data)
 		if len(text) != len(data) || strings.ContainsFunc(text, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
 			t.Fatalf("printableText(%x) = %q", data, text)
+		}
+	})
+}
+
+func FuzzParseJSONRPC(f *testing.F) {
+	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"x","version":"1"}}}`))
+	f.Add([]byte(`{"jsonrpc":"2.0","id":"a","method":"tools/call","params":{"name":"run_command","arguments":{"command":"id","n":[1],"o":{}}}}`))
+	f.Add([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"},{"bad":1},7,null]`))
+	f.Add([]byte(`[[[[[[`))
+	f.Add([]byte("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"a\u200b\\u202e\"}"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		p := parseJSONRPC(data)
+		if len(p.calls) > maxMCPBatch {
+			t.Fatalf("%d calls", len(p.calls))
+		}
+		total := 0
+		for _, c := range p.calls {
+			if len(c.method) > maxMCPName || len(c.id) > maxMCPName+2 {
+				t.Fatalf("method %d bytes, id %d bytes", len(c.method), len(c.id))
+			}
+			if !json.Valid(c.id) {
+				t.Fatalf("id %q is not valid JSON", c.id)
+			}
+			tool, args, _ := mcpToolCall(c.params)
+			if len(tool) > maxMCPName || len(args) > maxMCPArgsSummary {
+				t.Fatalf("tool %d bytes, summary %d bytes", len(tool), len(args))
+			}
+			if strings.Count(args, "=") > maxMCPArgKeys+len(args)/maxMCPArgValue {
+				t.Fatalf("too many keys in %q", args)
+			}
+			name, version := mcpClientInfo(c.params)
+			total += len(c.method) + len(tool) + len(args) + len(name) + len(version) + len(mcpProtocolVersion(c.params))
+		}
+		if limit := maxMCPBatch * (4*len(data) + fuzzOutputSlack); total > limit {
+			t.Fatalf("output of %d bytes for %d input bytes", total, len(data))
 		}
 	})
 }
