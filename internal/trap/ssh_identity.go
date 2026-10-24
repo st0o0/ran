@@ -45,50 +45,62 @@ func hasshOf(kex, enc, mac, comp string) string {
 // done=true if the stream is not parseable. It never allocates from a length
 // field; buf is the bytes seen so far and is already bounded by the caller.
 func scanKexInit(buf []byte) (hassh string, done bool) {
+	hassh, done, _, _ = scanKexInitFrom(buf, 0)
+	return hassh, done
+}
+
+// scanKexInitFrom is scanKexInit starting at offset from, the start of the
+// first line not yet known to be a non-identification line. While more bytes
+// are needed it returns the offset to resume from and the buffer length that
+// a rescan needs at least to make progress.
+func scanKexInitFrom(buf []byte, from int) (hassh string, done bool, resume, need int) {
 	// Identification: skip non-SSH lines, then the SSH- line.
-	pos := 0
+	pos := from
+	resume = from
 	for {
 		nl := bytes.IndexByte(buf[pos:], '\n')
 		if nl < 0 {
-			return "", false
+			return "", false, pos, len(buf) + 1
 		}
+		start := pos
 		line := buf[pos : pos+nl]
 		pos += nl + 1
 		if bytes.HasPrefix(line, []byte("SSH-")) {
+			resume = start // later scans restart at the identification line
 			break
 		}
 	}
 	rest := buf[pos:]
 	if len(rest) < 6 {
-		return "", false
+		return "", false, resume, pos + 6
 	}
 	pktLen := binary.BigEndian.Uint32(rest[:4])
 	padLen := int(rest[4])
 	if pktLen < 2 || pktLen > sshKexScanLimit || padLen+1 > int(pktLen) {
-		return "", true
+		return "", true, resume, 0
 	}
 	if len(rest) < 4+int(pktLen) {
-		return "", false
+		return "", false, resume, pos + 4 + int(pktLen)
 	}
 	payload := rest[5 : 4+int(pktLen)-padLen]
 	if len(payload) < 1+16 || payload[0] != sshMsgKexInit {
-		return "", true
+		return "", true, resume, 0
 	}
 	p := payload[17:]
 	var lists [8]string
 	for i := range lists {
 		if len(p) < 4 {
-			return "", true
+			return "", true, resume, 0
 		}
 		n := binary.BigEndian.Uint32(p[:4])
 		p = p[4:]
 		if uint64(n) > uint64(len(p)) {
-			return "", true
+			return "", true, resume, 0
 		}
 		lists[i] = string(p[:n])
 		p = p[n:]
 	}
-	return hasshOf(lists[0], lists[2], lists[4], lists[6]), true
+	return hasshOf(lists[0], lists[2], lists[4], lists[6]), true, resume, 0
 }
 
 // kexSniffConn is a read-only tap on the client byte stream: bytes are passed
@@ -96,10 +108,12 @@ func scanKexInit(buf []byte) (hassh string, done bool) {
 // was parsed. It has no effect on the handshake.
 type kexSniffConn struct {
 	net.Conn
-	mu    sync.Mutex
-	buf   []byte
-	done  bool
-	hassh string
+	mu     sync.Mutex
+	buf    []byte
+	resume int // offset the next scan starts at
+	need   int // buffer length below which a scan cannot progress
+	done   bool
+	hassh  string
 }
 
 func newKexSniffConn(c net.Conn) *kexSniffConn {
@@ -124,7 +138,11 @@ func (c *kexSniffConn) feed(b []byte) {
 		b = b[:room]
 	}
 	c.buf = append(c.buf, b...)
-	h, done := scanKexInit(c.buf)
+	if len(c.buf) < c.need {
+		return
+	}
+	h, done, resume, need := scanKexInitFrom(c.buf, c.resume)
+	c.resume, c.need = resume, need
 	if !done && len(c.buf) >= sshKexScanLimit {
 		done = true
 	}

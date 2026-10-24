@@ -851,3 +851,10 @@ type csDecision struct {
 	Type     string `json:"type"`
 	Origin   string `json:"origin"`
 }
+
+// SanitizeValue applies the meta value bounds (control and format characters
+// replaced, cut at 256 bytes) to a client supplied string, so that log lines
+// carry the same bounded text as alert meta.
+func SanitizeValue(s string) string {
+	return sanitizeMeta(s, maxMetaValueBytes)
+}

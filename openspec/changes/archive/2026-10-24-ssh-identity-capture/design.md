@@ -23,4 +23,6 @@ A read-only wrapper around the `net.Conn` (`kexSniffConn` in `internal/trap/ssh_
 
 - `PublicKeyCallback` is invoked once per distinct (user, key) because the library caches the result; each distinct key counts as one failed attempt against `MaxAuthTries` and `RAN_AUTH_DELAY`. Re-offering the same key is not counted again. The library also caps total auth requests at 128 per connection, even when `RAN_MAX_AUTH_RETRIES=0`.
 - The keyboard-interactive prompt is a single `Password: ` without echo. The answer is logged as `password` (governed by `RAN_LOG_PASSWORDS`) and is never added to alert meta.
+- A keyboard-interactive exchange that fails (wrong number of answers, client hangs up mid-prompt) is still recorded as an attempt without a password, so it counts against `MaxAuthTries` and `RAN_AUTH_DELAY` and raises the alert.
+- Usernames and key types in auth log lines go through the meta value sanitizer (control characters replaced, cut at 256 bytes).
 - Alert meta additions: `method`, `client_version`, `hassh`, and for keys `key_type` and `fingerprint`.

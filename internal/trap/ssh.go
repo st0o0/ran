@@ -14,6 +14,7 @@ import (
 
 	"crypto/x509"
 
+	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 	gossh "golang.org/x/crypto/ssh"
@@ -91,7 +92,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	record := func(c gossh.ConnMetadata, method string, extra []slog.Attr, extraMeta map[string]string) error {
 		authSeen = true
 		idAttrs, meta := identity(c)
-		attrs := append([]slog.Attr{slog.String("username", c.User()), slog.String("method", method)}, extra...)
+		attrs := append([]slog.Attr{slog.String("username", alert.SanitizeValue(c.User())), slog.String("method", method)}, extra...)
 		attrs = append(attrs, idAttrs...)
 		sess.LogAuthAttempt(attrs...)
 		sess.RecordCredentials(t.metrics)
@@ -114,7 +115,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 			authSeen = true
 			idAttrs, meta := identity(c)
 			attrs := append([]slog.Attr{
-				slog.String("username", c.User()),
+				slog.String("username", alert.SanitizeValue(c.User())),
 				slog.String("password", string(pass)),
 			}, idAttrs...)
 			sess.LogAuthAttempt(attrs...)
@@ -130,7 +131,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		// x/crypto caches the result per (user, key), so each distinct key is
 		// logged once even though clients query and then sign.
 		PublicKeyCallback: func(c gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
-			keyType := sanitizeClientVersion(key.Type())
+			keyType := alert.SanitizeValue(key.Type())
 			fp := gossh.FingerprintSHA256(key)
 			return nil, record(c, "publickey",
 				[]slog.Attr{slog.String("key_type", keyType), slog.String("fingerprint", fp)},
@@ -139,7 +140,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		KeyboardInteractiveCallback: func(c gossh.ConnMetadata, challenge gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
 			answers, err := challenge("", "", []string{"Password: "}, []bool{false})
 			if err != nil {
-				return nil, errors.New("access denied")
+				return nil, record(c, "keyboard-interactive", nil, nil)
 			}
 			var extra []slog.Attr
 			if len(answers) > 0 {

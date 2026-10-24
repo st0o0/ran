@@ -12,7 +12,7 @@ The SSH trap SHALL set a `PublicKeyCallback` that logs the user, key type and SH
 - **THEN** the connection ends after the configured number of attempts
 
 ### Requirement: Keyboard-interactive capture
-The SSH trap SHALL capture keyboard-interactive answers as a credential attempt and always reject them. The password SHALL be logged according to `RAN_LOG_PASSWORDS`.
+The SSH trap SHALL capture keyboard-interactive answers as a credential attempt and always reject them. The password SHALL be logged according to `RAN_LOG_PASSWORDS`. A failed exchange (wrong number of answers, client hangs up mid-prompt) SHALL still be recorded as an attempt without a password.
 
 #### Scenario: Interactive login
 - **WHEN** a client answers a keyboard-interactive prompt with `hunter2`

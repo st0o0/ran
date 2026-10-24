@@ -6,8 +6,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/st0o0/ran/internal/alert"
+	"io"
 	"log/slog"
+	"net"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -284,5 +290,208 @@ func TestSSHKeyAttemptDelayGrows(t *testing.T) {
 	// Delays of 1x, 2x and 4x the base are applied to the three rejections.
 	if elapsed := time.Since(start); elapsed < 7*delay {
 		t.Errorf("elapsed %v, want at least %v", elapsed, 7*delay)
+	}
+}
+
+// dialRaw connects, optionally sends a PROXY header and runs the SSH client
+// handshake over the raw connection, so a test can hang up at any point.
+func dialRaw(t *testing.T, addr, proxyIP, user string, methods ...gossh.AuthMethod) (net.Conn, error) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if proxyIP != "" {
+		fmt.Fprintf(conn, "PROXY TCP4 %s 127.0.0.1 40000 22\r\n", proxyIP)
+	}
+	_, chans, reqs, err := gossh.NewClientConn(conn, addr, &gossh.ClientConfig{
+		User:            user,
+		Auth:            methods,
+		ClientVersion:   "SSH-2.0-libssh_0.9.6",
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+	})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	go gossh.DiscardRequests(reqs)
+	go func() {
+		for nc := range chans {
+			_ = nc.Reject(gossh.Prohibited, "")
+		}
+	}()
+	return conn, nil
+}
+
+// A failed keyboard-interactive exchange (wrong number of answers, or the
+// client hanging up mid-prompt) is still an attempt: logged, counted, alerted.
+func TestSSHInteractiveFailedExchangeIsRecorded(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		answer func(conn *net.Conn) gossh.AuthMethod
+	}{
+		{"wrong answer count", func(*net.Conn) gossh.AuthMethod {
+			return gossh.KeyboardInteractive(func(_, _ string, _ []string, _ []bool) ([]string, error) {
+				return []string{"a", "b", "c"}, nil
+			})
+		}},
+		{"hang up mid prompt", func(conn *net.Conn) gossh.AuthMethod {
+			return gossh.KeyboardInteractive(func(_, _ string, _ []string, _ []bool) ([]string, error) {
+				_ = (*conn).Close()
+				return nil, errors.New("hang up")
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tr := startSSHIdentityTrap(t, 6, 0)
+			var conn net.Conn
+			raw, err := net.DialTimeout("tcp", tr.addr, 2*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn = raw
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			_, _, _, err = gossh.NewClientConn(conn, tr.addr, &gossh.ClientConfig{
+				User:            "root",
+				Auth:            []gossh.AuthMethod{tc.answer(&conn)},
+				ClientVersion:   "SSH-2.0-libssh_0.9.6",
+				HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+			})
+			if err == nil {
+				t.Fatal("handshake unexpectedly succeeded")
+			}
+			conn.Close()
+			waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= 1 })
+			alerts := tr.rec.snapshot()
+			if m := alerts[0].Meta; m["method"] != "keyboard-interactive" || m["username"] != "root" {
+				t.Errorf("meta = %v", m)
+			}
+			if _, ok := alerts[0].Meta["password"]; ok {
+				t.Errorf("password in meta: %v", alerts[0].Meta)
+			}
+			waitUntil(t, func() bool { return strings.Contains(tr.logs.String(), `"action":"auth_attempt"`) })
+			if got := counterSum(t, tr.reg, "ran_credentials_captured_total", "protocol", "ssh"); got != 1 {
+				t.Errorf("credentials metric = %v, want 1", got)
+			}
+		})
+	}
+}
+
+func TestSSHLogBoundsUsername(t *testing.T) {
+	SetPasswordLogMode("off")
+	tr := startSSHIdentityTrap(t, 3, 0)
+	user := "ro\x1b[31mot" + strings.Repeat("x", 400)
+	dialSSH(tr.addr, user, gossh.Password("pw"))
+	waitUntil(t, func() bool { return strings.Contains(tr.logs.String(), `"action":"auth_attempt"`) })
+	out := tr.logs.String()
+	if strings.Contains(out, `\u001b`) || strings.Contains(out, strings.Repeat("x", 300)) {
+		t.Errorf("username not bounded:\n%s", out)
+	}
+	if !strings.Contains(out, `"username":"ro [31mot`) {
+		t.Errorf("control character not replaced:\n%s", out)
+	}
+	dialSSH(tr.addr, "root", gossh.Password("pw"))
+	waitUntil(t, func() bool { return strings.Contains(tr.logs.String(), `"username":"root"`) })
+}
+
+// Not parallel: it switches the package-level password log mode.
+// With password logging on, no password value or key may reach CrowdSec on any
+// auth path, and no sensor meta key is lost to the key cap.
+func TestSSHNoPasswordReachesCrowdSec(t *testing.T) {
+	SetPasswordLogMode("on")
+	defer SetPasswordLogMode("off")
+	lapi := &fakeLAPI{}
+	srv := httptest.NewServer(lapi.handler())
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := metrics.New(prometheus.NewRegistry(), "test")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink, err := alert.NewCrowdSec(ctx, alert.CrowdSecConfig{
+		URL: srv.URL, MachineID: "ran", Password: "lapi-secret", BatchInterval: 50 * time.Millisecond, BatchSize: 1,
+	}, logger, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sensor := alert.NewSensor(alert.SensorConfig{SummaryWindow: time.Hour}, sink, logger)
+	defer sensor.Close()
+
+	cfg := testConfig(t)
+	cfg.ProxyProtocol = true
+	cfg.MaxAuthRetries = 6
+	tr, err := NewSSH(cfg, logger, m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), sensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveTrap(t, ctx, tr)
+
+	signers := newSigners(t, 1)
+	methods := []gossh.AuthMethod{gossh.PublicKeys(signers...), interactive("s3cret-int"), gossh.Password("s3cret-pw")}
+	conn, _ := dialRaw(t, addr, "8.8.8.8", "root", methods...)
+	if conn != nil {
+		conn.Close()
+	}
+	waitFor(t, func() bool { return lapi.acceptedCount() >= 1 })
+	time.Sleep(300 * time.Millisecond)
+
+	lapi.mu.Lock()
+	defer lapi.mu.Unlock()
+	raw, err := json.Marshal(lapi.accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"s3cret-int", "s3cret-pw", `"key":"password"`} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("%q reached CrowdSec: %s", secret, raw)
+		}
+	}
+	for _, batch := range lapi.accepted {
+		for _, a := range batch {
+			events, _ := a["events"].([]any)
+			for _, e := range events {
+				ev, _ := e.(map[string]any)
+				rawMeta, _ := ev["meta"].([]any)
+				meta := map[string]string{}
+				for _, kv := range rawMeta {
+					p, _ := kv.(map[string]any)
+					k, _ := p["key"].(string)
+					v, _ := p["value"].(string)
+					meta[k] = v
+				}
+				if len(meta) > 32 {
+					t.Errorf("%d meta keys, cap is 32", len(meta))
+				}
+				// Sensor keys survive next to the SSH keys.
+				for _, k := range []string{"class", "protocol", "username", "client_version", "hassh"} {
+					if meta[k] == "" {
+						t.Errorf("meta lacks %s: %v", k, meta)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The meta of a key attempt (the widest SSH meta) plus the sensor keys must fit
+// within the CrowdSec meta key cap, so no sensor key is dropped.
+func TestSSHAlertMetaFitsKeyCap(t *testing.T) {
+	t.Parallel()
+	tr := startSSHIdentityTrap(t, 3, 0)
+	dialSSH(tr.addr, "root", gossh.PublicKeys(newSigners(t, 1)...))
+	waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= 1 })
+	meta := tr.rec.snapshot()[0].Meta
+	want := []string{"username", "method", "client_version", "hassh", "key_type", "fingerprint"}
+	for _, k := range want {
+		if meta[k] == "" {
+			t.Errorf("meta lacks %s: %v", k, meta)
+		}
+	}
+	const sensorKeys = 6 // class, protocol, dest_port, auth_attempts, commands, payload_bytes
+	if got := len(meta) + sensorKeys; got > 32 {
+		t.Errorf("%d meta keys with sensor keys, cap is 32", got)
 	}
 }
