@@ -155,3 +155,34 @@ func FuzzHTTPMatchers(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseClientHello(f *testing.F) {
+	f.Add(helloSpec{
+		version: 0x0303, ciphers: []uint16{0x1301, 0xc02b}, exts: []uint16{0, 10, 11, 13, 16, 43},
+		sni: "example.com", curves: []uint16{29, 23}, points: []uint8{0}, sigAlgs: []uint16{0x0403},
+		versions: []uint16{0x0304}, alpn: []string{"h2"},
+	}.record())
+	f.Add([]byte{0x16, 3, 1, 0, 0})
+	f.Add([]byte("GET / HTTP/1.1\r\n\r\n"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		fp := fingerprintFromHello(data, "")
+		boundedText(t, data, fp.SNI, fp.ALPN)
+		if fp.JA3 != "" || fp.JA4 != "" {
+			if len(fp.JA3) != 32 || len(fp.JA4) != 36 {
+				t.Fatalf("ja3 %q ja4 %q", fp.JA3, fp.JA4)
+			}
+			if len(fp.SNI) > maxHTTPValue {
+				t.Fatalf("sni of %d bytes", len(fp.SNI))
+			}
+		}
+		h, err := parseClientHello(data)
+		if err != nil {
+			return
+		}
+		if len(h.Ciphers) > maxHelloCiphers || len(h.Extensions) > maxHelloExtensions || len(h.Curves) > maxHelloCurves ||
+			len(h.Points) > maxHelloPoints || len(h.SigAlgs) > maxHelloSigAlgs || len(h.Versions) > maxHelloVersions || len(h.ALPN) > maxHelloALPN {
+			t.Fatalf("unbounded lists in %+v", h)
+		}
+		boundedText(t, data, h.SNI)
+	})
+}

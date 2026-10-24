@@ -13,6 +13,7 @@ import (
 var DefaultPorts = map[string]string{
 	"ssh":           ":2222",
 	"http":          ":8081",
+	"https":         ":8443",
 	"mysql":         ":3307",
 	"ftp":           ":21",
 	"telnet":        ":23",
@@ -72,6 +73,7 @@ type Config struct {
 	Addrs map[string]string
 
 	SSHHostKeyPath string
+	HTTPSCertPath  string
 
 	LogLevel  slog.Level
 	LogFormat string
@@ -219,6 +221,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		Addrs:                 make(map[string]string),
 		PerProto:              make(map[string]ProtoConfig),
 		SSHHostKeyPath:        e.str("RAN_SSH_HOST_KEY_PATH", "/data/ssh_host_key"),
+		HTTPSCertPath:         e.str("RAN_HTTPS_CERT_PATH", "/data/https_cert.pem"),
 		LogLevel:              e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
 		LogFormat:             e.logFormat("RAN_LOG_FORMAT", "json"),
 		MetricsAddr:           e.str("RAN_METRICS_ADDR", ":9550"),

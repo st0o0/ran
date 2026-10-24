@@ -17,6 +17,9 @@ var Registry = map[string]Factory{
 	"http": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
 		return NewHTTP(cfg, logger, m, limiter, alerter), nil
 	},
+	"https": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewHTTPS(cfg, logger, m, limiter, alerter)
+	},
 	"mysql": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
 		return NewMySQL(cfg, logger, m, limiter, alerter), nil
 	},

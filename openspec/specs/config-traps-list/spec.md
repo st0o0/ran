@@ -1,9 +1,7 @@
 ## Purpose
 
 Configuration system for enabling and managing honeypot traps via environment variables, supporting both a unified trap list and legacy per-trap variables.
-
 ## Requirements
-
 ### Requirement: RAN_TRAPS list configuration
 The system SHALL support a `RAN_TRAPS` environment variable containing a comma-separated list of trap names to enable (e.g., `RAN_TRAPS=ssh,ftp,telnet,redis`).
 
@@ -43,3 +41,15 @@ Config SHALL expose an `EnabledTraps() []string` method returning the list of tr
 #### Scenario: EnabledTraps returns correct list
 - **WHEN** `RAN_TRAPS=ssh,ftp,redis` is configured
 - **THEN** `EnabledTraps()` SHALL return `["ssh", "ftp", "redis"]`
+
+### Requirement: HTTPS trap registration
+The system SHALL accept `https` as a trap name in `RAN_TRAPS` with the default listen address `:8443`, overridable (also with several comma-separated addresses) through `RAN_HTTPS_ADDR`. `RAN_HTTPS_CERT_PATH` (default `/data/https_cert.pem`) SHALL name the certificate file of the trap. `config.DefaultPorts`, `config.ValidTraps` and `trap.Registry` SHALL all contain `https`.
+
+#### Scenario: Default address
+- **WHEN** `RAN_TRAPS=https` is set and `RAN_HTTPS_ADDR` is not
+- **THEN** `TrapAddr("https")` returns `:8443`
+
+#### Scenario: Certificate path
+- **WHEN** `RAN_HTTPS_CERT_PATH` is not set
+- **THEN** the certificate path is `/data/https_cert.pem`
+

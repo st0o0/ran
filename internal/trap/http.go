@@ -2,6 +2,7 @@ package trap
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -25,6 +26,10 @@ const maxHTTPBody = 16 << 10
 
 type HTTPTrap struct {
 	*bound
+	// proto is the trap name used for config, logs and metrics ("http" or "https").
+	proto string
+	// wrap lets a derived trap (https) wrap the listener before serving.
+	wrap    func(net.Listener) net.Listener
 	cfg     *config.Config
 	logger  *slog.Logger
 	metrics *metrics.Metrics
@@ -38,8 +43,15 @@ type HTTPTrap struct {
 }
 
 func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *HTTPTrap {
+	return newHTTPTrap("http", cfg, logger, m, limiter, alerter)
+}
+
+// newHTTPTrap builds the HTTP request handling for proto. The https trap reuses it
+// and only adds the TLS listener, so the request logic exists once.
+func newHTTPTrap(proto string, cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *HTTPTrap {
 	t := &HTTPTrap{
 		bound:   newBound(),
+		proto:   proto,
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
@@ -48,12 +60,14 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 	}
 
 	t.srv = &http.Server{
-		Addr:         cfg.TrapAddr("http"),
-		Handler:      recoverHandler(logger, m, "http", http.HandlerFunc(t.handleRequest)),
-		ReadTimeout:  cfg.ResolveSessionTimeout("http"),
-		WriteTimeout: cfg.ResolveSessionTimeout("http"),
+		Addr:         cfg.TrapAddr(proto),
+		Handler:      recoverHandler(logger, m, proto, http.HandlerFunc(t.handleRequest)),
+		ReadTimeout:  cfg.ResolveSessionTimeout(proto),
+		WriteTimeout: cfg.ResolveSessionTimeout(proto),
 		ConnState:    t.connState,
 		ConnContext:  t.connContext,
+		// TLS handshake failures are scanner noise; they surface as probe sessions.
+		ErrorLog: slog.NewLogLogger(slog.DiscardHandler, slog.LevelError),
 
 		MaxHeaderBytes: maxHTTPBody,
 	}
@@ -61,9 +75,11 @@ func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 }
 
 // httpConn is the state of one accepted connection. sess is set in connState
-// (StateNew) before the handler can run and cleared on close.
+// (StateNew) before the handler can run and cleared on close. hello is set for
+// TLS connections only.
 type httpConn struct {
-	sess *Session
+	sess  *Session
+	hello *helloConn
 }
 
 type httpConnKey struct{}
@@ -73,6 +89,9 @@ type httpConnKey struct{}
 // request context.
 func (t *HTTPTrap) connContext(ctx context.Context, conn net.Conn) context.Context {
 	hc := &httpConn{}
+	if tc, ok := conn.(*tls.Conn); ok {
+		hc.hello, _ = tc.NetConn().(*helloConn)
+	}
 	t.conns.Store(conn, hc)
 	return context.WithValue(ConnContextWithDestPort(ctx, conn), httpConnKey{}, hc)
 }
@@ -89,13 +108,19 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 		host, port := ParseAddr(conn.RemoteAddr().String())
 		_, destPort := ParseAddr(conn.LocalAddr().String())
 		if !t.limiter.Acquire(host) {
-			LogRejected(t.logger, t.metrics, "http", alert.TransportTCP, destPort, host, "rate_limit")
+			LogRejected(t.logger, t.metrics, t.proto, alert.TransportTCP, destPort, host, "rate_limit")
 			conn.Close()
 			return
 		}
-		sess := NewSession("http", alert.TransportTCP, host, port, destPort, t.logger)
+		sess := NewSession(t.proto, alert.TransportTCP, host, port, destPort, t.logger)
 		sess.Sensor = t.alerter
 		hc.sess = sess
+		if hc.hello != nil {
+			// Set before the connection goroutine starts, so the handshake sees it.
+			hc.hello.onHello = func(fp *tlsFingerprint) {
+				sess.Log("tls client hello", fingerprintAttrs(fp)...)
+			}
+		}
 		sess.LogConnect()
 		sess.RecordStart(t.metrics)
 	case http.StateClosed, http.StateHijacked:
@@ -112,10 +137,10 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 }
 
 func (t *HTTPTrap) Start(ctx context.Context) error {
-	addrs := t.cfg.TrapAddrs("http")
-	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyProtocol, t.logger, t.metrics, "http")
+	addrs := t.cfg.TrapAddrs(t.proto)
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyProtocol, t.logger, t.metrics, t.proto)
 	if err != nil {
-		return fmt.Errorf("http listen: %w", err)
+		return fmt.Errorf("%s listen: %w", t.proto, err)
 	}
 	t.set(ln.Addr())
 	t.logger.Info("listening", "addrs", addrs)
@@ -125,7 +150,11 @@ func (t *HTTPTrap) Start(ctx context.Context) error {
 		t.srv.Close()
 	}()
 
-	if err := t.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+	var serveLn net.Listener = ln
+	if t.wrap != nil {
+		serveLn = t.wrap(ln)
+	}
+	if err := t.srv.Serve(serveLn); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
@@ -192,6 +221,15 @@ func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
 		slog.String("host", sanitizeHTTPValue(r.Host)),
 		slog.String("user_agent", meta["user_agent"]),
 		slog.Group("headers", httpHeaderAttrs(r)...),
+	}
+	if hc.hello != nil {
+		if fp := hc.hello.fp.Load(); fp != nil {
+			for k, v := range map[string]string{"sni": fp.SNI, "ja3": fp.JA3, "ja4": fp.JA4} {
+				if v != "" {
+					meta[k] = v
+				}
+			}
+		}
 	}
 	// Headers are attacker-controlled: log them, never use them as alert identity.
 	if claimed := claimedClientIP(r); claimed != "" {

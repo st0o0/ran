@@ -4,7 +4,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
 
-Single-binary honeypot written in Go. Emulates 29 network services (SSH, RDP,
+Single-binary honeypot written in Go. Emulates 30 network services (SSH, RDP,
 Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
 pushes classified alerts to CrowdSec, whose profiles decide the bans. No external
 dependencies, ~8 MB scratch image.
@@ -43,7 +43,7 @@ profile can act on.
 |---|---|---|---|---|---|---|
 | Language / runtime | Python 3.11+ | Python 3.10+ | Python (pip) | Docker Compose stack | Go | Go, static binary |
 | Focus | Interactive SSH/Telnet shell | Tripwire for internal networks | Many protocol servers | Platform of many honeypots | Deception framework, optional LLM | Sensor for blocklists |
-| Protocols | SSH, Telnet (SFTP/SCP) | multi-protocol, list not verified | 29 modules | 31 honeypots listed | SSH, HTTP, TCP, Telnet, MCP | 29 stubs |
+| Protocols | SSH, Telnet (SFTP/SCP) | multi-protocol, list not verified | 29 modules | 31 honeypots listed | SSH, HTTP, TCP, Telnet, MCP | 30 stubs |
 | Post-login shell, file capture | yes | no | no | via Cowrie, Dionaea | optional LLM shell | no (by design) |
 | CrowdSec | log parsing via the Hub | none found | none found | none found | none found | native LAPI alerts, classified |
 | Footprint | Python process | Python process | Python process | 8 GB (sensor) to 16 GB (hive) RAM | Go binary | about 13 MB working set idle, all 29 traps |
@@ -134,10 +134,11 @@ which keeps the attack surface of the honeypot minimal.
 | Name | Port | Captures |
 |---|---|---|
 | `http` | `:8081` | Every request is logged with method, path (no query string), `Host`, `User-Agent` and a header subset (values cut to 256 bytes, control characters replaced). Requests for known exploit and recon paths (`/.env`, `/.git/`, `/actuator`, `/cgi-bin/`, `/phpmyadmin`, traversal and so on) and requests carrying a JNDI lookup (`${jndi:`, also nested or percent encoded) in the request line or a header value are commands, so they classify as `attack`. Basic `Authorization` is captured as credentials, `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path) as before. A `POST`, `PUT` or `PATCH` body that is not a form login (JSON, XML) counts as payload bytes, read up to 16 KiB. Any other `GET`/`HEAD` stays a `probe`. Alert meta adds `path`, `method` and `user_agent`. Responses carry `Server: Apache/2.4.62` |
+| `https` | `:8443` | The `http` trap behind TLS, with the same request handling and classification (exploit paths, JNDI, Basic auth and login forms are `attack`; a completed handshake without a request, a failed handshake and non-TLS bytes stay a `probe`). Uses a self-signed ECDSA certificate (`CN=localhost`), generated on first start and persisted at `RAN_HTTPS_CERT_PATH`. The ClientHello is fingerprinted before negotiation, so clients that fail the handshake are still logged (`tls client hello`): SNI, JA3 and JA4 (GREASE removed, lists capped, first TLS record only). Alert meta adds `sni`, `ja3` and `ja4` to the `http` meta. No client certificates; Go's default TLS versions and ciphers apply |
 | `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
 | `elasticsearch` | `:9200` | API requests with fake cluster responses. Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
 
-`http`, `httpproxy` and `elasticsearch` start a session per connection (`http`) or per request (`httpproxy`, `elasticsearch`).
+`http`, `https`, `httpproxy` and `elasticsearch` start a session per connection (`http`, `https`) or per request (`httpproxy`, `elasticsearch`).
 
 ### Databases
 
@@ -242,6 +243,7 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 | `RAN_SSH_TARPIT` | `off` | Hold SSH clients with slow random banner lines before the SSH handshake (see below) |
 | `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection (`0s` = no tarpit lines) |
 | `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start and persisted if the directory is writable (the image declares `/data` as a volume). Otherwise `ran` logs a warning and uses an ephemeral key that changes on every restart; this is not fatal |
+| `RAN_HTTPS_CERT_PATH` | `/data/https_cert.pem` | Certificate and key (one PEM file) of the `https` trap; a self-signed ECDSA certificate is generated on first start and persisted if the directory is writable. Otherwise (or if the file is unusable or expired) `ran` logs a warning and uses an ephemeral certificate that changes on every restart; this is not fatal |
 | `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)) |
 | `RAN_<PROTO>_MAX_AUTH_RETRIES` | | Per-trap override of `RAN_MAX_AUTH_RETRIES` |
 | `RAN_<PROTO>_AUTH_DELAY` | | Per-trap override of `RAN_AUTH_DELAY` |
@@ -255,7 +257,7 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 for all four (for `ssh` too: `ran` maps it to an unlimited setting, because
 the SSH library would otherwise fall back to 6). The other traps ignore them:
 
-- `ftp`, `pop3`, `imap`, `smtp`, `ldap`, `irc`, `redis`, `http` and `httpproxy`
+- `ftp`, `pop3`, `imap`, `smtp`, `ldap`, `irc`, `redis`, `http`, `https` and `httpproxy`
   accept unlimited attempts until the session timeout.
 - `mysql`, `postgres`, `oracle`, `mqtt`, `rdp`, `vnc` and `socks5` take one
   attempt and then end the session.
@@ -287,7 +289,7 @@ Passwords are never sent to CrowdSec, regardless of `RAN_LOG_PASSWORDS`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RAN_SESSION_TIMEOUT` | `30s` | Max duration of a raw TCP session (Go duration, greater than zero). For `http`, `elasticsearch` and `httpproxy` it is the read and write timeout of each request. Not used by UDP traps |
+| `RAN_SESSION_TIMEOUT` | `30s` | Max duration of a raw TCP session (Go duration, greater than zero). For `http`, `https`, `elasticsearch` and `httpproxy` it is the read and write timeout of each request (for `https` it also bounds the TLS handshake). Not used by UDP traps |
 | `RAN_MAX_SESSIONS` | `500` | Concurrent session limit, global across all TCP and UDP traps |
 | `RAN_MAX_PER_IP` | `10` | Per-IP concurrent session limit, global across all TCP and UDP traps |
 | `RAN_UDP_RATE_PER_SOURCE` | `20` | UDP packets per second allowed per source address |
@@ -313,7 +315,8 @@ Input limits (fixed, not configurable):
 | `mysql`, `postgres`, `mqtt`, `smb` | 1 MiB per packet |
 | `mssql`, `oracle` | 64 KiB per packet (the length field has 16 bits) |
 | `minecraft` | 32767 bytes per packet |
-| `http` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes |
+| `http`, `https` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes |
+| `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
 | `adb` | 4096 bytes of identity data |
 | `rdp` | 1024 bytes per TPKT packet |
 | UDP traps | 4096 bytes per packet (the rest is cut off) |
@@ -728,6 +731,11 @@ reports who touched them; it does not protect the host it runs on.
   header is trusted as the peer. Any host that can reach the port directly can
   forge it, so enable it only when rán is reachable solely from your proxy or
   tunnel (firewall the listener accordingly).
+- **TLS fingerprints are claims.** The `https` trap records SNI, JA3 and JA4 of
+  the ClientHello as alert meta. They are client controlled (any client can
+  send any SNI or mimic a fingerprint), so they are context for triage, never
+  identity. The certificate is self-signed with `CN=localhost` and imitates no
+  real host. The key is generated per instance and is not meant to be reused.
 - **Detectability.** Banners are generic and plausible, but a determined
   attacker can fingerprint any honeypot. Do not rely on rán staying hidden.
 - **Isolation.** Run it unprivileged, without capabilities and with a read-only
@@ -739,8 +747,7 @@ reports who touched them; it does not protect the host it runs on.
 <details>
 <summary>Hardened compose example</summary>
 
-The image runs as user `65532` and needs write access only to `/data` (the SSH
-host key). Docker sets `net.ipv4.ip_unprivileged_port_start=0` inside containers, so
+The image runs as user `65532` and needs write access only to `/data` (the SSH host key and the HTTPS certificate). Docker sets `net.ipv4.ip_unprivileged_port_start=0` inside containers, so
 low ports work without `NET_BIND_SERVICE`. Other runtimes may need that sysctl
 or higher ports (map them from the host, for example `"22:2222"`).
 
@@ -757,7 +764,7 @@ services:
     environment:
       GOMEMLIMIT: 100MiB          # about 80 percent of mem_limit
     volumes:
-      - ran-data:/data            # SSH host key
+      - ran-data:/data            # SSH host key, HTTPS certificate
     tmpfs:
       - /tmp
 volumes:
