@@ -46,6 +46,8 @@ Notes for AI agents and contributors working on `ran`. Keep it short and factual
 
 ## Known follow-ups
 
+The planned work, its order and the rejected ideas live in `todo.md`. Keep it in sync with `openspec/changes/`. The items below are small leftovers that are not yet in a change.
+
 - PROXY protocol: no source allowlist for who may send headers.
 - Per-trap classification: meta for vnc and the remaining single-request traps.
 - Modbus and ADB stay `attack` on a single request (one modbus request or one ADB CNXN counts as payload); per-trap tuning is pending.
