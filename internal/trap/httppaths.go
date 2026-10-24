@@ -31,7 +31,7 @@ var exploitPathsExact = map[string]bool{
 	"/phpinfo.php": true, "/info.php": true, "/test.php": true, "/shell.php": true,
 	"/cmd.php": true, "/c99.php": true, "/r57.php": true, "/wso.php": true,
 	"/xmlrpc.php": true, "/server-status": true, "/server-info": true,
-	"/login.action": true, "/invoker/jmxinvokerservlet": true,
+	"/login.action": true, "/invoker/jmxinvokerservlet": true, "/owa/auth.owa": true,
 	"/v2/_catalog": true, "/containers/json": true, "/script": true,
 	"/debug/pprof": true, "/_profiler": true, "/telescope": true,
 }
@@ -52,11 +52,18 @@ var exploitPathPrefixes = []string{
 	"/stalker_portal/", "/setup.cgi", "/goform/", "/apply.cgi", "/command.php",
 }
 
-// exploitPathSubstrings catch traversal and file read attempts anywhere in the path.
-var exploitPathSubstrings = []string{
-	"../", "..\\", "/etc/passwd", "/etc/shadow", "/proc/self/", "win.ini", "boot.ini",
-	"eval-stdin.php", "/.git/", "/.env",
+// exploitPathSegments lists lower-case path segments that are exploit targets
+// wherever they appear in the cleaned path.
+var exploitPathSegments = map[string]bool{
+	".git": true, ".env": true, "win.ini": true, "boot.ini": true, "eval-stdin.php": true,
 }
+
+// exploitPathSubstrings catch file read attempts anywhere in the cleaned path.
+var exploitPathSubstrings = []string{"/etc/passwd", "/etc/shadow", "/proc/self/"}
+
+// maxHTTPPath is the longest path inspected; a longer one cannot be a normal
+// request and is reported as suspicious instead of being cut.
+const maxHTTPPath = maxHTTPBody
 
 func init() {
 	// The prefix list is matched against lower-case input.
@@ -65,29 +72,69 @@ func init() {
 	}
 }
 
-// matchExploitPath reports whether p (a decoded URL path) targets a known exploit
-// or recon path. Matching is case-insensitive on the cleaned path and inspects at
-// most maxHTTPMatch bytes.
-func matchExploitPath(p string) bool {
-	if len(p) > maxHTTPMatch {
-		p = p[:maxHTTPMatch]
-	}
+// normalizeHTTPPath lower-cases p, percent-decodes it up to three times (double
+// encoding), turns backslashes into slashes and drops path parameters
+// (`;jsessionid=...`) from every segment.
+func normalizeHTTPPath(p string) string {
 	p = strings.ToLower(p)
-	for _, s := range exploitPathSubstrings {
-		if strings.Contains(p, s) {
-			return true
+	for i := 0; i < 3 && strings.ContainsRune(p, '%'); i++ {
+		dec, err := url.PathUnescape(p)
+		if err != nil || dec == p {
+			break
 		}
+		p = dec
 	}
+	p = strings.ReplaceAll(p, "\\", "/")
+	if strings.ContainsRune(p, ';') {
+		segs := strings.Split(p, "/")
+		for i, seg := range segs {
+			if j := strings.IndexByte(seg, ';'); j >= 0 {
+				segs[i] = seg[:j]
+			}
+		}
+		p = strings.Join(segs, "/")
+	}
+	return p
+}
+
+// matchExploitPath reports whether p (a decoded URL path) targets a known exploit
+// or recon path. Matching is case-insensitive on the normalized and cleaned path.
+// Paths longer than maxHTTPPath are suspicious by definition.
+func matchExploitPath(p string) bool {
+	if len(p) > maxHTTPPath {
+		return true
+	}
+	p = normalizeHTTPPath(p)
 	if p == "" || p[0] != '/' {
 		p = "/" + p
+	}
+	// Traversal is checked before cleaning, which would resolve it away.
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return true
+		}
 	}
 	p = path.Clean(p)
 	if exploitPathsExact[p] {
 		return true
 	}
-	// Prefix entries without a trailing slash also match the bare directory.
+	for _, seg := range strings.Split(p, "/") {
+		if exploitPathSegments[seg] || strings.HasPrefix(seg, ".env.") {
+			return true
+		}
+	}
+	for _, s := range exploitPathSubstrings {
+		if strings.Contains(p, s) {
+			return true
+		}
+	}
 	for _, pre := range exploitPathPrefixes {
-		if strings.HasPrefix(p, pre) || p+"/" == pre {
+		if strings.HasSuffix(pre, "/") {
+			// A directory prefix also matches the bare directory.
+			if strings.HasPrefix(p, pre) || p+"/" == pre {
+				return true
+			}
+		} else if p == pre || strings.HasPrefix(p, pre+"/") {
 			return true
 		}
 	}

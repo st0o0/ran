@@ -3,6 +3,7 @@ package trap
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -146,8 +147,12 @@ var httpHeaderSubset = []string{
 var httpJNDIHeaders = []string{
 	"User-Agent", "Referer", "Origin", "Cookie", "X-Api-Version", "X-Forwarded-For",
 	"X-Real-IP", "X-Forwarded-Host", "Accept", "Accept-Language", "Authorization",
-	"X-Requested-With", "Content-Type",
+	"X-Requested-With", "Content-Type", "X-Forwarded-Server", "CF-Connecting-IP",
+	"True-Client-IP", "X-Client-IP", "X-Originating-IP", "Forwarded",
 }
+
+// maxJNDIHeaderValues bounds how many values of one header are scanned.
+const maxJNDIHeaderValues = 8
 
 // httpStyle picks the login page style for a request path.
 func httpStyle(p string) string {
@@ -210,16 +215,17 @@ func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	formLogin := false
 	if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
-		body, n, truncated := readHTTPBody(w, r)
+		body, n, truncated, readErr := readHTTPBody(w, r)
 		form := url.Values{}
-		if !truncated {
+		if !truncated && !readErr {
 			// An oversized body yields empty credentials, as ParseForm did.
 			form, _ = url.ParseQuery(string(body))
 		}
-		isForm := isFormContent(r) && (truncated || form.Has("username") || form.Has("user") || form.Has("log") ||
+		isForm := !readErr && isFormContent(r) && (truncated || form.Has("username") || form.Has("user") || form.Has("log") ||
 			form.Has("password") || form.Has("pass") || form.Has("pwd"))
 		switch {
-		case r.Method == http.MethodPost && (isForm || n == 0):
+		// A failed read (for example a client timeout) is not a login attempt.
+		case r.Method == http.MethodPost && !readErr && (isForm || n == 0):
 			formLogin = true
 			username := firstOf(form, "username", "user", "log")
 			password := firstOf(form, "password", "pass", "pwd")
@@ -233,7 +239,7 @@ func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			sess.LogAuthAttempt(loginAttrs...)
 			sess.RecordCredentials(t.metrics)
-			meta["username"] = username
+			meta["username"] = sanitizeHTTPValue(username)
 			meta["password"] = password
 			alerted = true
 		case n > 0:
@@ -261,12 +267,14 @@ func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // readHTTPBody reads the request body up to maxHTTPBody bytes and returns it with
-// its length. The third result is true when the body exceeded the limit or could
-// not be read completely; the rest is never read.
-func readHTTPBody(w http.ResponseWriter, r *http.Request) ([]byte, int, bool) {
+// its length. tooLarge is true when the body exceeded the limit (the rest is never
+// read); readErr is true for any other read failure such as a client timeout.
+func readHTTPBody(w http.ResponseWriter, r *http.Request) (body []byte, n int, tooLarge, readErr bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxHTTPBody)
 	body, err := io.ReadAll(r.Body)
-	return body, len(body), err != nil
+	var mbe *http.MaxBytesError
+	tooLarge = errors.As(err, &mbe)
+	return body, len(body), tooLarge, err != nil && !tooLarge
 }
 
 func isFormContent(r *http.Request) bool {
@@ -291,8 +299,13 @@ func httpHasJNDI(r *http.Request) bool {
 		return true
 	}
 	for _, name := range httpJNDIHeaders {
-		if matchJNDI(r.Header.Get(name)) {
-			return true
+		for i, v := range r.Header.Values(name) {
+			if i >= maxJNDIHeaderValues {
+				break
+			}
+			if matchJNDI(v) {
+				return true
+			}
 		}
 	}
 	return false
