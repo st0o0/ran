@@ -48,5 +48,7 @@ jobs:
           for target in $targets; do
             pkg=$(dirname "$(grep -rlE "^func ${target}\(" --include='*_test.go' internal | head -n1)")
             echo "== ${target} (${pkg})"
-            go test -run='^$' -fuzz="^${target}\$" -fuzztime=20s "./${pkg}"
+            # Minimization is disabled: when the fuzztime deadline hits during minimization, go test
+            # fails with a bare "context deadline exceeded" even though no input crashed.
+            go test -run='^$' -fuzz="^${target}\$" -fuzztime=20s -fuzzminimizetime=0 "./${pkg}"
           done
