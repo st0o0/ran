@@ -141,3 +141,17 @@ func TestRunShutdownIsBounded(t *testing.T) {
 		t.Error("expected a shutdown timeout warning")
 	}
 }
+
+func TestCheckConfigRejectsBadValues(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"metrics list":   {"RAN_METRICS_ADDR": ":9550,:9551"},
+		"negative batch": {"RAN_CROWDSEC_BATCH_INTERVAL": "-1s"},
+	} {
+		env["RAN_TRAPS"] = "ssh"
+		var out, errb bytes.Buffer
+		code := checkConfig(func(k string) string { return env[k] }, &out, &errb)
+		if code != 1 {
+			t.Errorf("%s: exit %d, want 1", name, code)
+		}
+	}
+}

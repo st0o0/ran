@@ -384,3 +384,36 @@ func TestEventMetaSensorKeysWin(t *testing.T) {
 		t.Errorf("trap meta lost: %v", meta)
 	}
 }
+
+// Without scan in BAN_ON a scan classified session falls back to its own class:
+// a scanner that also attacks still alerts as attack, a pure probe stays filtered.
+func TestScanFallsBackToSessionClassWhenNotReported(t *testing.T) {
+	a := newTestAlerter(t, 8)
+	a.banOn = map[Class]bool{ClassAttack: true}
+
+	a.Submit(context.Background(), evClass("8.8.8.8", "ssh", ClassScan)) // helper session has an auth attempt
+	if len(a.ch) != 1 {
+		t.Fatalf("queued %d alerts, want 1 attack alert", len(a.ch))
+	}
+	msg := <-a.ch
+	if msg.Class != ClassAttack || msg.Meta["class"] != string(ClassAttack) {
+		t.Errorf("class = %q meta %q, want attack", msg.Class, msg.Meta["class"])
+	}
+
+	probe := evClass("1.1.1.1", "ssh", ClassScan)
+	probe.Info.AuthAttempts = 0
+	a.Submit(context.Background(), probe)
+	if len(a.ch) != 0 {
+		t.Errorf("a probe-only scan session was queued with scan not reported")
+	}
+	if got := pipelineCount(t, a.metrics, "ssh", "filtered"); got != 1 {
+		t.Errorf("filtered stage = %v, want 1", got)
+	}
+
+	// With scan reported the class is kept.
+	a.banOn[ClassScan] = true
+	a.Submit(context.Background(), evClass("9.9.9.9", "ssh", ClassScan))
+	if msg := <-a.ch; msg.Class != ClassScan {
+		t.Errorf("class = %q, want scan", msg.Class)
+	}
+}

@@ -152,6 +152,16 @@ func ValidateAddrList(name, raw string) error {
 	return nil
 }
 
+// ValidateAddr checks a single listen address (host:port or :port). A comma
+// separated list is rejected: name is the environment variable, used in the
+// error message.
+func ValidateAddr(name, raw string) error {
+	if strings.Contains(raw, ",") {
+		return fmt.Errorf("%s must be a single listen address such as :9550, got %q; remove the comma separated list", name, raw)
+	}
+	return ValidateAddrList(name, raw)
+}
+
 func (c *Config) EnabledTraps() []string {
 	return c.Traps
 }
@@ -212,23 +222,23 @@ func Load(getenv func(string) string) (*Config, error) {
 		LogLevel:              e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
 		LogFormat:             e.logFormat("RAN_LOG_FORMAT", "json"),
 		MetricsAddr:           e.str("RAN_METRICS_ADDR", ":9550"),
-		SessionTimeout:        e.duration("RAN_SESSION_TIMEOUT", 30*time.Second),
+		SessionTimeout:        e.durationPositive("RAN_SESSION_TIMEOUT", 30*time.Second),
 		MaxSessions:           e.intMin("RAN_MAX_SESSIONS", 500, 1),
 		MaxPerIP:              e.intMin("RAN_MAX_PER_IP", 10, 1),
 		MaxAuthRetries:        e.intMin("RAN_MAX_AUTH_RETRIES", 3, 0),
-		AuthDelay:             e.duration("RAN_AUTH_DELAY", 0),
+		AuthDelay:             e.durationMin0("RAN_AUTH_DELAY", 0),
 		SSHTarpit:             e.boolean("RAN_SSH_TARPIT", false),
-		SSHTarpitDuration:     e.duration("RAN_SSH_TARPIT_DURATION", 30*time.Second),
+		SSHTarpitDuration:     e.durationMin0("RAN_SSH_TARPIT_DURATION", 30*time.Second),
 		ProxyProtocol:         e.boolean("RAN_PROXY_PROTOCOL", false),
 		CrowdSec:              e.boolean("RAN_CROWDSEC", false),
-		CrowdSecURL:           e.str("RAN_CROWDSEC_URL", ""),
+		CrowdSecURL:           strings.TrimRight(strings.TrimSpace(e.str("RAN_CROWDSEC_URL", "")), "/"),
 		CrowdSecMachineID:     e.str("RAN_CROWDSEC_MACHINE_ID", ""),
 		CrowdSecPassword:      e.str("RAN_CROWDSEC_PASSWORD", ""),
-		CrowdSecBatchInterval: e.duration("RAN_CROWDSEC_BATCH_INTERVAL", 10*time.Second),
+		CrowdSecBatchInterval: e.durationMin0("RAN_CROWDSEC_BATCH_INTERVAL", 10*time.Second),
 		CrowdSecBatchSize:     e.intMin("RAN_CROWDSEC_BATCH_SIZE", 50, 1),
 		CrowdSecMaxTracked:    e.intMin("RAN_CROWDSEC_MAX_TRACKED", 20000, 1),
 		BanOn:                 e.classes("RAN_BAN_ON", []string{"attack", "scan"}),
-		AlertCooldown:         e.durationMin0("RAN_ALERT_COOLDOWN", 4*time.Hour),
+		AlertCooldown:         e.durationMin0("RAN_ALERT_COOLDOWN", time.Hour),
 		ProbeSummaryWindow:    e.durationMin0("RAN_PROBE_SUMMARY_WINDOW", 60*time.Second),
 		LogPasswords:          e.logPasswords("RAN_LOG_PASSWORDS", "off"),
 		UDPRatePerSource:      e.intMin("RAN_UDP_RATE_PER_SOURCE", 20, 1),
@@ -238,7 +248,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
-	if err := ValidateAddrList("RAN_METRICS_ADDR", c.MetricsAddr); err != nil {
+	if err := ValidateAddr("RAN_METRICS_ADDR", c.MetricsAddr); err != nil {
 		return nil, err
 	}
 	for _, name := range RemovedEnvVars {
@@ -298,12 +308,18 @@ func Load(getenv func(string) string) (*Config, error) {
 			if err != nil {
 				return nil, fmt.Errorf("RAN_%s_AUTH_DELAY must be a valid Go duration, got %q; use a value such as 500ms or 30s", upper, v)
 			}
+			if d < 0 {
+				return nil, fmt.Errorf("RAN_%s_AUTH_DELAY must not be negative, got %q; use 0s or a positive duration such as 500ms", upper, v)
+			}
 			pc.AuthDelay = &d
 		}
 		if v := strings.TrimSpace(getenv("RAN_" + upper + "_SESSION_TIMEOUT")); v != "" {
 			d, err := time.ParseDuration(v)
 			if err != nil {
 				return nil, fmt.Errorf("RAN_%s_SESSION_TIMEOUT must be a valid Go duration, got %q; use a value such as 500ms or 30s", upper, v)
+			}
+			if d <= 0 {
+				return nil, fmt.Errorf("RAN_%s_SESSION_TIMEOUT must be greater than zero, got %q; use a positive duration such as 30s", upper, v)
 			}
 			pc.SessionTimeout = &d
 		}
@@ -369,6 +385,16 @@ func (e *envReader) durationMin0(name string, def time.Duration) time.Duration {
 	d := e.duration(name, def)
 	if d < 0 {
 		e.setErr(fmt.Errorf("%s must not be negative, got %q; use 0s to disable or a positive duration such as 60s", name, e.getenv(name)))
+		return def
+	}
+	return d
+}
+
+// durationPositive is like duration but requires a value greater than zero.
+func (e *envReader) durationPositive(name string, def time.Duration) time.Duration {
+	d := e.duration(name, def)
+	if d <= 0 {
+		e.setErr(fmt.Errorf("%s must be greater than zero, got %q; use a positive duration such as 30s", name, e.getenv(name)))
 		return def
 	}
 	return d

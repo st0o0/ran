@@ -44,25 +44,29 @@ func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 
 func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	if t.cfg.SSHTarpit {
-		tarpitCtx, tarpitCancel := context.WithTimeout(ctx, t.cfg.SSHTarpitDuration)
-		err := sshTarpit(tarpitCtx, conn, t.cfg.SSHTarpitDuration)
-		tarpitCancel()
-		if err != nil {
+		timeout := t.cfg.ResolveSessionTimeout("ssh")
+		duration, capped := tarpitDuration(t.cfg.SSHTarpitDuration, timeout)
+		if err := sshTarpit(ctx, conn, duration); err != nil {
 			if ctx.Err() != nil {
 				sess.SetOutcome("timeout")
 			} else {
-				sess.SetOutcome("error")
+				setOutcome(sess, err)
 			}
 			return
 		}
-		timeout := t.cfg.ResolveSessionTimeout("ssh")
+		if capped {
+			// The tarpit used up the whole session time: end the session here
+			// instead of letting the last write hit the connection deadline.
+			sess.SetOutcome("timeout")
+			return
+		}
 		_ = conn.SetDeadline(deadlineFromContext(ctx, timeout))
 	}
 
 	var authSeen bool
 	var attempt int
 	authDelay := t.cfg.ResolveAuthDelay("ssh")
-	maxRetries := t.cfg.ResolveMaxAuthRetries("ssh")
+	maxRetries := sshMaxAuthTries(t.cfg.ResolveMaxAuthRetries("ssh"))
 
 	sshCfg := &gossh.ServerConfig{
 		ServerVersion: "SSH-2.0-OpenSSH_9.6",
@@ -102,11 +106,42 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	sshConn.Close()
 }
 
+// sshMaxAuthTries maps RAN_MAX_AUTH_RETRIES to x/crypto's MaxAuthTries. The
+// library treats 0 as "use 6" and any negative value as unlimited, while the
+// setting means 0 = unlimited (as for telnet and mssql).
+func sshMaxAuthTries(retries int) int {
+	if retries == 0 {
+		return -1
+	}
+	return retries
+}
+
+// tarpitSessionMargin is kept free at the end of the session time when the
+// tarpit would otherwise run into the connection deadline.
+const tarpitSessionMargin = 250 * time.Millisecond
+
+// tarpitDuration limits the tarpit to the session timeout. capped reports that
+// the limit applied, so the tarpit ends before the connection deadline.
+func tarpitDuration(duration, timeout time.Duration) (d time.Duration, capped bool) {
+	if duration < timeout {
+		return duration, false
+	}
+	margin := min(tarpitSessionMargin, timeout/10)
+	return timeout - margin, true
+}
+
+// sshTarpit writes a random 32 character line every 10 seconds until duration
+// has elapsed and then returns nil. It returns the write error, or ctx.Err()
+// when ctx ends first.
 func sshTarpit(ctx context.Context, conn net.Conn, duration time.Duration) error {
-	deadline := time.After(duration)
+	if duration <= 0 {
+		return ctx.Err()
+	}
+	deadline := time.NewTimer(duration)
+	defer deadline.Stop()
 	for {
 		select {
-		case <-deadline:
+		case <-deadline.C:
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
@@ -127,7 +162,7 @@ func sshTarpit(ctx context.Context, conn net.Conn, duration time.Duration) error
 		}
 		wait := time.NewTimer(10 * time.Second)
 		select {
-		case <-deadline:
+		case <-deadline.C:
 			wait.Stop()
 			return nil
 		case <-ctx.Done():

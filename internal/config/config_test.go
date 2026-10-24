@@ -261,8 +261,8 @@ func TestAlertCooldownDefaultAndCustom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.AlertCooldown != 4*time.Hour {
-		t.Errorf("AlertCooldown = %v, want 4h", c.AlertCooldown)
+	if c.AlertCooldown != time.Hour {
+		t.Errorf("AlertCooldown = %v, want 1h", c.AlertCooldown)
 	}
 	c, err = Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_ALERT_COOLDOWN": "30m"}))
 	if err != nil {
@@ -696,5 +696,72 @@ func TestBanOnEmptyUsesDefault(t *testing.T) {
 	}
 	if got := strings.Join(c.BanOn, ","); got != "attack,scan" {
 		t.Errorf("BanOn = %q, want attack,scan for an empty value", got)
+	}
+}
+
+func TestRejectsNonPositiveDurations(t *testing.T) {
+	cases := []struct {
+		env   map[string]string
+		mustN string
+	}{
+		{map[string]string{"RAN_SESSION_TIMEOUT": "-5s"}, "RAN_SESSION_TIMEOUT"},
+		{map[string]string{"RAN_SESSION_TIMEOUT": "0s"}, "RAN_SESSION_TIMEOUT"},
+		{map[string]string{"RAN_AUTH_DELAY": "-1s"}, "RAN_AUTH_DELAY"},
+		{map[string]string{"RAN_SSH_TARPIT_DURATION": "-1s"}, "RAN_SSH_TARPIT_DURATION"},
+		{map[string]string{"RAN_CROWDSEC_BATCH_INTERVAL": "-1s"}, "RAN_CROWDSEC_BATCH_INTERVAL"},
+		{map[string]string{"RAN_SSH_SESSION_TIMEOUT": "-1s"}, "RAN_SSH_SESSION_TIMEOUT"},
+		{map[string]string{"RAN_SSH_SESSION_TIMEOUT": "0"}, "RAN_SSH_SESSION_TIMEOUT"},
+		{map[string]string{"RAN_SSH_AUTH_DELAY": "-1s"}, "RAN_SSH_AUTH_DELAY"},
+	}
+	for _, tc := range cases {
+		env := map[string]string{"RAN_TRAPS": "ssh"}
+		for k, v := range tc.env {
+			env[k] = v
+		}
+		_, err := Load(envFunc(env))
+		if err == nil || !strings.Contains(err.Error(), tc.mustN) {
+			t.Errorf("%v: want error naming %s, got %v", tc.env, tc.mustN, err)
+		}
+	}
+}
+
+func TestAcceptsZeroDurations(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":                   "ssh",
+		"RAN_AUTH_DELAY":              "0s",
+		"RAN_SSH_TARPIT_DURATION":     "0s",
+		"RAN_CROWDSEC_BATCH_INTERVAL": "0s",
+	}))
+	if err != nil {
+		t.Fatalf("zero durations rejected: %v", err)
+	}
+	if c.CrowdSecBatchInterval != 0 {
+		t.Errorf("CrowdSecBatchInterval = %v, want 0", c.CrowdSecBatchInterval)
+	}
+}
+
+func TestMetricsAddrMustBeSingle(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_METRICS_ADDR": ":9550,:9551"}))
+	if err == nil || !strings.Contains(err.Error(), "RAN_METRICS_ADDR") {
+		t.Errorf("comma separated metrics address accepted: %v", err)
+	}
+	if _, err := Load(envFunc(map[string]string{"RAN_TRAPS": "ssh", "RAN_METRICS_ADDR": "127.0.0.1:9550"})); err != nil {
+		t.Errorf("single metrics address rejected: %v", err)
+	}
+}
+
+func TestCrowdSecURLTrailingSlashTrimmed(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{
+		"RAN_TRAPS":               "ssh",
+		"RAN_CROWDSEC":            "on",
+		"RAN_CROWDSEC_URL":        "http://crowdsec:8080//",
+		"RAN_CROWDSEC_MACHINE_ID": "m",
+		"RAN_CROWDSEC_PASSWORD":   "p",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.CrowdSecURL != "http://crowdsec:8080" {
+		t.Errorf("CrowdSecURL = %q, want trailing slashes trimmed", c.CrowdSecURL)
 	}
 }

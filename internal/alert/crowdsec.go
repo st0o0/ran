@@ -29,7 +29,7 @@ const defaultMaxTracked = 20000
 const DefaultMaxTracked = defaultMaxTracked
 
 // DefaultAlertCooldown is the default per-IP and class alert cooldown.
-const DefaultAlertCooldown = 4 * time.Hour
+const DefaultAlertCooldown = time.Hour
 
 // Bounds for client controlled event meta, so one alert cannot make a batch POST
 // exceed the LAPI request limit (413) and lose the whole batch.
@@ -237,6 +237,12 @@ func (a *CrowdSecAlerter) Submit(_ context.Context, ev Event) {
 		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "closed")
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "closed").Inc()
 		return
+	}
+
+	// A scan outranks the session's own class. When scan is not reported, fall back
+	// to what the session did itself, so a scanner's attacks still alert as attack.
+	if ev.Class == ClassScan && !a.banOn[ClassScan] {
+		ev.Class = Classify(ev.Info)
 	}
 
 	if !a.banOn[ev.Class] {
