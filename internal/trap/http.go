@@ -66,8 +66,6 @@ func newHTTPTrap(proto string, cfg *config.Config, logger *slog.Logger, m *metri
 		WriteTimeout: cfg.ResolveSessionTimeout(proto),
 		ConnState:    t.connState,
 		ConnContext:  t.connContext,
-		// TLS handshake failures are scanner noise; they surface as probe sessions.
-		ErrorLog: slog.NewLogLogger(slog.DiscardHandler, slog.LevelError),
 
 		MaxHeaderBytes: maxHTTPBody,
 	}

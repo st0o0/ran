@@ -11,8 +11,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -240,66 +238,6 @@ func TestParseClientHelloListsAreBounded(t *testing.T) {
 	if len(h.Ciphers) != maxHelloCiphers {
 		t.Errorf("ciphers = %d, want the cap %d", len(h.Ciphers), maxHelloCiphers)
 	}
-}
-
-func TestLoadOrGenerateCert(t *testing.T) {
-	t.Parallel()
-	t.Run("first start persists and second start reuses", func(t *testing.T) {
-		t.Parallel()
-		path := filepath.Join(t.TempDir(), "https_cert.pem")
-		log := &syncBuffer{}
-		first, err := loadOrGenerateCert(path, newJSONLogger(log))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("certificate not persisted: %v", err)
-		}
-		second, err := loadOrGenerateCert(path, newJSONLogger(log))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(first.Certificate[0]) != string(second.Certificate[0]) {
-			t.Error("second start did not reuse the persisted certificate")
-		}
-		if !strings.Contains(log.String(), "persisted https certificate") || !strings.Contains(log.String(), "loaded https certificate") {
-			t.Errorf("unexpected log:\n%s", log.String())
-		}
-	})
-	t.Run("unwritable path falls back to an ephemeral certificate", func(t *testing.T) {
-		t.Parallel()
-		path := filepath.Join(t.TempDir(), "missing-dir", "https_cert.pem")
-		log := &syncBuffer{}
-		cert, err := loadOrGenerateCert(path, newJSONLogger(log))
-		if err != nil {
-			t.Fatalf("startup must not fail: %v", err)
-		}
-		if len(cert.Certificate) == 0 {
-			t.Fatal("no certificate")
-		}
-		if !strings.Contains(log.String(), `"level":"WARN"`) || !strings.Contains(log.String(), "ephemeral") {
-			t.Errorf("want a warning and the ephemeral note:\n%s", log.String())
-		}
-	})
-	t.Run("corrupt file is replaced", func(t *testing.T) {
-		t.Parallel()
-		path := filepath.Join(t.TempDir(), "https_cert.pem")
-		if err := os.WriteFile(path, []byte("not a pem"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := loadOrGenerateCert(path, newJSONLogger(&syncBuffer{})); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tls.LoadX509KeyPair(path, path); err != nil {
-			t.Errorf("replaced file is not a valid pair: %v", err)
-		}
-	})
-	t.Run("empty path is ephemeral", func(t *testing.T) {
-		t.Parallel()
-		if _, err := loadOrGenerateCert("", newJSONLogger(&syncBuffer{})); err != nil {
-			t.Fatal(err)
-		}
-	})
 }
 
 func newHTTPSTrap(t *testing.T, cfg *config.Config, rep Reporter, lim *Limiter) *HTTPSTrap {

@@ -134,7 +134,7 @@ which keeps the attack surface of the honeypot minimal.
 | Name | Port | Captures |
 |---|---|---|
 | `http` | `:8081` | Every request is logged with method, path (no query string), `Host`, `User-Agent` and a header subset (values cut to 256 bytes, control characters replaced). Requests for known exploit and recon paths (`/.env`, `/.git/`, `/actuator`, `/cgi-bin/`, `/phpmyadmin`, traversal and so on) and requests carrying a JNDI lookup (`${jndi:`, also nested or percent encoded) in the request line or a header value are commands, so they classify as `attack`. Basic `Authorization` is captured as credentials, `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path) as before. A `POST`, `PUT` or `PATCH` body that is not a form login (JSON, XML) counts as payload bytes, read up to 16 KiB. Any other `GET`/`HEAD` stays a `probe`. Alert meta adds `path`, `method` and `user_agent`. Responses carry `Server: Apache/2.4.62` |
-| `https` | `:8443` | The `http` trap behind TLS, with the same request handling and classification (exploit paths, JNDI, Basic auth and login forms are `attack`; a completed handshake without a request, a failed handshake and non-TLS bytes stay a `probe`). Uses a self-signed ECDSA certificate (`CN=localhost`), generated on first start and persisted at `RAN_HTTPS_CERT_PATH`. The ClientHello is fingerprinted before negotiation, so clients that fail the handshake are still logged (`tls client hello`): SNI, JA3 and JA4 (GREASE removed, lists capped, first TLS record only). Alert meta adds `sni`, `ja3` and `ja4` to the `http` meta. No client certificates; Go's default TLS versions and ciphers apply |
+| `https` | `:8443` | The `http` trap behind TLS, with the same request handling and classification (exploit paths, JNDI, Basic auth and login forms are `attack`; a completed handshake without a request, a failed handshake and non-TLS bytes stay a `probe`). Uses two self-signed certificates (`CN=localhost`, ECDSA P-256 and RSA-2048), generated on first start and persisted at `RAN_HTTPS_CERT_PATH`. The ClientHello is fingerprinted before negotiation, so clients that fail the handshake are still logged (`tls client hello`): SNI, JA3 and JA4 (GREASE removed, lists capped, first TLS record only). Alert meta adds `sni`, `ja3` and `ja4` to the `http` meta. No client certificates. Accepts old clients: TLS 1.0 to 1.3 and every cipher suite Go implements, including RSA key exchange, 3DES, RC4 and CBC-SHA256 (see the threat notes) |
 | `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
 | `elasticsearch` | `:9200` | API requests with fake cluster responses. Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
 
@@ -243,7 +243,7 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 | `RAN_SSH_TARPIT` | `off` | Hold SSH clients with slow random banner lines before the SSH handshake (see below) |
 | `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection (`0s` = no tarpit lines) |
 | `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start and persisted if the directory is writable (the image declares `/data` as a volume). Otherwise `ran` logs a warning and uses an ephemeral key that changes on every restart; this is not fatal |
-| `RAN_HTTPS_CERT_PATH` | `/data/https_cert.pem` | Certificate and key (one PEM file) of the `https` trap; a self-signed ECDSA certificate is generated on first start and persisted if the directory is writable. Otherwise (or if the file is unusable or expired) `ran` logs a warning and uses an ephemeral certificate that changes on every restart; this is not fatal |
+| `RAN_HTTPS_CERT_PATH` | `/data/https_cert.pem` | Certificates and keys (one PEM file holding an ECDSA pair and an RSA pair) of the `https` trap; self-signed certificates are generated on first start and written atomically with mode `0600` if the directory is writable. Otherwise (or if the file is unusable, incomplete, expired or not yet valid) `ran` logs a warning and uses ephemeral certificates that change on every restart; this is not fatal |
 | `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)) |
 | `RAN_<PROTO>_MAX_AUTH_RETRIES` | | Per-trap override of `RAN_MAX_AUTH_RETRIES` |
 | `RAN_<PROTO>_AUTH_DELAY` | | Per-trap override of `RAN_AUTH_DELAY` |
@@ -316,7 +316,7 @@ Input limits (fixed, not configurable):
 | `mssql`, `oracle` | 64 KiB per packet (the length field has 16 bits) |
 | `minecraft` | 32767 bytes per packet |
 | `http`, `https` | 16 KiB for the request body and for the headers; logged values and `path`/`user_agent` meta 256 bytes |
-| `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
+| `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 16 point formats, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
 | `adb` | 4096 bytes of identity data |
 | `rdp` | 1024 bytes per TPKT packet |
 | UDP traps | 4096 bytes per packet (the rest is cut off) |
@@ -735,7 +735,7 @@ reports who touched them; it does not protect the host it runs on.
   the ClientHello as alert meta. They are client controlled (any client can
   send any SNI or mimic a fingerprint), so they are context for triage, never
   identity. The certificate is self-signed with `CN=localhost` and imitates no
-  real host. The key is generated per instance and is not meant to be reused.
+  real host. The key is generated per instance and is not meant to be reused. To accept old scanners the trap deliberately weakens its TLS: minimum version TLS 1.0 and all cipher suites Go implements (no `GODEBUG` setting is needed, because an explicit `MinVersion` and `CipherSuites` override the defaults that `tls10server`, `tlsrsakex` and `tls3des` control). Negotiated sessions are therefore not confidential; the traffic is attacker traffic by definition.
 - **Detectability.** Banners are generic and plausible, but a determined
   attacker can fingerprint any honeypot. Do not rely on rán staying hidden.
 - **Isolation.** Run it unprivileged, without capabilities and with a read-only

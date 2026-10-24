@@ -220,13 +220,19 @@ func hex4(v uint16) string {
 	return string([]byte{digits[v>>12], digits[v>>8&0xf], digits[v>>4&0xf], digits[v&0xf]})
 }
 
-// ja4Version maps the highest offered version to the two character JA4 code.
+// ja4Version maps the TLS version to the two character JA4 code. Per the JA4
+// spec the highest non-GREASE value of supported_versions is used when that
+// extension is present, otherwise the legacy handshake version.
 func (h *clientHello) ja4Version() string {
 	v := h.Version
+	best := uint16(0)
 	for _, sv := range h.Versions {
-		if !isGREASE(sv) && sv > v {
-			v = sv
+		if !isGREASE(sv) && sv > best {
+			best = sv
 		}
+	}
+	if best != 0 {
+		v = best
 	}
 	switch v {
 	case 0x0304:
@@ -246,15 +252,25 @@ func (h *clientHello) ja4Version() string {
 	}
 }
 
-func alpnEdge(b byte, first bool) byte {
-	if b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' {
-		return b
+func isAlnum(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// ja4ALPN returns the two JA4 ALPN characters of the first ALPN value. If its
+// first or last byte is not ASCII alphanumeric, both characters come from the hex
+// form of the value instead: the first hex digit of the first byte and the last
+// hex digit of the last byte (0x20 0x61 gives "21", 0xAB 0xCD gives "ad").
+func ja4ALPN(alpn []string) string {
+	if len(alpn) == 0 || len(alpn[0]) == 0 {
+		return "00"
+	}
+	p := alpn[0]
+	first, last := p[0], p[len(p)-1]
+	if isAlnum(first) && isAlnum(last) {
+		return string([]byte{first, last})
 	}
 	const digits = "0123456789abcdef"
-	if first {
-		return digits[b>>4]
-	}
-	return digits[b&0xf]
+	return string([]byte{digits[first>>4], digits[last&0xf]})
 }
 
 func count2(n int) string {
@@ -303,12 +319,6 @@ func (h *clientHello) ja4() string {
 	if h.HasSNI {
 		sni = 'd'
 	}
-	alpn := "00"
-	if len(h.ALPN) > 0 && len(h.ALPN[0]) > 0 {
-		p := h.ALPN[0]
-		alpn = string([]byte{alpnEdge(p[0], true), alpnEdge(p[len(p)-1], false)})
-	}
-
 	sortU16(ciphers)
 	sortU16(hashed)
 	cs := make([]string, len(ciphers))
@@ -333,7 +343,7 @@ func (h *clientHello) ja4() string {
 		extPart = ""
 	}
 
-	return "t" + h.ja4Version() + string(sni) + count2(len(ciphers)) + count2(len(exts)) + alpn +
+	return "t" + h.ja4Version() + string(sni) + count2(len(ciphers)) + count2(len(exts)) + ja4ALPN(h.ALPN) +
 		"_" + hex12(strings.Join(cs, ",")) + "_" + hex12(extPart)
 }
 

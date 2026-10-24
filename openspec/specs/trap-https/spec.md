@@ -4,7 +4,7 @@
 TBD - created by archiving change tls-traps. Update Purpose after archive.
 ## Requirements
 ### Requirement: TLS termination
-The `https` trap SHALL terminate TLS with a self-signed certificate and serve the HTTP trap handler on the decrypted stream. The certificate SHALL be generated on first start and persisted at `RAN_HTTPS_CERT_PATH` (one PEM file with certificate and key) when writable, otherwise an ephemeral certificate SHALL be used and a warning logged. A persisted certificate that is unreadable, invalid or expired SHALL be replaced. The handshake SHALL be bounded by the session timeout of the trap, and `Stop(ctx)` SHALL close connections that are still in the handshake as well as established ones.
+The `https` trap SHALL terminate TLS with self-signed certificates (an ECDSA P-256 and an RSA-2048 one) and serve the HTTP trap handler on the decrypted stream. The certificates SHALL be generated on first start and persisted at `RAN_HTTPS_CERT_PATH` (one PEM file with both certificate and key pairs, written atomically with mode `0600`) when writable, otherwise ephemeral certificates SHALL be used and a warning logged. A persisted file that is unreadable, invalid, incomplete, expired or not yet valid SHALL be replaced. The trap SHALL accept old clients: minimum version TLS 1.0 and every cipher suite `crypto/tls` implements, with the certificate chosen by what the ClientHello supports. The handshake SHALL be bounded by the session timeout of the trap, and `Stop(ctx)` SHALL close connections that are still in the handshake as well as established ones.
 
 #### Scenario: First start with writable data directory
 - **WHEN** no certificate file exists and the directory is writable
@@ -13,6 +13,10 @@ The `https` trap SHALL terminate TLS with a self-signed certificate and serve th
 #### Scenario: Read-only data directory
 - **WHEN** the directory is not writable
 - **THEN** an ephemeral certificate is used and a warning is logged; startup does not fail
+
+#### Scenario: Old and RSA-only clients
+- **WHEN** a client offers only TLS 1.0, TLS 1.1 or RSA key exchange suites
+- **THEN** the handshake completes and its HTTP request is recorded
 
 #### Scenario: Idle client
 - **WHEN** a client connects and sends nothing

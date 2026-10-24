@@ -765,3 +765,16 @@ func TestCrowdSecURLTrailingSlashTrimmed(t *testing.T) {
 		t.Errorf("CrowdSecURL = %q, want trailing slashes trimmed", c.CrowdSecURL)
 	}
 }
+
+func TestHTTPSDefaults(t *testing.T) {
+	c, err := Load(envFunc(map[string]string{"RAN_TRAPS": "https"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TrapAddr("https") != ":8443" {
+		t.Errorf("TrapAddr(https) = %q, want :8443", c.TrapAddr("https"))
+	}
+	if c.HTTPSCertPath != "/data/https_cert.pem" {
+		t.Errorf("HTTPSCertPath = %q, want /data/https_cert.pem", c.HTTPSCertPath)
+	}
+}
