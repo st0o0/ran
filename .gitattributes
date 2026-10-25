@@ -1,0 +1,6 @@
+# Files that are embedded, generated or compared byte for byte keep LF on every
+# platform (a CRLF checkout would change the embedded profile and fail drift tests).
+internal/crowdsecprofile/profiles.yaml text eol=lf
+docs/*.generated.md text eol=lf
+docs/data/*.generated.json text eol=lf
+docs/data/builder-cases.json text eol=lf
