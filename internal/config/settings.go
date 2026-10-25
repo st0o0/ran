@@ -36,7 +36,25 @@ type Setting struct {
 	// keeps Min in line with the intMin calls in Load.
 	Min *int `json:"min,omitempty"`
 	Max *int `json:"max,omitempty"`
+	// Positive marks a duration that Load requires to be greater than zero.
+	Positive bool `json:"positive,omitempty"`
+	// MaxDuration is the inclusive upper bound of a duration setting, written
+	// like the variable ("8760h"); empty when there is none.
+	// TestSettingsDurationRulesMatchLoad keeps Positive and MaxDuration in line
+	// with Load.
+	MaxDuration string `json:"max_duration,omitempty"`
+	// Format names the syntax of a list setting: FormatCIDRs (IP addresses and
+	// CIDR ranges), FormatCIDRsOrAny (the same, or the single word any) or
+	// FormatClasses (probe, attack, scan).
+	Format string `json:"format,omitempty"`
 }
+
+// List formats of a Setting.
+const (
+	FormatCIDRs      = "cidrs"
+	FormatCIDRsOrAny = "cidrs-or-any"
+	FormatClasses    = "classes"
+)
 
 // Setting kinds.
 const (
@@ -87,14 +105,14 @@ var Settings = []Setting{
 	{Name: "RAN_PROBE_SUMMARY_WINDOW", Kind: KindDuration, Default: "60s", Group: "logging", Summary: "Aggregation window of probe log lines; 0s logs every probe session."},
 
 	// limits
-	{Name: "RAN_SESSION_TIMEOUT", Kind: KindDuration, Default: "30s", Group: "limits", Summary: "Default session deadline."},
+	{Name: "RAN_SESSION_TIMEOUT", Kind: KindDuration, Default: "30s", Positive: true, Group: "limits", Summary: "Default session deadline."},
 	{Name: "RAN_MAX_SESSIONS", Kind: KindInt, Default: "500", Min: bound(1), Group: "limits", Summary: "Maximum concurrent sessions."},
 	{Name: "RAN_MAX_PER_IP", Kind: KindInt, Default: "10", Min: bound(1), Group: "limits", Summary: "Maximum concurrent sessions per source address."},
 	{Name: "RAN_MAX_AUTH_RETRIES", Kind: KindInt, Default: "3", Min: bound(0), Group: "limits", Summary: "Login attempts accepted per session before the connection is closed."},
 	{Name: "RAN_AUTH_DELAY", Kind: KindDuration, Default: "0s", Group: "limits", Summary: "Delay before answering a login attempt."},
 	{Name: "RAN_<PROTO>_MAX_AUTH_RETRIES", Kind: KindInt, Min: bound(0), Group: "limits", Family: "MAX_AUTH_RETRIES", Traps: authFamilyTraps(), Summary: "Per-trap override of RAN_MAX_AUTH_RETRIES; unset inherits the global value."},
 	{Name: "RAN_<PROTO>_AUTH_DELAY", Kind: KindDuration, Group: "limits", Family: "AUTH_DELAY", Traps: authFamilyTraps(), Summary: "Per-trap override of RAN_AUTH_DELAY; unset inherits the global value."},
-	{Name: "RAN_<PROTO>_SESSION_TIMEOUT", Kind: KindDuration, Group: "limits", Family: "SESSION_TIMEOUT", Traps: authFamilyTraps(), Summary: "Per-trap override of RAN_SESSION_TIMEOUT; unset inherits the global value."},
+	{Name: "RAN_<PROTO>_SESSION_TIMEOUT", Kind: KindDuration, Positive: true, Group: "limits", Family: "SESSION_TIMEOUT", Traps: authFamilyTraps(), Summary: "Per-trap override of RAN_SESSION_TIMEOUT; unset inherits the global value."},
 
 	// ssh
 	{Name: "RAN_SSH_TARPIT", Kind: KindBool, Default: "off", Group: "ssh", Summary: "Slow down SSH sessions that fail authentication."},
@@ -102,10 +120,10 @@ var Settings = []Setting{
 
 	// proxy
 	{Name: "RAN_PROXY_PROTOCOL", Kind: KindString, Default: "off", Group: "proxy", Summary: "PROXY protocol: on (all TCP traps), off, or a comma-separated list of TCP traps. UDP traps cannot use it."},
-	{Name: "RAN_PROXY_TRUSTED", Kind: KindList, Group: "proxy", Requires: []string{"RAN_PROXY_PROTOCOL"}, Summary: "IP addresses or CIDR ranges of the proxies allowed to send PROXY headers, or any. Required when PROXY protocol is used."},
+	{Name: "RAN_PROXY_TRUSTED", Kind: KindList, Format: FormatCIDRsOrAny, Group: "proxy", Requires: []string{"RAN_PROXY_PROTOCOL"}, Summary: "IP addresses or CIDR ranges of the proxies allowed to send PROXY headers, or any. Required when PROXY protocol is used."},
 
 	// ignore
-	{Name: "RAN_IGNORE_IPS", Kind: KindList, Group: "ignore", Summary: "IP addresses or CIDR ranges that are served and logged but never alert."},
+	{Name: "RAN_IGNORE_IPS", Kind: KindList, Format: FormatCIDRs, Group: "ignore", Summary: "IP addresses or CIDR ranges that are served and logged but never alert."},
 
 	// udp
 	{Name: "RAN_UDP_RATE_PER_SOURCE", Kind: KindInt, Default: "20", Min: bound(1), Group: "udp", Summary: "Packets per second accepted per UDP source."},
@@ -120,9 +138,9 @@ var Settings = []Setting{
 	{Name: "RAN_CROWDSEC_BATCH_INTERVAL", Kind: KindDuration, Default: "10s", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "How often queued alerts are sent."},
 	{Name: "RAN_CROWDSEC_BATCH_SIZE", Kind: KindInt, Default: "50", Min: bound(1), Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Maximum alerts per batch."},
 	{Name: "RAN_CROWDSEC_MAX_TRACKED", Kind: KindInt, Default: "20000", Min: bound(1), Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Maximum source addresses tracked for scan detection."},
-	{Name: "RAN_BAN_ON", Kind: KindList, Default: "attack,scan", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Session classes that produce an alert: any of probe, attack, scan."},
-	{Name: "RAN_ALERT_COOLDOWN", Kind: KindDuration, Default: "1h", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "At most one alert per source and class in this window; 0s disables the limit. At most 8760h (one year)."},
+	{Name: "RAN_BAN_ON", Kind: KindList, Format: FormatClasses, Default: "attack,scan", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Session classes that produce an alert: any of probe, attack, scan."},
+	{Name: "RAN_ALERT_COOLDOWN", Kind: KindDuration, Default: "1h", MaxDuration: "8760h", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "At most one alert per source and class in this window; 0s disables the limit. At most 8760h (one year)."},
 	{Name: "RAN_SHUN", Kind: KindBool, Default: "off", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Close new TCP connections from a source right after an alert for it, for the alert cooldown."},
 	{Name: "RAN_REPEAT_AFTER", Kind: KindInt, Default: "5", Min: bound(1), Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Number of alerts for a source and class after which RAN_REPEAT_COOLDOWN applies."},
-	{Name: "RAN_REPEAT_COOLDOWN", Kind: KindDuration, Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended. At most 8760h (one year)."},
+	{Name: "RAN_REPEAT_COOLDOWN", Kind: KindDuration, Positive: true, MaxDuration: "8760h", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended. At most 8760h (one year)."},
 }
