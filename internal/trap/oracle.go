@@ -60,7 +60,7 @@ func (t *OracleTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		slog.String("service_name", serviceName),
 	)
 	sess.RecordCredentials(t.metrics)
-	sess.Alert(ctx, map[string]string{"username": username, "service_name": serviceName})
+	sess.Alert(ctx, map[string]string{"username": username, "service_name": serviceName, "kind": "connect"})
 
 	refuseMsg := "ORA-01017: invalid username/password; logon denied"
 	refuseData := make([]byte, 4+len(refuseMsg))

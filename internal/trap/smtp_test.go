@@ -21,12 +21,14 @@ func smtpTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	addr := "127.0.0.1:0"
 
-	return &config.Config{
+	cfg := &config.Config{
 		Addrs:          map[string]string{"smtp": addr},
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
 	}
+	cfg.SetFingerprint(testProfile)
+	return cfg
 }
 
 func dialSMTP(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
@@ -65,8 +67,8 @@ func TestSMTPBanner(t *testing.T) {
 	defer conn.Close()
 
 	banner := readLine(t, r)
-	if banner != "220 mx.localdomain ESMTP ready\r\n" {
-		t.Errorf("banner = %q, want 220 mx.localdomain ESMTP ready", banner)
+	if want := testProfile.SMTP.Greeting() + "\r\n"; banner != want {
+		t.Errorf("banner = %q, want %q", banner, want)
 	}
 
 	cancel()
@@ -96,7 +98,7 @@ func TestSMTPEHLO(t *testing.T) {
 	line2 := readLine(t, r)
 	line3 := readLine(t, r)
 
-	if line1 != "250-mx.localdomain\r\n" {
+	if want := "250-" + testProfile.SMTP.Host + "\r\n"; line1 != want {
 		t.Errorf("ehlo line1 = %q", line1)
 	}
 	if line2 != "250-AUTH LOGIN PLAIN\r\n" {
@@ -129,7 +131,7 @@ func TestSMTPAuthLogin(t *testing.T) {
 	readLine(t, r) // banner
 
 	fmt.Fprintf(conn, "EHLO test\r\n")
-	readLine(t, r) // 250-mx.localdomain
+	readLine(t, r) // 250-host
 	readLine(t, r) // 250-AUTH LOGIN PLAIN
 	readLine(t, r) // 250 OK
 

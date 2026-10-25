@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/st0o0/ran/internal/fingerprint"
 )
 
 var DefaultPorts = map[string]string{
@@ -101,6 +103,13 @@ type Config struct {
 
 	SSHHostKeyPath string
 	HTTPSCertPath  string
+
+	// FingerprintMode is RAN_FINGERPRINT (seeded or fixed) and
+	// FingerprintSeedPath the file that persists the seed. Read the banner
+	// profile with Fingerprint.
+	FingerprintMode     string
+	FingerprintSeedPath string
+	fp                  *fingerprintState
 
 	LogLevel  slog.Level
 	LogFormat string
@@ -363,6 +372,9 @@ func Load(getenv func(string) string) (*Config, error) {
 		PerProto:              make(map[string]ProtoConfig),
 		SSHHostKeyPath:        e.str("RAN_SSH_HOST_KEY_PATH", "/data/ssh_host_key"),
 		HTTPSCertPath:         e.str("RAN_HTTPS_CERT_PATH", "/data/https_cert.pem"),
+		FingerprintMode:       e.fingerprintMode("RAN_FINGERPRINT", fingerprint.ModeSeeded),
+		FingerprintSeedPath:   e.str("RAN_FINGERPRINT_SEED_PATH", "/data/fingerprint_seed"),
+		fp:                    &fingerprintState{},
 		LogLevel:              e.logLevel("RAN_LOG_LEVEL", slog.LevelInfo),
 		LogFormat:             e.logFormat("RAN_LOG_FORMAT", "json"),
 		MetricsAddr:           e.str("RAN_METRICS_ADDR", ":9550"),
@@ -653,6 +665,18 @@ func (e *envReader) logPasswords(name, def string) string {
 		return v
 	default:
 		e.setErr(fmt.Errorf("%s must be off, mask or on, got %q; set one of these values", name, e.getenv(name)))
+		return def
+	}
+}
+
+func (e *envReader) fingerprintMode(name, def string) string {
+	switch v := strings.ToLower(strings.TrimSpace(e.getenv(name))); v {
+	case "":
+		return def
+	case fingerprint.ModeSeeded, fingerprint.ModeFixed:
+		return v
+	default:
+		e.setErr(fmt.Errorf("%s must be seeded or fixed, got %q; set one of these values", name, e.getenv(name)))
 		return def
 	}
 }

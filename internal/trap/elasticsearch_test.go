@@ -26,6 +26,7 @@ func esTestConfig(t *testing.T) (*config.Config, string) {
 		MaxSessions:    100,
 		MaxPerIP:       10,
 	}
+	cfg.SetFingerprint(testProfile)
 	return cfg, addr
 }
 
@@ -72,8 +73,15 @@ func TestElasticsearchRoot(t *testing.T) {
 	if result["tagline"] != "You Know, for Search" {
 		t.Errorf("tagline = %v, want 'You Know, for Search'", result["tagline"])
 	}
-	if result["cluster_name"] != "elasticsearch" {
-		t.Errorf("cluster_name = %v, want 'elasticsearch'", result["cluster_name"])
+	es := testProfile.Elasticsearch
+	if result["cluster_name"] != es.ClusterName {
+		t.Errorf("cluster_name = %v, want %q", result["cluster_name"], es.ClusterName)
+	}
+	if result["name"] != es.NodeName {
+		t.Errorf("name = %v, want %q", result["name"], es.NodeName)
+	}
+	if v, _ := result["version"].(map[string]any); v["number"] != es.Version {
+		t.Errorf("version.number = %v, want %q", v["number"], es.Version)
 	}
 }
 

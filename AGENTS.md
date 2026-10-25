@@ -50,5 +50,4 @@ Notes for AI agents and contributors working on `ran`. Keep it short and factual
 
 The planned work, its order and the rejected ideas live in `todo.md`. Keep it in sync with `openspec/changes/`. The items below are small leftovers that are not yet in a change.
 
-- Per-trap classification: meta for vnc and the remaining single-request traps.
 - Weak-yield traps (mssql, mqtt, memcached, adb, minecraft, elasticsearch) are candidates for removal once breadth based scan detection has produced real numbers; decide with data.

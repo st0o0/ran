@@ -21,13 +21,15 @@ func httpTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	addr := "127.0.0.1:0"
 
-	return &config.Config{
+	cfg := &config.Config{
 		Traps:          []string{"http"},
 		Addrs:          map[string]string{"http": addr},
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,
 	}
+	cfg.SetFingerprint(testProfile)
+	return cfg
 }
 
 func TestHTTPLoginPage(t *testing.T) {
@@ -134,8 +136,11 @@ func TestHTTPResponseHeaders(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if got := resp.Header.Get("Server"); got != "Apache/2.4.62" {
-		t.Errorf("Server header = %q, want Apache/2.4.62", got)
+	if got := resp.Header.Get("Server"); got != testProfile.HTTP.Server {
+		t.Errorf("Server header = %q, want %q", got, testProfile.HTTP.Server)
+	}
+	if got := resp.Header.Get("X-Powered-By"); got != testProfile.HTTP.PoweredBy() {
+		t.Errorf("X-Powered-By = %q, want %q", got, testProfile.HTTP.PoweredBy())
 	}
 }
 

@@ -63,14 +63,20 @@ func startFixtureTrap(t *testing.T, proto string, operator []config.HTTPFixture)
 	if proto == "https" {
 		return startSensorTrap(t, "https", func(cfg *config.Config, l *slog.Logger, m *metrics.Metrics, lim *Limiter, r Reporter) Trap {
 			cfg.HTTPFixtures = operator
+			cfg.SetFingerprint(fxProfile)
 			return newHTTPSTrap(t, cfg, r, lim)
 		})
 	}
 	return startSensorTrap(t, "http", func(cfg *config.Config, l *slog.Logger, m *metrics.Metrics, lim *Limiter, r Reporter) Trap {
 		cfg.HTTPFixtures = operator
+		cfg.SetFingerprint(fxProfile)
 		return NewHTTP(cfg, l, m, lim, r)
 	})
 }
+
+// fxProfile is the banner profile of the fixture tests: a seeded Apache profile,
+// because the built-in table is only complete for servers with mod_status.
+var fxProfile = apacheTestProfile()
 
 var builtinWant = []struct {
 	path, contentType, bodyPart string
@@ -81,7 +87,7 @@ var builtinWant = []struct {
 	{"/actuator/health", "application/vnd.spring-boot.actuator.v3+json", `"status":"UP"`},
 	{"/actuator/env", "application/vnd.spring-boot.actuator.v3+json", "activeProfiles"},
 	{"/server-status", "text/html", "Apache Server Status"},
-	{"/phpinfo.php", "text/html", "PHP Version 8.3.6"},
+	{"/phpinfo.php", "text/html", "PHP Version " + fxProfile.HTTP.PHP},
 	{"/wp-json/", "application/json", "wp/v2"},
 	{"/robots.txt", "text/plain", "User-agent: *"},
 	{"/sitemap.xml", "application/xml", "<urlset"},
@@ -90,8 +96,8 @@ var builtinWant = []struct {
 
 func TestBuiltinHTTPFixtureTableIsValid(t *testing.T) {
 	t.Parallel()
-	if len(builtinWant) != len(builtinHTTPFixtures) {
-		t.Fatalf("test table has %d entries, built-in table %d", len(builtinWant), len(builtinHTTPFixtures))
+	if len(builtinWant) != len(builtinHTTPFixtures(fxProfile.HTTP)) {
+		t.Fatalf("test table has %d entries, built-in table %d", len(builtinWant), len(builtinHTTPFixtures(fxProfile.HTTP)))
 	}
 	// The built-ins must pass the same validation as operator fixtures.
 	type entry struct {
@@ -101,7 +107,7 @@ func TestBuiltinHTTPFixtureTableIsValid(t *testing.T) {
 		Body    string            `json:"body"`
 	}
 	var entries []entry
-	for _, fx := range builtinHTTPFixtures {
+	for _, fx := range builtinHTTPFixtures(fxProfile.HTTP) {
 		entries = append(entries, entry{fx.Path, fx.Status, fx.Headers, fx.Body})
 	}
 	raw, err := json.Marshal(map[string]any{"fixtures": entries})
@@ -112,7 +118,7 @@ func TestBuiltinHTTPFixtureTableIsValid(t *testing.T) {
 		t.Fatalf("built-in table is invalid: %v", err)
 	}
 	ipv4 := regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
-	for _, fx := range builtinHTTPFixtures {
+	for _, fx := range builtinHTTPFixtures(fxProfile.HTTP) {
 		if fx.Body == "" {
 			t.Errorf("%s: empty body", fx.Path)
 		}
@@ -148,8 +154,8 @@ func TestBuiltinHTTPFixtures(t *testing.T) {
 					if got.header.Get("Content-Length") != strconv.Itoa(len(got.body)) {
 						t.Errorf("content length = %q, body %d", got.header.Get("Content-Length"), len(got.body))
 					}
-					if got.header.Get("Server") != "Apache/2.4.62" {
-						t.Errorf("server = %q", got.header.Get("Server"))
+					if got.header.Get("Server") != fxProfile.HTTP.Server {
+						t.Errorf("server = %q, want %q", got.header.Get("Server"), fxProfile.HTTP.Server)
 					}
 				})
 			}
@@ -160,7 +166,7 @@ func TestBuiltinHTTPFixtures(t *testing.T) {
 func TestBuiltinHTTPFixtureXPoweredBy(t *testing.T) {
 	t.Parallel()
 	addr, _ := startFixtureTrap(t, "http", nil)
-	if got := fxDo(t, false, addr, "GET", "/phpinfo.php", nil, "").header.Get("X-Powered-By"); got != "PHP/8.3.6" {
+	if got := fxDo(t, false, addr, "GET", "/phpinfo.php", nil, "").header.Get("X-Powered-By"); got != fxProfile.HTTP.PoweredBy() {
 		t.Errorf("phpinfo X-Powered-By = %q", got)
 	}
 	if got := fxDo(t, false, addr, "GET", "/actuator/health", nil, "").header.Get("X-Powered-By"); got != "" {
@@ -184,7 +190,7 @@ func TestHTTPFixtureNoReflection(t *testing.T) {
 			t.Parallel()
 			addr, _ := startFixtureTrap(t, proto, []config.HTTPFixture{{Path: "/custom", Status: 200, Body: "static"}})
 			paths := []string{"/custom"}
-			for _, fx := range builtinHTTPFixtures {
+			for _, fx := range builtinHTTPFixtures(fxProfile.HTTP) {
 				paths = append(paths, fx.Path)
 			}
 			for _, p := range paths {
@@ -237,7 +243,7 @@ func TestHTTPFixtureHEAD(t *testing.T) {
 		{Path: "/empty", Status: 204},
 	})
 	paths := []string{"/gone"}
-	for _, fx := range builtinHTTPFixtures {
+	for _, fx := range builtinHTTPFixtures(fxProfile.HTTP) {
 		paths = append(paths, fx.Path)
 	}
 	for _, p := range paths {

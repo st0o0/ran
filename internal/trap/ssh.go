@@ -16,6 +16,7 @@ import (
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
+	"github.com/st0o0/ran/internal/fingerprint"
 	"github.com/st0o0/ran/internal/metrics"
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -26,6 +27,7 @@ type SSHTrap struct {
 	logger  *slog.Logger
 	metrics *metrics.Metrics
 	signer  gossh.Signer
+	fp      *fingerprint.Profile
 }
 
 func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (*SSHTrap, error) {
@@ -38,6 +40,7 @@ func NewSSH(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter
 		logger:  logger,
 		metrics: m,
 		signer:  signer,
+		fp:      cfg.Fingerprint(logger),
 	}
 	t.tcpServer = newTCPServer("ssh", cfg, logger, m, limiter, alerter, t.handle)
 	return t, nil
@@ -110,7 +113,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	}
 
 	sshCfg := &gossh.ServerConfig{
-		ServerVersion: "SSH-2.0-OpenSSH_9.6",
+		ServerVersion: t.fp.SSH,
 		MaxAuthTries:  maxRetries,
 		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
 			authSeen = true

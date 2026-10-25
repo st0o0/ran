@@ -123,9 +123,9 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `ssh` | `:2222` | Credentials (OpenSSH banner; password and keyboard-interactive answers, and the SHA256 fingerprint and type of every offered public key, are logged as auth attempts and always rejected). Client identity: the client version string (`client_version`) and the HASSH of its KEXINIT (`hassh`) go to the log and the alert meta. Passwords never go to CrowdSec meta |
-| `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session |
-| `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response |
+| `ssh` | `:2222` | Credentials (OpenSSH banner from the [banner profile](#banner-profiles); password and keyboard-interactive answers, and the SHA256 fingerprint and type of every offered public key, are logged as auth attempts and always rejected). Client identity: the client version string (`client_version`) and the HASSH of its KEXINIT (`hassh`) go to the log and the alert meta. Passwords never go to CrowdSec meta |
+| `rdp` | `:3389` | Username (X.224 cookie extraction); one attempt per session. Alert meta adds `kind=connection_request` |
+| `vnc` | `:5900` | Auth challenge/response (VNC Authentication); no password is recoverable from it without cracking the DES response. Alert meta: `kind=auth_response` |
 | `telnet` | `:23`, `:2323` | Credentials (login/password prompts). IAC option negotiation is parsed: `DO` is answered with `WONT`, `WILL` with `DONT`, and IAC bytes never reach the username or password; a reported terminal type is logged (`terminal_type`, 64 bytes). Listens on both ports by default (`:2323` is the port Mirai-style botnets scan); see the multi-port note below |
 | `ftp` | `:21` | Credentials (`USER` / `PASS`). Banner `220 FTP Server ready.`, lines up to 512 bytes. Every other command except `QUIT` gets `530` and is not logged |
 
@@ -133,10 +133,10 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `http` | `:8081` | Every request is logged with method, path (no query string), `Host`, `User-Agent` and a header subset (values cut to 256 bytes, control characters replaced). Requests for known exploit and recon paths (`/.env`, `/.git/`, `/actuator`, `/cgi-bin/`, `/phpmyadmin`, traversal and so on) and requests carrying a JNDI lookup (`${jndi:`, also nested or percent encoded) in the request line or a header value are commands, so they classify as `attack`. Basic `Authorization` is captured as credentials, `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path) as before. A `POST`, `PUT` or `PATCH` body that is not a form login (JSON, XML) counts as payload bytes, read up to 16 KiB. Any other `GET`/`HEAD` stays a `probe`. Alert meta adds `path`, `method` and `user_agent`. Responses carry `Server: Apache/2.4.62`. A `GET` or `HEAD` for one of a small set of fixture paths (see "HTTP fixtures" below) gets a static product-like answer instead of the login page; classification is unchanged |
+| `http` | `:8081` | Every request is logged with method, path (no query string), `Host`, `User-Agent` and a header subset (values cut to 256 bytes, control characters replaced). Requests for known exploit and recon paths (`/.env`, `/.git/`, `/actuator`, `/cgi-bin/`, `/phpmyadmin`, traversal and so on) and requests carrying a JNDI lookup (`${jndi:`, also nested or percent encoded) in the request line or a header value are commands, so they classify as `attack`. Basic `Authorization` is captured as credentials, `POST` form logins (WordPress `/wp-login.php`, `/admin`, and a generic page for every other path) as before. A `POST`, `PUT` or `PATCH` body that is not a form login (JSON, XML) counts as payload bytes, read up to 16 KiB. Any other `GET`/`HEAD` stays a `probe`. Alert meta adds `path`, `method` and `user_agent`. Responses carry the `Server` and `X-Powered-By` headers of the [banner profile](#banner-profiles), identical on `http`, `https` and the fixtures (`Server: Apache/2.4.62` with `RAN_FINGERPRINT=fixed`). A `GET` or `HEAD` for one of a small set of fixture paths (see "HTTP fixtures" below) gets a static product-like answer instead of the login page; classification is unchanged |
 | `https` | `:8443` | The `http` trap behind TLS, with the same request handling and classification (exploit paths, JNDI, Basic auth and login forms are `attack`; a completed handshake without a request, a failed handshake and non-TLS bytes stay a `probe`). Uses two self-signed certificates (`CN=localhost`, ECDSA P-256 and RSA-2048), generated on first start and persisted at `RAN_HTTPS_CERT_PATH`. The ClientHello is fingerprinted before negotiation, so clients that fail the handshake are still logged (`tls client hello`): SNI, JA3 and JA4 (GREASE removed, lists capped, first TLS record only). Alert meta adds `sni`, `ja3` and `ja4` to the `http` meta. No client certificates. Accepts old clients: TLS 1.0 to 1.3 and every cipher suite Go implements, including RSA key exchange, 3DES, RC4 and CBC-SHA256 (see the threat notes) |
 | `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
-| `elasticsearch` | `:9200` | API requests with fake cluster responses. Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
+| `elasticsearch` | `:9200` | API requests with fake cluster responses (version, cluster and node name come from the [banner profile](#banner-profiles)). Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
 
 `http`, `https`, `docker`, `kubernetes` and `mcp` start a session per connection; `httpproxy` and `elasticsearch` start one per request.
 
@@ -154,10 +154,10 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `mysql` | `:3307` | Username and the client's auth response (greeting reports version `8.0.36` and offers `mysql_clear_password`; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response). Further attempts (see retries) use an authentication switch to `mysql_clear_password` |
+| `mysql` | `:3307` | Username and the client's auth response (the greeting reports the version of the [banner profile](#banner-profiles), `8.0.36` with `RAN_FINGERPRINT=fixed`, and offers `mysql_clear_password`; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response). Further attempts (see retries) use an authentication switch to `mysql_clear_password` |
 | `postgres` | `:5432` | Credentials (cleartext password auth; after a rejected password the trap asks again on the same connection, up to the retry limit) |
 | `mssql` | `:1433` | Credentials (TDS Login7 with password decode) |
-| `oracle` | `:1521` | `USER` and `SERVICE_NAME` from the TNS CONNECT descriptor; no password |
+| `oracle` | `:1521` | `USER` and `SERVICE_NAME` from the TNS CONNECT descriptor; no password. Alert meta adds `kind=connect` |
 | `redis` | `:6379` | `AUTH` credentials + RESP and inline command logging |
 | `memcached` | `:11211` | Command logging (text protocol) |
 | `mongodb` | `:27017` | MongoDB wire protocol (`OP_MSG` and legacy `OP_QUERY`). `hello`/`isMaster`, `buildInfo` and `ping` are answered like a server that needs authentication and stay a `probe`. `saslStart` and `authenticate` are auth attempts: only the user name is kept (SCRAM `n=` attribute, PLAIN authcid, legacy `user`), never the proof, nonce or password, and the reply is `AuthenticationFailed`. Any other command is recorded by name only (alert meta `command`, 32 bytes) and answered with `Unauthorized`. Messages above 64 KiB close the connection |
@@ -166,7 +166,7 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `smtp` | `:25` | Credentials (AUTH LOGIN / PLAIN) |
+| `smtp` | `:25` | Credentials (AUTH LOGIN / PLAIN). The `220` greeting and the `EHLO` answer use the host name and software of the [banner profile](#banner-profiles) (`220 mx.localdomain ESMTP ready` with `RAN_FINGERPRINT=fixed`) |
 | `pop3` | `:110` | Credentials (USER / PASS) |
 | `imap` | `:143` | Credentials (LOGIN command); other commands except `CAPABILITY`, `NOOP` and `LOGOUT` are logged as commands |
 
@@ -183,10 +183,10 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass) |
-| `modbus` | `:502` | Function codes with start address and quantity (capped at the Modbus maximum). Reads (1 to 4) and device identification (43) are fingerprinting and stay a `probe`; writes (5, 6, 15, 16, 22, 23) and unknown function codes are payload and make the session an `attack` |
-| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only a SHA-256 is kept: `key_hash` for a public key, `signature_hash` for a signature), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload |
-| `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload |
+| `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass). Alert meta adds `kind=connect` |
+| `modbus` | `:502` | Function codes with start address and quantity (capped at the Modbus maximum). Reads (1 to 4) and device identification (43) are fingerprinting and stay a `probe`; writes (5, 6, 15, 16, 22, 23) and unknown function codes are payload and make the session an `attack`. Alert meta adds `kind` (`write` or `unknown_function`) |
+| `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only a SHA-256 is kept: `key_hash` for a public key, `signature_hash` for a signature), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload. Alert meta adds `kind` (`connect`, `auth` or `shell_command`) |
+| `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload. Alert meta adds `kind` (`status`, `login` or `handshake`) |
 
 ### Catch-all & banner
 
@@ -297,6 +297,8 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 | `RAN_SSH_TARPIT_DURATION` | `30s` | Maximum tarpit time per SSH connection (`0s` = no tarpit lines) |
 | `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start and persisted if the directory is writable (the image declares `/data` as a volume). Otherwise `ran` logs a warning and uses an ephemeral key that changes on every restart; this is not fatal |
 | `RAN_HTTPS_CERT_PATH` | `/data/https_cert.pem` | Certificates and keys (one PEM file holding an ECDSA pair and an RSA pair) of the `https` trap; self-signed certificates are generated on first start and written atomically with mode `0600` if the directory is writable. Otherwise (or if the file is unusable, incomplete, expired or not yet valid) `ran` logs a warning and uses ephemeral certificates that change on every restart; this is not fatal |
+| `RAN_FINGERPRINT` | `seeded` | Version strings the traps present (SSH, MySQL, HTTP, SMTP, Elasticsearch): `seeded` picks plausible values from built-in sets with a persisted seed, `fixed` keeps the fixed values of earlier releases (see [Banner profiles](#banner-profiles)). Any other value is a configuration error |
+| `RAN_FINGERPRINT_SEED_PATH` | `/data/fingerprint_seed` | File that persists the 32 byte seed (hex), written atomically with mode `0600` on first start if the directory is writable. Otherwise (or if the file is unreadable, corrupt or short) `ran` logs a warning and uses an ephemeral seed, so the banners change on every restart; this is not fatal. Unused with `RAN_FINGERPRINT=fixed` |
 | `RAN_HTTP_FIXTURES` | | Path of a JSON file with operator fixtures for the `http` and `https` traps (see [HTTP fixtures](#http-fixtures)); read once at startup and validated by `ran check-config`. Unset: only the built-in fixtures |
 | `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)); requires `RAN_PROXY_TRUSTED` |
 | `RAN_PROXY_TRUSTED` | | Peers allowed to send PROXY headers: comma-separated IPs and CIDRs (IPv4/IPv6, same format as `RAN_IGNORE_IPS`, at most 1024 entries), for example `10.0.0.0/8,2001:db8::/32`, or the single value `any`. Required (startup fails without it) when `RAN_PROXY_PROTOCOL=on`; `any` trusts every peer and logs a warning. With the protocol off the value is ignored with a warning. See [PROXY protocol trust](#proxy-protocol-trust) |
@@ -351,6 +353,42 @@ The `http` and `https` traps answer `GET` and `HEAD` requests for a small built-
 ```
 
 Limits: at least 1 and at most 64 entries (an empty `fixtures` list is rejected), bodies up to 8 KiB, a file up to 1 MiB, paths up to 256 bytes (start with `/`, printable ASCII, no spaces, `?`, `#` or `%`; requests are matched on the decoded path, so write `/a b`-style paths decoded, never as `%2f`), unique paths, at most 16 headers of up to 256 printable ASCII bytes. Unknown fields and duplicate JSON keys (in the top-level object, an entry or a headers map) are rejected. `status` defaults to `200` and must be one of `200`, `204` (empty body), `400`, `401`, `403`, `404`, `500`, `503`. Allowed headers: `Content-Type` (default `text/plain; charset=utf-8`), `Cache-Control`, `Content-Language`, `ETag`, `Expires`, `Last-Modified`, `Server`, `X-Powered-By`, `X-Content-Type-Options`, `X-Frame-Options`, `X-Robots-Tag`, `Link`, `Allow`, `WWW-Authenticate`. There is no templating and no reload at runtime.
+
+### Banner profiles
+
+<details>
+<summary>Seeded version strings and fixed mode</summary>
+
+A fleet of sensors that all say `OpenSSH_9.6`, MySQL `8.0.36` and `Apache/2.4.62`
+is easy to recognize and filter. With `RAN_FINGERPRINT=seeded` (the default) each
+instance picks its version strings from small built-in sets of plausible values
+(OpenSSH with the distribution suffix real packages carry, MySQL 5.7 and 8.0 patch
+levels, Apache and nginx `Server` headers with the PHP version of the same
+distribution release, SMTP greetings with host names from the documentation
+domains `example.com`, `example.net` and `example.org`, Elasticsearch versions
+with a matching cluster and node name). The choice is derived from a random
+32 byte seed that is generated once and persisted at `RAN_FINGERPRINT_SEED_PATH`
+(next to the SSH host key in `/data`). The same seed always gives the same
+banners, so a restart keeps them; instances with different seeds differ. Banners
+are never random per connection.
+
+- The `Server` and `X-Powered-By` headers are identical on `http`, `https` and the
+  built-in fixtures. With an nginx profile `/server-status` is not served (nginx
+  has no such page) and falls back to the login page.
+- Each trap chooses independently from the seed; the values of one trap agree with
+  each other (for example the `Server` header, the PHP version and the
+  `/server-status` page), but SSH and HTTP may name different distributions.
+- If the seed cannot be persisted (read-only or root-owned volume) `ran` logs a
+  warning and uses an ephemeral seed: the banners then change on every restart.
+- `RAN_FINGERPRINT=fixed` keeps the values of earlier releases
+  (`SSH-2.0-OpenSSH_9.6`, MySQL `8.0.36`, `Apache/2.4.62` with `PHP/8.3.6`,
+  `220 mx.localdomain ESMTP ready`, Elasticsearch `8.12.0`) and never touches the
+  seed file. Use it if you parse the banners.
+
+This varies the surface, it does not hide the honeypot (see the
+[threat model](#threat-model)).
+
+</details>
 
 ### Logging
 
@@ -548,7 +586,12 @@ keeps working). The event meta contains the sensor keys `class`, `protocol`,
 `dest_port`, `auth_attempts`, `commands` and `payload_bytes`, plus trap-specific
 keys where the trap has them (for example `username`, the command name, `path`,
 `target`, `identity`, `client_id`, `service_name`, `domain`, `workstation`,
-`function_code`, `player_name`). The meta is bounded:
+`function_code`, `player_name`). Single-request traps also add a fixed `kind` key
+that says what was seen (a closed vocabulary per trap, never client data), so
+CrowdSec profiles can tell them apart with `Alert.Events[0].GetMeta("kind")`:
+`vnc` `auth_response`; `rdp` `connection_request`; `oracle` and `mqtt` `connect`;
+`modbus` `write` or `unknown_function`; `minecraft` `status`, `login` or
+`handshake`; `adb` `connect`, `auth` or `shell_command`. The meta is bounded:
 
 - keys named `password`, `pass`, `passwd`, `secret`, `token` or `authorization`
   (case-insensitive) are dropped, so passwords never leave the host;
@@ -873,6 +916,17 @@ Also user-visible: the MySQL banner now reports version `8.0.36`, and the SMTP
 trap identifies itself as `mx.localdomain`, so fingerprints of the old
 banners change.
 
+Upgrading to the release with `RAN_FINGERPRINT` (banners change once): the
+SSH, MySQL, HTTP/HTTPS, SMTP and Elasticsearch banners are now picked from
+built-in sets with a seed that is generated on first start and kept in
+`RAN_FINGERPRINT_SEED_PATH` (default `/data/fingerprint_seed`). After that
+one-time change they stay stable across restarts. The `/data` volume must be
+writable by uid `65532` (see the ownership note above) to persist the seed;
+otherwise the seed is ephemeral and the banners change on every restart. Set
+`RAN_FINGERPRINT=fixed` to keep the old banners if you parse them. New alert
+meta key `kind` on `vnc`, `rdp`, `oracle`, `mqtt`, `modbus`, `minecraft` and
+`adb` (see [Classification](#classification)).
+
 </details>
 
 ## Threat model
@@ -899,8 +953,11 @@ reports who touched them; it does not protect the host it runs on.
   send any SNI or mimic a fingerprint), so they are context for triage, never
   identity. The certificate is self-signed with `CN=localhost` and imitates no
   real host. The key is generated per instance and is not meant to be reused. To accept old scanners the trap deliberately weakens its TLS: minimum version TLS 1.0 and all cipher suites Go implements (no `GODEBUG` setting is needed, because an explicit `MinVersion` and `CipherSuites` override the defaults that `tls10server`, `tlsrsakex` and `tls3des` control). Negotiated sessions are therefore not confidential; the traffic is attacker traffic by definition.
-- **Detectability.** Banners are generic and plausible, but a determined
-  attacker can fingerprint any honeypot. Do not rely on rán staying hidden.
+- **Detectability.** Banners are generic and plausible, and
+  [seeded banner profiles](#banner-profiles) make instances differ, but a
+  determined attacker can fingerprint any honeypot (protocol behavior, timing,
+  the shared Go TLS and SSH stacks, closed or fake services). This does not
+  defeat fingerprinting. Do not rely on rán staying hidden.
 - **Isolation.** Run it unprivileged, without capabilities and with a read-only
   filesystem (see below). Never place it on a network segment with sensitive
   hosts.

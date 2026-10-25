@@ -8,7 +8,6 @@ Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marke
 
 | # | Change | Content | Effort | Source |
 |---|---|---|---|---|
-| 11 | `fingerprint-realism` | Vary SSH banner, MySQL and Elasticsearch versions; per-trap class meta for vnc and single-request traps | S | audit |
 | 12 | `ics-and-printer-traps` | S7comm 102, EtherNet/IP 44818, JetDirect/PJL 9100, IPP 631 (TCP only; BACnet and IPMI are UDP and would log only) | M | T-Pot (Conpot), qeeqbox |
 | 13 | `webhook-sink` | One generic webhook, rate limited, no passwords. **Deferred by decision**: the change is written, do not implement it yet | S | OpenCanary, Beelzebub |
 

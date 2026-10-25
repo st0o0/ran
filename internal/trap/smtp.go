@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/st0o0/ran/internal/config"
+	"github.com/st0o0/ran/internal/fingerprint"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -19,6 +20,7 @@ type SMTPTrap struct {
 	cfg     *config.Config
 	logger  *slog.Logger
 	metrics *metrics.Metrics
+	fp      *fingerprint.Profile
 }
 
 func NewSMTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *SMTPTrap {
@@ -26,6 +28,7 @@ func NewSMTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
+		fp:      cfg.Fingerprint(logger),
 	}
 	t.tcpServer = newTCPServer("smtp", cfg, logger, m, limiter, alerter, t.handle)
 	return t
@@ -33,7 +36,7 @@ func NewSMTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limite
 
 func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	host := sess.SourceIP
-	if _, err := fmt.Fprintf(conn, "220 mx.localdomain ESMTP ready\r\n"); err != nil {
+	if _, err := fmt.Fprintf(conn, "%s\r\n", t.fp.SMTP.Greeting()); err != nil {
 		setOutcome(sess, err)
 		return
 	}
@@ -46,7 +49,7 @@ func (t *SMTPTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 
 		switch {
 		case strings.HasPrefix(cmd, "EHLO"):
-			fmt.Fprintf(conn, "250-mx.localdomain\r\n250-AUTH LOGIN PLAIN\r\n250 OK\r\n")
+			fmt.Fprintf(conn, "250-%s\r\n250-AUTH LOGIN PLAIN\r\n250 OK\r\n", t.fp.SMTP.Host)
 		case strings.HasPrefix(cmd, "HELO"):
 			fmt.Fprintf(conn, "250 OK\r\n")
 		case strings.HasPrefix(cmd, "AUTH LOGIN"):

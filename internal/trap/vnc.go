@@ -80,7 +80,7 @@ func (t *VNCTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 		slog.String("response", hex.EncodeToString(response[:])),
 	)
 	sess.RecordCredentials(t.metrics)
-	sess.Alert(ctx, nil)
+	sess.Alert(ctx, map[string]string{"kind": "auth_response"})
 
 	// Send SecurityResult: failed (1)
 	var result [4]byte

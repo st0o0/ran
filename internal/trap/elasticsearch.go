@@ -9,6 +9,7 @@ import (
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
+	"github.com/st0o0/ran/internal/fingerprint"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -20,6 +21,7 @@ type ElasticsearchTrap struct {
 	limiter *Limiter
 	alerter Reporter
 	srv     *http.Server
+	fp      *fingerprint.Profile
 }
 
 func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *ElasticsearchTrap {
@@ -30,6 +32,7 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
+		fp:      cfg.Fingerprint(logger),
 	}
 
 	mux := http.NewServeMux()
@@ -121,7 +124,8 @@ func (t *ElasticsearchTrap) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, `{"name":"node-1","cluster_name":"elasticsearch","cluster_uuid":"_na_","version":{"number":"8.12.0","build_flavor":"default"},"tagline":"You Know, for Search"}`)
+	es := t.fp.Elasticsearch
+	fmt.Fprintf(w, `{"name":%q,"cluster_name":%q,"cluster_uuid":"_na_","version":{"number":%q,"build_flavor":"default"},"tagline":"You Know, for Search"}`, es.NodeName, es.ClusterName, es.Version)
 }
 
 func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +140,7 @@ func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.R
 
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, `{"cluster_name":"elasticsearch","status":"green","number_of_nodes":1}`)
+	fmt.Fprintf(w, `{"cluster_name":%q,"status":"green","number_of_nodes":1}`, t.fp.Elasticsearch.ClusterName)
 }
 
 // handleCatchAll classifies by this rule: a plain GET or HEAD without a body is a

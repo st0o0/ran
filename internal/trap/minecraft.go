@@ -83,10 +83,13 @@ func (t *MinecraftTrap) handle(ctx context.Context, conn net.Conn, sess *Session
 		"server_address":   serverAddr,
 	}
 
+	meta["kind"] = "handshake"
 	switch nextState {
 	case 1:
+		meta["kind"] = "status"
 		t.handleStatus(conn, r, sess)
 	case 2:
+		meta["kind"] = "login"
 		t.handleLogin(conn, r, sess, meta)
 	}
 

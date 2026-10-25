@@ -34,7 +34,7 @@ func TestMySQLGreeting(t *testing.T) {
 	for i := range challenge {
 		challenge[i] = byte(i)
 	}
-	pkt := buildGreeting(1, challenge)
+	pkt := buildGreeting(testProfile.MySQL, 1, challenge)
 
 	// Verify packet structure
 	length := int(pkt[0]) | int(pkt[1])<<8 | int(pkt[2])<<16
@@ -47,14 +47,14 @@ func TestMySQLGreeting(t *testing.T) {
 	if pkt[4] != 10 { // protocol version
 		t.Errorf("protocol = %d, want 10", pkt[4])
 	}
-	// Check server version starts with "8.0.36"
+	// The server version is the profile value
 	verEnd := 5
 	for verEnd < len(pkt) && pkt[verEnd] != 0 {
 		verEnd++
 	}
 	ver := string(pkt[5:verEnd])
-	if ver != "8.0.36" {
-		t.Errorf("version = %q, want 8.0.36", ver)
+	if ver != testProfile.MySQL {
+		t.Errorf("version = %q, want %q", ver, testProfile.MySQL)
 	}
 }
 

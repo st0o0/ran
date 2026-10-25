@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/st0o0/ran/internal/config"
+	"github.com/st0o0/ran/internal/fingerprint"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -21,6 +22,7 @@ type MySQLTrap struct {
 	logger  *slog.Logger
 	metrics *metrics.Metrics
 	connID  atomic.Uint32
+	fp      *fingerprint.Profile
 }
 
 func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *MySQLTrap {
@@ -28,6 +30,7 @@ func NewMySQL(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limit
 		cfg:     cfg,
 		logger:  logger,
 		metrics: m,
+		fp:      cfg.Fingerprint(logger),
 	}
 	t.tcpServer = newTCPServer("mysql", cfg, logger, m, limiter, alerter, t.handle)
 	return t
@@ -38,7 +41,7 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	rand.Read(challenge)
 
 	connID := t.connID.Add(1)
-	greeting := buildGreeting(connID, challenge)
+	greeting := buildGreeting(t.fp.MySQL, connID, challenge)
 	if _, err := conn.Write(greeting); err != nil {
 		setOutcome(sess, err)
 		return
@@ -123,8 +126,8 @@ func parseAuthSwitchReply(data []byte) string {
 	return string(data)
 }
 
-func buildGreeting(connID uint32, challenge []byte) []byte {
-	serverVersion := "8.0.36\x00"
+func buildGreeting(version string, connID uint32, challenge []byte) []byte {
+	serverVersion := version + "\x00"
 	authPlugin := "mysql_clear_password\x00"
 
 	// Protocol version 10, server version, connection id, challenge part 1 (8 bytes),

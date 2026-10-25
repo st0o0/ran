@@ -46,7 +46,12 @@ func (t *ModbusTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 			sess.Log("modbus_request", attrs...)
 		default:
 			sess.LogPayload("modbus_request", attrs...)
-			sess.Alert(ctx, modbusAlertMeta(attrs))
+			meta := modbusAlertMeta(attrs)
+			meta["kind"] = "write"
+			if modbusKindOf(fc) == modbusUnknown {
+				meta["kind"] = "unknown_function"
+			}
+			sess.Alert(ctx, meta)
 		}
 
 		resp := buildModbusException(transactionID, unitID, fc, 0x01)

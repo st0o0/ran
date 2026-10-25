@@ -18,6 +18,7 @@ import (
 
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
+	"github.com/st0o0/ran/internal/fingerprint"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -43,6 +44,8 @@ type HTTPTrap struct {
 	// fixtures is set for the http and https traps only; docker, kubernetes and mcp
 	// replace the handler and never consult it.
 	fixtures httpFixtureSet
+	// fp is the banner profile; set together with fixtures.
+	fp *fingerprint.Profile
 }
 
 func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *HTTPTrap {
@@ -63,7 +66,8 @@ func newHTTPTrap(proto string, cfg *config.Config, logger *slog.Logger, m *metri
 	}
 
 	if proto == "http" || proto == "https" {
-		t.fixtures = newHTTPFixtureSet(cfg.HTTPFixtures)
+		t.fp = cfg.Fingerprint(logger)
+		t.fixtures = newHTTPFixtureSet(cfg.HTTPFixtures, t.fp.HTTP)
 	}
 
 	t.srv = &http.Server{
@@ -211,8 +215,10 @@ func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := hc.sess
 
-	w.Header().Set("Server", "Apache/2.4.62")
-	w.Header().Set("X-Powered-By", "PHP/8.3.6")
+	if t.fp != nil {
+		w.Header().Set("Server", t.fp.HTTP.Server)
+		w.Header().Set("X-Powered-By", t.fp.HTTP.PoweredBy())
+	}
 
 	reqPath := sanitizeHTTPValue(r.URL.Path)
 	meta := map[string]string{

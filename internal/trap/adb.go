@@ -72,7 +72,7 @@ func (t *ADBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	dataLen, ok := fitsInt(binary.LittleEndian.Uint32(hdr[12:16]), adbMaxData)
 	if !ok {
 		sess.LogPayload("adb_identity", slog.String("identity", ""))
-		sess.Alert(ctx, map[string]string{"identity": ""})
+		sess.Alert(ctx, map[string]string{"identity": "", "kind": "connect"})
 		sess.SetOutcome(outcomeTooLong)
 		return
 	}
@@ -86,7 +86,7 @@ func (t *ADBTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	}
 
 	sess.LogPayload("adb_identity", slog.String("identity", identity))
-	sess.Alert(ctx, map[string]string{"identity": identity})
+	sess.Alert(ctx, map[string]string{"identity": identity, "kind": "connect"})
 
 	if _, err := conn.Write(buildADBAuthToken()); err != nil {
 		setOutcome(sess, err)
@@ -197,7 +197,7 @@ func (t *ADBTrap) postAuth(ctx context.Context, conn net.Conn, sess *Session) {
 			}
 			sess.LogAuthAttempt(slog.String("method", method), slog.String(hashKey, hash))
 			sess.RecordCredentials(t.metrics)
-			sess.Alert(ctx, map[string]string{"method": method, hashKey: hash})
+			sess.Alert(ctx, map[string]string{"method": method, hashKey: hash, "kind": "auth"})
 			if arg0 == adbAuthSignature {
 				// A real adbd answers a rejected signature with a new token,
 				// after which the client offers its public key.
@@ -212,7 +212,7 @@ func (t *ADBTrap) postAuth(ctx context.Context, conn net.Conn, sess *Session) {
 				continue
 			}
 			sess.LogCommand(command)
-			sess.Alert(ctx, map[string]string{"command": command})
+			sess.Alert(ctx, map[string]string{"command": command, "kind": "shell_command"})
 			_, _ = conn.Write(buildADBClose(0, arg0))
 			return
 		}
