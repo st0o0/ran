@@ -154,7 +154,7 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
-| `mysql` | `:3307` | Username and the client's auth response (the greeting reports the version of the [banner profile](#banner-profiles), `8.0.36` with `RAN_FINGERPRINT=fixed`, and offers `mysql_clear_password`; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response). Further attempts (see retries) use an authentication switch to `mysql_clear_password` |
+| `mysql` | `:3307` | Username and the client's auth response (the greeting reports the version of the [banner profile](#banner-profiles), `8.0.36` with `RAN_FINGERPRINT=fixed`, which also offers `mysql_clear_password` in the greeting; seeded mode uses the greeting of the profile generation and asks for the password with a switch; the value is plaintext only for clients that use the cleartext plugin, otherwise it is the client's scrambled response). Further attempts (see retries) use an authentication switch to `mysql_clear_password` |
 | `postgres` | `:5432` | Credentials (cleartext password auth; after a rejected password the trap asks again on the same connection, up to the retry limit) |
 | `mssql` | `:1433` | Credentials (TDS Login7 with password decode) |
 | `oracle` | `:1521` | `USER` and `SERVICE_NAME` from the TNS CONNECT descriptor; no password. Alert meta adds `kind=connect` |
@@ -378,6 +378,24 @@ are never random per connection.
 - Each trap chooses independently from the seed; the values of one trap agree with
   each other (for example the `Server` header, the PHP version and the
   `/server-status` page), but SSH and HTTP may name different distributions.
+- SSH: the key exchange, cipher and MAC lists are limited to what OpenSSH 8.2 to
+  9.6 offered and the Go SSH library implements (no `mlkem768x25519-sha256`,
+  which OpenSSH added in 9.9; also no `sntrup761x25519-sha512@openssh.com`, the
+  umac MACs or `diffie-hellman-group18-sha512`, which the library lacks). The host
+  key is ed25519 only, whereas OpenSSH also offers RSA and ECDSA keys, so the
+  algorithm list still differs from a real server.
+- MySQL: in seeded mode the greeting follows the profile's generation. 8.0.x
+  advertises `caching_sha2_password` and charset `utf8mb4_0900_ai_ci`, 5.7.x
+  `mysql_native_password` and `latin1_swedish_ci`, with capability flags of a
+  server without TLS. The password is still captured: after the client's scramble
+  the trap asks for it with an authentication switch to `mysql_clear_password`
+  (clients that refuse the switch leave only the username). `fixed` mode keeps the
+  old greeting.
+- `/phpinfo.php` shows the distribution's PHP package version and a kernel that
+  fits the distribution; Elasticsearch root documents carry the build fields of
+  their version (Lucene and compatibility versions follow the real releases, build
+  hashes and dates are plausible placeholders) and `X-elastic-product` is sent
+  from 7.14 on. `fixed` mode keeps the earlier output.
 - If the seed cannot be persisted (read-only or root-owned volume) `ran` logs a
   warning and uses an ephemeral seed: the banners then change on every restart.
 - `RAN_FINGERPRINT=fixed` keeps the values of earlier releases

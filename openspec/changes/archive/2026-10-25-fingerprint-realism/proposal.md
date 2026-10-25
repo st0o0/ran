@@ -6,7 +6,7 @@ Every rán instance presents the same fixed banners (`OpenSSH_9.6`, MySQL `8.0.3
 
 - Banner profiles: each version string comes from a small built-in set of plausible values per trap, chosen once at first start from a seed that is persisted (`/data/fingerprint_seed`, ephemeral fallback), so an instance stays stable across restarts but instances differ.
 - `RAN_FINGERPRINT=fixed|seeded` (default `seeded`; `fixed` keeps the current values for people who parse banners).
-- Per-trap class meta for `vnc` and the single-request traps (follow-up in `AGENTS.md`), so CrowdSec profiles can distinguish them.
+- Per-trap class meta (`kind`) for the seven single-request traps (`vnc`, `rdp`, `oracle`, `mqtt`, `modbus`, `minecraft`, `adb`), so CrowdSec profiles can distinguish them.
 
 ## Capabilities
 

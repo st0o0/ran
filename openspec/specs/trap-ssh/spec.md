@@ -115,3 +115,10 @@ The trap SHALL log the client version string and the HASSH of the client key exc
 - **WHEN** the client version contains control characters or is longer than 255 bytes (the SSH library itself ends the handshake beyond 255 bytes)
 - **THEN** only printable ASCII is kept and the value is cut to 255 bytes before logging and alerting
 
+
+### Requirement: Era-appropriate algorithms
+The server SHALL offer only key exchange, cipher and MAC algorithms that the OpenSSH releases of the banner profiles (8.2 to 9.6) offered and that the SSH library implements, and SHALL NOT offer `mlkem768x25519-sha256` (OpenSSH 9.9) or `sntrup761x25519-sha512@openssh.com`. The host key is ed25519 only.
+
+#### Scenario: Server KEXINIT
+- **WHEN** a client reads the server SSH_MSG_KEXINIT
+- **THEN** the key exchange list starts with `curve25519-sha256` and contains no `mlkem` entry, and a client limited to one of the offered algorithms completes the handshake

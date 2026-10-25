@@ -29,3 +29,10 @@ Each Elasticsearch connection SHALL be logged with: session_id, source_ip, sourc
 #### Scenario: Multi-port destPort
 - **WHEN** the Elasticsearch trap listens on `[":9200", ":9300"]` and a connection arrives on port 9300
 - **THEN** the session's dest_port is 9300, derived from `r.Context()`
+
+### Requirement: Version-consistent root document
+In seeded mode the root document SHALL contain the build fields of the profile's version, and the `X-elastic-product` header SHALL be sent only for versions 7.14 and later. In fixed mode the document and the header stay as in earlier releases.
+
+#### Scenario: Old version
+- **WHEN** the profile version is below 7.14
+- **THEN** no `X-elastic-product` header is sent

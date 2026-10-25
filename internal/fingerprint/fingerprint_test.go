@@ -108,7 +108,7 @@ func TestEveryTableValueIsReachable(t *testing.T) {
 			t.Errorf("smtp software %q never selected", v)
 		}
 	}
-	for _, v := range esVersions {
+	for _, v := range esVersionList() {
 		if !esv[v] {
 			t.Errorf("es version %q never selected", v)
 		}
@@ -149,7 +149,7 @@ func TestTableEntriesAreWellFormed(t *testing.T) {
 	}
 	all = append(all, smtpHosts...)
 	all = append(all, smtpSoftware...)
-	all = append(all, esVersions...)
+	all = append(all, esVersionList()...)
 	for _, c := range esClusters {
 		all = append(all, c.Cluster, c.Node)
 	}
@@ -186,7 +186,7 @@ func TestTableEntriesAreWellFormed(t *testing.T) {
 			t.Errorf("http %+v: status line disagrees with the Server header", h)
 		}
 	}
-	for _, tbl := range []map[string]int{dups(sshTable), dups(mysqlTable), dups(smtpHosts), dups(smtpSoftware), dups(esVersions)} {
+	for _, tbl := range []map[string]int{dups(sshTable), dups(mysqlTable), dups(smtpHosts), dups(smtpSoftware), dups(esVersionList())} {
 		for v, n := range tbl {
 			if n > 1 {
 				t.Errorf("duplicate table entry %q", v)
@@ -333,4 +333,12 @@ func TestEmptyPathIsEphemeral(t *testing.T) {
 	if !strings.Contains(logs.String(), "ephemeral") {
 		t.Errorf("no warning: %s", logs.String())
 	}
+}
+
+func esVersionList() []string {
+	out := make([]string, 0, len(esReleases))
+	for _, r := range esReleases {
+		out = append(out, r.Version)
+	}
+	return out
 }

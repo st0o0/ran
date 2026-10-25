@@ -80,7 +80,10 @@ func (t *ElasticsearchTrap) Stop(ctx context.Context) error {
 
 func (t *ElasticsearchTrap) setHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-elastic-product", "Elasticsearch")
+	// Elasticsearch added the header in 7.14; older versions do not send it.
+	if t.fp.Elasticsearch.SendsProductHeader() {
+		w.Header().Set("X-elastic-product", "Elasticsearch")
+	}
 }
 
 func (t *ElasticsearchTrap) withSession(w http.ResponseWriter, r *http.Request) (*Session, bool) {
@@ -125,7 +128,14 @@ func (t *ElasticsearchTrap) handleRoot(w http.ResponseWriter, r *http.Request) {
 	t.setHeaders(w)
 	w.WriteHeader(http.StatusOK)
 	es := t.fp.Elasticsearch
-	fmt.Fprintf(w, `{"name":%q,"cluster_name":%q,"cluster_uuid":"_na_","version":{"number":%q,"build_flavor":"default"},"tagline":"You Know, for Search"}`, es.NodeName, es.ClusterName, es.Version)
+	if es.Build.IsZero() {
+		// Fixed mode keeps the short document of earlier releases.
+		fmt.Fprintf(w, `{"name":%q,"cluster_name":%q,"cluster_uuid":"_na_","version":{"number":%q,"build_flavor":"default"},"tagline":"You Know, for Search"}`, es.NodeName, es.ClusterName, es.Version)
+		return
+	}
+	b := es.Build
+	fmt.Fprintf(w, `{"name":%q,"cluster_name":%q,"cluster_uuid":"_na_","version":{"number":%q,"build_flavor":"default","build_type":%q,"build_hash":%q,"build_date":%q,"build_snapshot":false,"lucene_version":%q,"minimum_wire_compatibility_version":%q,"minimum_index_compatibility_version":%q},"tagline":"You Know, for Search"}`,
+		es.NodeName, es.ClusterName, es.Version, b.Type, b.Hash, b.Date, b.Lucene, b.MinWire, b.MinIndex)
 }
 
 func (t *ElasticsearchTrap) handleClusterHealth(w http.ResponseWriter, r *http.Request) {

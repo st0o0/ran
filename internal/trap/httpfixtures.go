@@ -87,8 +87,8 @@ func builtinHTTPFixtures(web fingerprint.HTTP) []config.HTTPFixture {
 				"<dt>1 requests currently being processed, 9 idle workers</dt></dl></body></html>\n"},
 		{Path: "/phpinfo.php", Status: 200, Headers: map[string]string{"Content-Type": htmlCT, "X-Powered-By": web.PoweredBy()},
 			Body: "<!DOCTYPE html><html><head><title>phpinfo()</title></head><body><div class=\"center\">\n" +
-				"<table><tr class=\"h\"><td><h1 class=\"p\">PHP Version " + web.PHP + "</h1></td></tr></table>\n" +
-				"<table><tr><td class=\"e\">System </td><td class=\"v\">Linux webapp 5.15.0-91-generic x86_64 </td></tr>\n" +
+				"<table><tr class=\"h\"><td><h1 class=\"p\">PHP Version " + web.PHPInfoVersion() + "</h1></td></tr></table>\n" +
+				"<table><tr><td class=\"e\">System </td><td class=\"v\">Linux webapp " + web.KernelRelease() + " x86_64 </td></tr>\n" +
 				"<tr><td class=\"e\">Server API </td><td class=\"v\">" + phpServerAPI + " </td></tr></table></div></body></html>\n"},
 		{Path: "/wp-json/", Status: 200, Headers: map[string]string{"Content-Type": "application/json; charset=UTF-8", "X-Robots-Tag": "noindex"},
 			Body: `{"name":"Site","description":"Just another WordPress site","gmt_offset":"0","timezone_string":"","namespaces":["oembed/1.0","wp/v2"],"authentication":[],"routes":{}}`},

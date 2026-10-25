@@ -113,6 +113,7 @@ func (t *SSHTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	}
 
 	sshCfg := &gossh.ServerConfig{
+		Config:        sshAlgorithms(),
 		ServerVersion: t.fp.SSH,
 		MaxAuthTries:  maxRetries,
 		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
@@ -276,4 +277,42 @@ func loadOrGenerateHostKey(path string, logger *slog.Logger) (gossh.Signer, erro
 
 	logger.Info("generated ephemeral ssh host key")
 	return signer, nil
+}
+
+// sshAlgorithms returns the algorithm lists the server offers. x/crypto offers
+// more than the OpenSSH releases the profiles claim (8.2 to 9.6): its defaults
+// start with mlkem768x25519-sha256, which OpenSSH added only in 9.9. The lists
+// are limited to what OpenSSH 8.2 to 9.6 all offered and the library can do, in
+// OpenSSH's order. Not offered, because the library cannot do them:
+// sntrup761x25519-sha512@openssh.com (OpenSSH 8.5 and later),
+// diffie-hellman-group18-sha512, the umac MACs and hmac-sha1-etm. The server
+// has an ed25519 host key only, whereas OpenSSH also offers RSA and ECDSA.
+// curve25519-sha256@libssh.org is added by x/crypto next to curve25519-sha256.
+func sshAlgorithms() gossh.Config {
+	return gossh.Config{
+		KeyExchanges: []string{
+			gossh.KeyExchangeCurve25519,
+			gossh.KeyExchangeECDHP256,
+			gossh.KeyExchangeECDHP384,
+			gossh.KeyExchangeECDHP521,
+			gossh.KeyExchangeDHGEXSHA256,
+			gossh.KeyExchangeDH16SHA512,
+			gossh.KeyExchangeDH14SHA256,
+		},
+		Ciphers: []string{
+			gossh.CipherChaCha20Poly1305,
+			gossh.CipherAES128CTR,
+			gossh.CipherAES192CTR,
+			gossh.CipherAES256CTR,
+			gossh.CipherAES128GCM,
+			gossh.CipherAES256GCM,
+		},
+		MACs: []string{
+			gossh.HMACSHA256ETM,
+			gossh.HMACSHA512ETM,
+			gossh.HMACSHA256,
+			gossh.HMACSHA512,
+			gossh.HMACSHA1,
+		},
+	}
 }
