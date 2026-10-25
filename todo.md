@@ -26,7 +26,6 @@ Docs: the README comparison, positioning section and collapsible reference secti
 
 | # | Change | Content | Effort | Source |
 |---|---|---|---|---|
-| 9 | `http-fixtures` | Static responses per scanner family (WordPress, `.git`, actuator) and a small route table; HTTP only, no templating, no LLM | S-M | Galah/Beelzebub (ideas only) |
 | 10 | `proxy-protocol-allowlist` | Source CIDR allowlist for who may send PROXY headers (already in AGENTS.md follow-ups) | S | internal |
 | 11 | `fingerprint-realism` | Vary SSH banner, MySQL and Elasticsearch versions; per-trap class meta for vnc and single-request traps | S | audit |
 | 12 | `ics-and-printer-traps` | S7comm 102, EtherNet/IP 44818, JetDirect/PJL 9100, IPP 631 (TCP only; BACnet and IPMI are UDP and would log only) | M | T-Pot (Conpot), qeeqbox |

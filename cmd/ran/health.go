@@ -68,5 +68,8 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ran: warning: RAN_IGNORE_IPS contains a very wide range %s; sessions from it never alert\n", p)
 	}
 	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
+	if len(cfg.HTTPFixtures) > 0 {
+		fmt.Fprintf(stdout, "ran: RAN_HTTP_FIXTURES ok (%d operator fixtures)\n", len(cfg.HTTPFixtures))
+	}
 	return 0
 }

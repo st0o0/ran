@@ -40,6 +40,9 @@ type HTTPTrap struct {
 	// the net.Conn itself, never RemoteAddr: under PROXY protocol RemoteAddr is
 	// client controlled and can collide between connections.
 	conns sync.Map
+	// fixtures is set for the http and https traps only; docker, kubernetes and mcp
+	// replace the handler and never consult it.
+	fixtures httpFixtureSet
 }
 
 func NewHTTP(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) *HTTPTrap {
@@ -57,6 +60,10 @@ func newHTTPTrap(proto string, cfg *config.Config, logger *slog.Logger, m *metri
 		metrics: m,
 		limiter: limiter,
 		alerter: alerter,
+	}
+
+	if proto == "http" || proto == "https" {
+		t.fixtures = newHTTPFixtureSet(cfg.HTTPFixtures)
 	}
 
 	t.srv = &http.Server{
@@ -290,6 +297,12 @@ func (t *HTTPTrap) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	if alerted {
 		sess.Alert(r.Context(), meta)
+	}
+
+	// Logging and classification are done; a GET or HEAD for a fixture path gets the
+	// static answer. POST and every other method keep the login page behavior.
+	if t.fixtures != nil && t.fixtures.serve(w, r) {
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

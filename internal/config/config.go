@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,10 @@ type Config struct {
 	// BannerServices are the services of the banner trap (RAN_BANNER_SERVICES);
 	// set only when banner is enabled.
 	BannerServices []BannerService
+
+	// HTTPFixtures are the operator fixtures of the http and https traps
+	// (RAN_HTTP_FIXTURES); set only when one of them is enabled.
+	HTTPFixtures []HTTPFixture
 
 	SSHHostKeyPath string
 	HTTPSCertPath  string
@@ -417,6 +422,14 @@ func Load(getenv func(string) string) (*Config, error) {
 
 	if len(c.Traps) == 0 {
 		return nil, fmt.Errorf("at least one trap must be enabled; set RAN_TRAPS to a comma-separated list such as ssh,http,ftp (valid: %s)", strings.Join(ValidTrapNames(), ", "))
+	}
+
+	if path := strings.TrimSpace(getenv("RAN_HTTP_FIXTURES")); path != "" && (slices.Contains(c.Traps, "http") || slices.Contains(c.Traps, "https")) {
+		fx, err := LoadHTTPFixtures("RAN_HTTP_FIXTURES", path)
+		if err != nil {
+			return nil, err
+		}
+		c.HTTPFixtures = fx
 	}
 
 	// Load per-trap addr overrides
