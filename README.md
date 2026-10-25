@@ -398,7 +398,7 @@ are never random per connection.
   `mysql_native_password` and `latin1_swedish_ci`, with capability flags of a
   server without TLS. The password is still captured: after the client's scramble
   the trap asks for it with an authentication switch to `mysql_clear_password`
-  (clients that refuse the switch leave only the username). `fixed` mode keeps the
+  (the scramble itself is not recorded as a credential; clients that refuse the switch or hang up count as one login attempt with the username only, and the switch round does not use up `RAN_MAX_AUTH_RETRIES`). `fixed` mode keeps the
   old greeting.
 - `/phpinfo.php` shows the distribution's PHP package version and a kernel that
   fits the distribution; Elasticsearch root documents carry the build fields of

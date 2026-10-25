@@ -180,7 +180,7 @@ func TestMySQLRealisticGreetingStillCapturesThePassword(t *testing.T) {
 		t.Run(c.version, func(t *testing.T) {
 			t.Parallel()
 			rec := &recordingAlerter{}
-			addr := startMySQLProfile(t, mysqlProfile(fingerprint.ModeSeeded, c.version), 2, rec)
+			addr := startMySQLProfile(t, mysqlProfile(fingerprint.ModeSeeded, c.version), 1, rec)
 			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 			if err != nil {
 				t.Fatal(err)
@@ -209,16 +209,9 @@ func TestMySQLRealisticGreetingStillCapturesThePassword(t *testing.T) {
 				user = append(user, a.Meta["username"])
 				pass = append(pass, a.Meta["password"])
 			}
-			if len(pass) < 2 || pass[len(pass)-1] != "hunter2" {
-				t.Errorf("captured passwords %q, want the switched clear text last", pass)
-			}
-			for i, p := range pass {
-				if user[i] != "root" {
-					t.Errorf("username[%d] = %q", i, user[i])
-				}
-				if p != "" && p != "hunter2" {
-					t.Errorf("a scramble was recorded as password: %q", p)
-				}
+			// The scramble is no credential: exactly one record, the clear text.
+			if len(pass) != 1 || pass[0] != "hunter2" || user[0] != "root" {
+				t.Errorf("captured %q / %q, want exactly root / hunter2", user, pass)
 			}
 		})
 	}

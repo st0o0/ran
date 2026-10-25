@@ -70,10 +70,12 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	authDelay := t.cfg.ResolveAuthDelay("mysql")
 
 	username, password := parseHandshakeResponse(response, challenge)
+	scrambled := false
 	if realistic {
 		switch mysqlClientPluginName(response) {
 		case "mysql_native_password", "caching_sha2_password", "sha256_password":
 			// A scramble, not a password: the clear text comes with the switch.
+			scrambled = true
 			password = ""
 		}
 	}
@@ -81,6 +83,35 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	// cannot parse the request, so the session stays a single attempt.
 	canSwitch := mysqlClientPluginAuth(response)
 	seq := byte(1) // sequence number of the last packet received
+
+	if scrambled {
+		// The first response is not a credential: it neither logs an
+		// auth_attempt nor counts. Ask for the clear text right away; the
+		// switch round is not a password attempt, so it does not use up
+		// RAN_MAX_AUTH_RETRIES.
+		// The plugin name is only read from clients that set CLIENT_PLUGIN_AUTH,
+		// so they can follow the switch.
+		if _, err := conn.Write(buildAuthSwitchRequest(seq + 1)); err != nil {
+			setOutcome(sess, err)
+			return
+		}
+		reply, err := readMySQLPacket(conn)
+		if err != nil {
+			// The client hung up or stalled: one login attempt, no password.
+			t.noPasswordAttempt(ctx, sess, username)
+			sess.setReadOutcome(err)
+			return
+		}
+		seq += 2
+		if !isClearPasswordReply(reply) {
+			// The client answered with another scramble instead of following
+			// the switch: still one login attempt, no password.
+			t.noPasswordAttempt(ctx, sess, username)
+			_, _ = conn.Write(buildErrPacket(seq+1, 1045, "28000", "Access denied for user '"+username+"'"))
+			return
+		}
+		password = parseAuthSwitchReply(reply)
+	}
 	// Every iteration blocks on a client read (bounded by the session deadline)
 	// and, with an auth delay, on authSleep, so unlimited retries cannot spin.
 	for attempt := 0; ; attempt++ {
@@ -118,6 +149,27 @@ func (t *MySQLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 			return
 		}
 	}
+}
+
+// noPasswordAttempt records a login attempt whose password is unknown because
+// the client never answered the authentication switch with a clear text
+// password. It is logged once as an auth_attempt without a password field; it
+// counts as a captured credential and reports an alert only if the username is
+// not empty.
+func (t *MySQLTrap) noPasswordAttempt(ctx context.Context, sess *Session, username string) {
+	sess.LogAuthAttempt(slog.String("username", username))
+	if username == "" {
+		return
+	}
+	sess.RecordCredentials(t.metrics)
+	sess.Alert(ctx, map[string]string{"username": username})
+}
+
+// isClearPasswordReply reports whether the reply to an authentication switch
+// to mysql_clear_password looks like a clear text password: the protocol sends
+// it NUL terminated, while a scramble is binary data of a fixed length.
+func isClearPasswordReply(reply []byte) bool {
+	return len(reply) > 0 && reply[len(reply)-1] == 0
 }
 
 // mysqlClientPluginAuth reports whether the handshake response sets
