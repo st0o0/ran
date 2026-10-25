@@ -73,8 +73,8 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 		}
 	}
 
-	if cfg.Shun && !cfg.CrowdSec {
-		logger.Warn("RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert")
+	for _, w := range cfg.CrowdSecWarnings() {
+		logger.Warn(w)
 	}
 
 	logProxyTrust(logger, cfg)

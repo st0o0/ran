@@ -81,8 +81,8 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
 	fmt.Fprintf(stdout, "ran: shun %s (repeat after %d alerts, repeat cooldown %s, alert cooldown %s)\n", onOff(cfg.Shun), cfg.RepeatAfter, cfg.EffectiveRepeatCooldown(), cfg.AlertCooldown)
-	if cfg.Shun && !cfg.CrowdSec {
-		fmt.Fprintln(stderr, "ran: warning: RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert")
+	for _, w := range cfg.CrowdSecWarnings() {
+		fmt.Fprintf(stderr, "ran: warning: %s\n", w)
 	}
 	for _, w := range cfg.CooldownWarnings() {
 		fmt.Fprintf(stderr, "ran: warning: %s\n", w)

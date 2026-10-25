@@ -79,6 +79,8 @@ type alertMsg struct {
 	// cooldownKey and slot let a failed POST release the cooldown slot.
 	cooldownKey string
 	slot        uint64
+	// mark undoes the offender table record when the push fails.
+	mark acceptMark
 
 	// raw is the marshaled alert, set once by encode; its length is the real
 	// size (escaping included) used for the early flush.
@@ -285,15 +287,19 @@ func (a *CrowdSecAlerter) Submit(_ context.Context, ev Event) {
 		return
 	}
 
-	msg := alertMsg{IP: ip, Protocol: protocol, Class: ev.Class, Meta: eventMeta(ev), cooldownKey: key, slot: slot}
+	// Record the alert before queueing it: the worker may fail the push (and
+	// revert the record) as soon as it is on the channel.
+	mark := a.offenders.accepted(ip, ev.Class, win)
+	msg := alertMsg{IP: ip, Protocol: protocol, Class: ev.Class, Meta: eventMeta(ev), cooldownKey: key, slot: slot, mark: mark}
 	select {
 	case a.ch <- msg:
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "queued").Inc()
-		a.offenders.accepted(ip, ev.Class, win)
 		a.metrics.CrowdSecQueueLength.Set(float64(len(a.ch)))
 	default:
-		// Release the cooldown slot so a retry is not suppressed.
+		// Release the cooldown slot and undo the offender record so a retry is
+		// not suppressed.
 		a.cooldown.Release(key, slot)
+		a.offenders.revert(mark)
 		a.logger.Warn("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "dropped")
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "dropped").Inc()
 		a.metrics.CrowdSecDropped.WithLabelValues(protocol).Inc()
@@ -836,6 +842,9 @@ func (a *CrowdSecAlerter) flushWithin(batch []alertMsg, timeout time.Duration) b
 func (a *CrowdSecAlerter) failBatch(batch []alertMsg) {
 	for _, msg := range batch {
 		a.metrics.CrowdSecPipeline.WithLabelValues(msg.Protocol, "failed").Inc()
+		// The alert never reached the LAPI: forget it in the offender table too,
+		// otherwise the source stays shunned and cannot produce the retry alert.
+		a.offenders.revert(msg.mark)
 		if msg.cooldownKey != "" {
 			a.cooldown.Release(msg.cooldownKey, msg.slot)
 			a.metrics.CrowdSecPipeline.WithLabelValues(msg.Protocol, "released").Inc()

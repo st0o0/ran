@@ -3,6 +3,7 @@ package alert
 import (
 	"container/list"
 	"log/slog"
+	"math"
 	"net/netip"
 	"sort"
 	"sync"
@@ -54,8 +55,11 @@ type offender struct {
 	// shunUntil is the end of the current shun window; the zero value means no
 	// window. An entry in the active set has a window that has not been closed
 	// (summary written) yet.
-	shunStart  time.Time
-	shunUntil  time.Time
+	shunStart time.Time
+	shunUntil time.Time
+	// winID identifies the current window (and its last extension) so revert closes
+	// only the window the reverted alert opened.
+	winID      uint64
 	suppressed int
 	protos     map[string]struct{}
 
@@ -77,6 +81,7 @@ type offenderTable struct {
 	entries     map[string]*offender
 	order       *list.List // oldest last alert first
 	active      map[*offender]struct{}
+	nextWin     uint64
 	shun        bool
 	repeatAfter int
 	repeat      time.Duration
@@ -111,8 +116,13 @@ func newOffenderTable(cfg offenderConfig, logger *slog.Logger) *offenderTable {
 	}
 	if o.reset <= 0 {
 		o.reset = defaultOffenderReset
-		if 2*o.repeat > o.reset {
-			o.reset = 2 * o.repeat
+		// Twice the repeat cooldown, without overflowing a Duration.
+		if o.repeat > o.reset/2 {
+			if o.repeat > math.MaxInt64/2 {
+				o.reset = math.MaxInt64
+			} else {
+				o.reset = 2 * o.repeat
+			}
 		}
 	}
 	if o.now == nil {
@@ -179,29 +189,70 @@ func (o *offenderTable) expired(e *offender, now time.Time) bool {
 	return now.Sub(e.last) >= o.reset && !now.Before(e.shunUntil)
 }
 
-// accepted records an alert that passed the cooldown and was queued, with the
-// window that was applied to it. With shun on, a class other than probe opens
-// (or extends) the shun window of the source.
-func (o *offenderTable) accepted(ip string, class Class, window time.Duration) {
+// acceptMark identifies what one accepted alert recorded, so a failed push can
+// undo exactly that. The zero value reverts nothing.
+type acceptMark struct {
+	key string
+	idx int
+	// win is the id of the shun window this alert opened; 0 when it opened none
+	// (probe, no shun, or it only extended a running window).
+	win uint64
+	ok  bool
+}
+
+// accepted records an alert that passed the cooldown, with the window that was
+// applied to it. With shun on, a class other than probe opens (or extends) the
+// shun window of the source. The returned mark undoes the record through revert.
+func (o *offenderTable) accepted(ip string, class Class, window time.Duration) acceptMark {
 	if o == nil {
-		return
+		return acceptMark{}
 	}
 	key, ok := normalizeIP(ip)
 	idx := classIndex(class)
 	if !ok || idx < 0 {
+		return acceptMark{}
+	}
+	now := o.now()
+	var sums []shunSummary
+	o.mu.Lock()
+	win := o.acceptLocked(key, idx, class, window, now, &sums)
+	o.mu.Unlock()
+	o.logSummaries(sums)
+	return acceptMark{key: key, idx: idx, win: win, ok: true}
+}
+
+// revert undoes accepted for an alert whose push failed (the cooldown slot is
+// released at the same time, so the source is reported again). It decrements the
+// class counter and, if the alert opened the window that is still running
+// unchanged, closes it; a summary is written only if connections were
+// suppressed. A window that was extended by another alert, already ended or
+// belongs to an evicted entry is left alone.
+func (o *offenderTable) revert(m acceptMark) {
+	if o == nil || !m.ok {
 		return
 	}
 	now := o.now()
 	var sums []shunSummary
 	o.mu.Lock()
-	o.acceptLocked(key, idx, class, window, now, &sums)
+	if e := o.entries[m.key]; e != nil {
+		if e.counts[m.idx] > 0 {
+			e.counts[m.idx]--
+		}
+		if m.win != 0 && e.active && e.winID == m.win {
+			o.endWindow(e, now, &sums)
+		}
+		if !e.active && e.counts == [3]int{} {
+			o.remove(e, now, &sums)
+		}
+	}
 	o.mu.Unlock()
 	o.logSummaries(sums)
 }
 
 // acceptLocked is the body of accepted. Callers hold mu; summaries of closed windows
-// are appended to sums and must be logged after mu is released.
-func (o *offenderTable) acceptLocked(key string, idx int, class Class, window time.Duration, now time.Time, sums *[]shunSummary) {
+// are appended to sums and must be logged after mu is released. It returns the id
+// of the window the alert opened, or 0.
+func (o *offenderTable) acceptLocked(key string, idx int, class Class, window time.Duration, now time.Time, sums *[]shunSummary) uint64 {
 	e := o.entries[key]
 	if e != nil && o.expired(e, now) {
 		o.remove(e, now, sums)
@@ -222,23 +273,30 @@ func (o *offenderTable) acceptLocked(key string, idx int, class Class, window ti
 	e.last = now
 
 	if !o.shun || class == ClassProbe || window <= 0 {
-		return
+		return 0
 	}
 	until := now.Add(window)
 	if e.active && now.Before(e.shunUntil) {
-		// A higher class alert inside a running window: extend, keep counting.
+		// A higher class alert inside a running window: extend, keep counting. An
+		// extension gets a new id, so reverting the alert that opened the window no
+		// longer closes it.
 		if until.After(e.shunUntil) {
 			e.shunUntil = until
+			o.nextWin++
+			e.winID = o.nextWin
 		}
-		return
+		return 0
 	}
 	if e.active {
 		o.endWindow(e, now, sums)
 	}
+	o.nextWin++
+	e.winID = o.nextWin
 	e.shunStart, e.shunUntil = now, until
 	e.active = true
 	o.active[e] = struct{}{}
 	o.setGauge()
+	return e.winID
 }
 
 // shunned reports whether new connections from ip are refused right now. A
@@ -369,14 +427,36 @@ func (o *offenderTable) remove(e *offender, now time.Time, sums *[]shunSummary) 
 	o.stats.size(len(o.entries))
 }
 
+// evictScan bounds how many of the oldest entries makeRoom inspects for one
+// without an active shun window. The scan is O(evictScan) per eviction, which
+// only happens when the table is full.
+const evictScan = 64
+
+// makeRoom frees one slot: first silent entries, then the oldest entry without
+// an active shun window among the first evictScan entries. An entry with an
+// active shun is evicted (oldest first) only when every entry is active, or when
+// the first evictScan entries are all active (the bound; a missed suppression
+// then, never a wrong ban).
 func (o *offenderTable) makeRoom(now time.Time, sums *[]shunSummary) {
 	o.sweepFront(now, sums)
-	if len(o.entries) >= o.max {
-		if el := o.order.Front(); el != nil {
-			o.stats.evicted()
-			o.remove(el.Value.(*offender), now, sums)
+	if len(o.entries) < o.max {
+		return
+	}
+	victim := o.order.Front()
+	if victim == nil {
+		return
+	}
+	if len(o.active) < len(o.entries) {
+		n := 0
+		for el := victim; el != nil && n < evictScan; el, n = el.Next(), n+1 {
+			if !el.Value.(*offender).active {
+				victim = el
+				break
+			}
 		}
 	}
+	o.stats.evicted()
+	o.remove(victim.Value.(*offender), now, sums)
 }
 
 // sweepFront removes silent entries; the list is ordered by last alert, so it
