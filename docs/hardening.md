@@ -64,3 +64,58 @@ Sizing: memory is dominated by the tracking maps (see *Memory sizing* above) and
 by concurrent sessions (`RAN_MAX_SESSIONS`). Set `GOMEMLIMIT` to about 80
 percent of the container limit.
 
+
+## Behind a reverse proxy
+
+A host often mixes traps that face the internet directly (`ssh`, `vnc`, `rdp`, ...)
+with one trap that sits behind a reverse proxy (usually `http` or `https`).
+`RAN_PROXY_PROTOCOL` takes a list of trap names for this case, so only the
+proxied traps require a PROXY header:
+
+```bash
+RAN_TRAPS=ssh,vnc,http
+RAN_PROXY_PROTOCOL=http
+RAN_PROXY_TRUSTED=10.0.0.0/8
+```
+
+Here `ssh` and `vnc` accept direct connections as before, while `http` accepts
+only connections from the listed proxy peers and takes the client address from
+the PROXY header. Connections from any other peer to `http` are dropped before the
+header is read. `RAN_PROXY_PROTOCOL=on` still means every TCP trap; `off` or an
+empty value means none. Names are case-insensitive and may be separated by
+spaces. UDP traps and unknown names fail startup; a name that is not in
+`RAN_TRAPS` only logs a warning. `RAN_PROXY_TRUSTED` is mandatory as soon as one
+trap uses PROXY protocol and is shared by all of them, so keep it narrow. The
+startup log and `ran check-config` print the traps that expect a PROXY header and
+the trusted peers; check them after every change, because a typo in the list
+would otherwise leave a trap without PROXY protocol.
+
+**Caddy.** Tell Caddy to send a PROXY v2 header in the upstream transport of the
+honeypot route:
+
+```caddyfile
+honeypot.example.com {
+	reverse_proxy ran:8081 {
+		transport http {
+			proxy_protocol v2
+		}
+	}
+}
+```
+
+Use the address of the `http` trap as the upstream and put the address Caddy
+connects from in `RAN_PROXY_TRUSTED`.
+
+**Shared network namespace.** When the proxy and ran share one network namespace
+(for example containers in one pod, or `network_mode: service:...`), ran sees the
+proxy as loopback. Trust both loopback addresses:
+
+```bash
+RAN_PROXY_TRUSTED=127.0.0.1,::1
+```
+
+Headers such as `X-Forwarded-For` and `X-Real-IP` stay log-only
+(`claimed_client_ip`); the alert source is the address from the PROXY header, and
+only a trusted peer can set it. A trap is either proxied or direct: a proxied
+trap must not also be published directly, because direct connections to it are
+dropped. If you need both, publish the trap on its proxied port only.

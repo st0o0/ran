@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sort"
 	"strings"
 )
 
@@ -87,7 +88,7 @@ func ParseProxyTrusted(raw string) (prefixes []netip.Prefix, any bool, err error
 // wrap the listener", not as an empty trust set; a non-nil result with an empty
 // list trusts nobody.
 func (c *Config) ProxyTrust() *ProxyTrust {
-	if !c.ProxyProtocol {
+	if !c.ProxyAny() {
 		return nil
 	}
 	return NewProxyTrust(c.ProxyTrusted, c.ProxyTrustAny)
@@ -96,5 +97,85 @@ func (c *Config) ProxyTrust() *ProxyTrust {
 // ProxyTrustedUnused reports a RAN_PROXY_TRUSTED setting that has no effect
 // because RAN_PROXY_PROTOCOL is off.
 func (c *Config) ProxyTrustedUnused() bool {
-	return !c.ProxyProtocol && (c.ProxyTrustAny || len(c.ProxyTrusted) > 0)
+	return !c.ProxyAny() && (c.ProxyTrustAny || len(c.ProxyTrusted) > 0)
+}
+
+// ParseProxyProtocol parses RAN_PROXY_PROTOCOL: on/true/yes/1 (all TCP traps),
+// off/false/no/0 or empty (none), or a comma-separated list of TCP trap names.
+// It returns the sorted, de-duplicated list in traps. A name that is not a valid
+// trap, or that names a UDP trap, is an error naming the entry.
+func ParseProxyProtocol(raw string) (all bool, traps []string, err error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "", "off", "false", "no", "0":
+		return false, nil, nil
+	case "on", "true", "yes", "1":
+		return true, nil, nil
+	}
+	seen := make(map[string]bool)
+	for _, name := range strings.Split(v, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if UDPTraps[name] {
+			return false, nil, fmt.Errorf("RAN_PROXY_PROTOCOL: %q is a UDP trap; UDP traps cannot use PROXY protocol, remove it from the list", name)
+		}
+		if !ValidTraps[name] {
+			return false, nil, fmt.Errorf("RAN_PROXY_PROTOCOL: unknown trap %q; use on, off or a comma-separated list of TCP traps (valid: %s)", name, strings.Join(ValidTrapNames(), ", "))
+		}
+		if !seen[name] {
+			seen[name] = true
+			traps = append(traps, name)
+		}
+	}
+	if len(traps) == 0 {
+		return false, nil, nil
+	}
+	sort.Strings(traps)
+	return false, traps, nil
+}
+
+// ProxyProtocolFor reports whether the named trap requires a PROXY header from a
+// trusted peer. UDP traps never do.
+func (c *Config) ProxyProtocolFor(name string) bool {
+	if UDPTraps[name] {
+		return false
+	}
+	return c.ProxyProtocol || c.ProxyTraps[name]
+}
+
+// ProxyAny reports whether at least one trap uses PROXY protocol.
+func (c *Config) ProxyAny() bool {
+	return c.ProxyProtocol || len(c.ProxyTraps) > 0
+}
+
+// ProxyTrapNames returns the enabled traps that expect a PROXY header, in
+// RAN_TRAPS order.
+func (c *Config) ProxyTrapNames() []string {
+	var out []string
+	for _, name := range c.Traps {
+		if c.ProxyProtocolFor(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// ProxyTrustFor returns the trust set for the named trap's listener, or nil when
+// that trap does not use PROXY protocol (do not wrap the listener).
+func (c *Config) ProxyTrustFor(name string) *ProxyTrust {
+	if !c.ProxyProtocolFor(name) {
+		return nil
+	}
+	return NewProxyTrust(c.ProxyTrusted, c.ProxyTrustAny)
+}
+
+// FormatPrefixes renders prefixes as a comma-separated string for logs.
+func FormatPrefixes(prefixes []netip.Prefix) string {
+	parts := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		parts[i] = p.String()
+	}
+	return strings.Join(parts, ",")
 }

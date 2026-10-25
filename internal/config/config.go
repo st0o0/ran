@@ -136,7 +136,14 @@ type Config struct {
 
 	PerProto map[string]ProtoConfig
 
+	// ProxyProtocol is RAN_PROXY_PROTOCOL=on: every TCP trap requires a PROXY
+	// header. ProxyTraps holds the traps named by a list value. Use
+	// ProxyProtocolFor to decide per trap.
 	ProxyProtocol bool
+	ProxyTraps    map[string]bool
+	// ProxyNotEnabled lists traps named in RAN_PROXY_PROTOCOL that are not in
+	// RAN_TRAPS (accepted, reported as a startup warning).
+	ProxyNotEnabled []string
 	// ProxyTrusted lists the peers allowed to send PROXY headers and
 	// ProxyTrustAny is the explicit "any" (RAN_PROXY_TRUSTED).
 	ProxyTrusted  []netip.Prefix
@@ -394,7 +401,6 @@ func Load(getenv func(string) string) (*Config, error) {
 		AuthDelay:             e.durationMin0("RAN_AUTH_DELAY", 0),
 		SSHTarpit:             e.boolean("RAN_SSH_TARPIT", false),
 		SSHTarpitDuration:     e.durationMin0("RAN_SSH_TARPIT_DURATION", 30*time.Second),
-		ProxyProtocol:         e.boolean("RAN_PROXY_PROTOCOL", false),
 		CrowdSec:              e.boolean("RAN_CROWDSEC", false),
 		CrowdSecURL:           strings.TrimRight(strings.TrimSpace(e.str("RAN_CROWDSEC_URL", "")), "/"),
 		CrowdSecMachineID:     e.str("RAN_CROWDSEC_MACHINE_ID", ""),
@@ -425,8 +431,19 @@ func Load(getenv func(string) string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.ProxyProtocol && !c.ProxyTrustAny && len(c.ProxyTrusted) == 0 {
-		return nil, errors.New("RAN_PROXY_PROTOCOL=on requires RAN_PROXY_TRUSTED, the IP addresses or CIDR ranges of the proxies allowed to send PROXY headers (for example 10.0.0.0/8); set it to \"any\" to trust every peer, which lets any host that reaches the port forge the source address")
+	proxyAll, proxyTraps, err := ParseProxyProtocol(getenv("RAN_PROXY_PROTOCOL"))
+	if err != nil {
+		return nil, err
+	}
+	c.ProxyProtocol = proxyAll
+	if len(proxyTraps) > 0 {
+		c.ProxyTraps = make(map[string]bool, len(proxyTraps))
+		for _, name := range proxyTraps {
+			c.ProxyTraps[name] = true
+		}
+	}
+	if c.ProxyAny() && !c.ProxyTrustAny && len(c.ProxyTrusted) == 0 {
+		return nil, errors.New("RAN_PROXY_PROTOCOL (on, or a list of traps) requires RAN_PROXY_TRUSTED, the IP addresses or CIDR ranges of the proxies allowed to send PROXY headers (for example 10.0.0.0/8); set it to \"any\" to trust every peer, which lets any host that reaches the port forge the source address")
 	}
 	for _, name := range RemovedEnvVars {
 		if strings.TrimSpace(getenv(name)) != "" {
@@ -454,6 +471,12 @@ func Load(getenv func(string) string) (*Config, error) {
 
 	if len(c.Traps) == 0 {
 		return nil, fmt.Errorf("at least one trap must be enabled; set RAN_TRAPS to a comma-separated list such as ssh,http,ftp (valid: %s)", strings.Join(ValidTrapNames(), ", "))
+	}
+
+	for _, name := range proxyTraps {
+		if !slices.Contains(c.Traps, name) {
+			c.ProxyNotEnabled = append(c.ProxyNotEnabled, name)
+		}
 	}
 
 	if path := strings.TrimSpace(getenv("RAN_HTTP_FIXTURES")); path != "" && (slices.Contains(c.Traps, "http") || slices.Contains(c.Traps, "https")) {

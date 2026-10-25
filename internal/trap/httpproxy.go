@@ -44,7 +44,7 @@ func NewHTTPProxy(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, l
 
 func (t *HTTPProxyTrap) Start(ctx context.Context) error {
 	addrs := t.cfg.TrapAddrs("httpproxy")
-	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyTrust(), t.logger, t.metrics, "httpproxy")
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyTrustFor("httpproxy"), t.logger, t.metrics, "httpproxy")
 	if err != nil {
 		return fmt.Errorf("httpproxy listen: %w", err)
 	}

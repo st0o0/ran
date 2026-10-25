@@ -309,8 +309,8 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 | `RAN_FINGERPRINT` | `seeded` | Version strings the traps present (SSH, MySQL, HTTP, SMTP, Elasticsearch): `seeded` picks plausible values from built-in sets with a persisted seed, `fixed` keeps the fixed values of earlier releases (see [Banner profiles](#banner-profiles)). Any other value is a configuration error |
 | `RAN_FINGERPRINT_SEED_PATH` | `/data/fingerprint_seed` | File that persists the 32 byte seed (hex), written atomically with mode `0600` on first start if the directory is writable. Otherwise (or if the file is unreadable, corrupt or short) `ran` logs a warning and uses an ephemeral seed, so the banners change on every restart; this is not fatal. Unused with `RAN_FINGERPRINT=fixed` |
 | `RAN_HTTP_FIXTURES` | | Path of a JSON file with operator fixtures for the `http` and `https` traps (see [HTTP fixtures](#http-fixtures)); read once at startup and validated by `ran check-config`. Unset: only the built-in fixtures |
-| `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)); requires `RAN_PROXY_TRUSTED` |
-| `RAN_PROXY_TRUSTED` | | Peers allowed to send PROXY headers: comma-separated IPs and CIDRs (IPv4/IPv6, same format as `RAN_IGNORE_IPS`, at most 1024 entries), for example `10.0.0.0/8,2001:db8::/32`, or the single value `any`. Required (startup fails without it) when `RAN_PROXY_PROTOCOL=on`; `any` trusts every peer and logs a warning. With the protocol off the value is ignored with a warning. See [PROXY protocol trust](#proxy-protocol-trust) |
+| `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on TCP connections: `on` (every TCP trap), `off`, or a comma-separated list of TCP trap names such as `http,https` (only those traps; all others accept direct connections). An unknown name or a UDP trap is a startup error, a name that is not in `RAN_TRAPS` only logs a warning. See [Behind a reverse proxy](#behind-a-reverse-proxy) and [Threat model](#threat-model); requires `RAN_PROXY_TRUSTED` |
+| `RAN_PROXY_TRUSTED` | | Peers allowed to send PROXY headers: comma-separated IPs and CIDRs (IPv4/IPv6, same format as `RAN_IGNORE_IPS`, at most 1024 entries), for example `10.0.0.0/8,2001:db8::/32`, or the single value `any`. Required (startup fails without it) when `RAN_PROXY_PROTOCOL` is `on` or a trap list; `any` trusts every peer and logs a warning. With the protocol off the value is ignored with a warning. See [PROXY protocol trust](#proxy-protocol-trust) |
 | `RAN_<PROTO>_MAX_AUTH_RETRIES` | | Per-trap override of `RAN_MAX_AUTH_RETRIES` |
 | `RAN_<PROTO>_AUTH_DELAY` | | Per-trap override of `RAN_AUTH_DELAY` |
 | `RAN_<PROTO>_SESSION_TIMEOUT` | | Per-trap override of `RAN_SESSION_TIMEOUT` |
@@ -752,6 +752,60 @@ a listener that is isolated by a firewall so that only the proxy can connect.
 
 </details>
 
+#### Behind a reverse proxy
+
+A host often mixes traps that face the internet directly (`ssh`, `vnc`, `rdp`, ...)
+with one trap that sits behind a reverse proxy (usually `http` or `https`).
+`RAN_PROXY_PROTOCOL` takes a list of trap names for this case, so only the
+proxied traps require a PROXY header:
+
+```bash
+RAN_TRAPS=ssh,vnc,http
+RAN_PROXY_PROTOCOL=http
+RAN_PROXY_TRUSTED=10.0.0.0/8
+```
+
+Here `ssh` and `vnc` accept direct connections as before, while `http` accepts
+only connections from the listed proxy peers and takes the client address from
+the PROXY header. Connections from any other peer to `http` are dropped before the
+header is read. `RAN_PROXY_PROTOCOL=on` still means every TCP trap; `off` or an
+empty value means none. Names are case-insensitive and may be separated by
+spaces. UDP traps and unknown names fail startup; a name that is not in
+`RAN_TRAPS` only logs a warning. `RAN_PROXY_TRUSTED` is mandatory as soon as one
+trap uses PROXY protocol and is shared by all of them, so keep it narrow. The
+startup log and `ran check-config` print the traps that expect a PROXY header and
+the trusted peers; check them after every change, because a typo in the list
+would otherwise leave a trap without PROXY protocol.
+
+**Caddy.** Tell Caddy to send a PROXY v2 header in the upstream transport of the
+honeypot route:
+
+```caddyfile
+honeypot.example.com {
+	reverse_proxy ran:8081 {
+		transport http {
+			proxy_protocol v2
+		}
+	}
+}
+```
+
+Use the address of the `http` trap as the upstream and put the address Caddy
+connects from in `RAN_PROXY_TRUSTED`.
+
+**Shared network namespace.** When the proxy and ran share one network namespace
+(for example containers in one pod, or `network_mode: service:...`), ran sees the
+proxy as loopback. Trust both loopback addresses:
+
+```bash
+RAN_PROXY_TRUSTED=127.0.0.1,::1
+```
+
+Headers such as `X-Forwarded-For` and `X-Real-IP` stay log-only
+(`claimed_client_ip`); the alert source is the address from the PROXY header, and
+only a trusted peer can set it. A trap is either proxied or direct: a proxied
+trap must not also be published directly, because direct connections to it are
+dropped. If you need both, publish the trap on its proxied port only.
 #### Connecting rán to CrowdSec
 
 Register the machine before starting rán:

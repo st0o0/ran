@@ -55,7 +55,7 @@ func NewElasticsearch(cfg *config.Config, logger *slog.Logger, m *metrics.Metric
 
 func (t *ElasticsearchTrap) Start(ctx context.Context) error {
 	addrs := t.cfg.TrapAddrs("elasticsearch")
-	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyTrust(), t.logger, t.metrics, "elasticsearch")
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyTrustFor("elasticsearch"), t.logger, t.metrics, "elasticsearch")
 	if err != nil {
 		return fmt.Errorf("elasticsearch listen: %w", err)
 	}

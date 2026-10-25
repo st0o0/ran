@@ -37,13 +37,16 @@ func logProxyTrust(logger *slog.Logger, cfg *config.Config) {
 	switch {
 	case cfg.ProxyTrustedUnused():
 		logger.Warn("RAN_PROXY_TRUSTED is set but RAN_PROXY_PROTOCOL is off; the list is ignored")
-	case cfg.ProxyProtocol && cfg.ProxyTrustAny:
-		logger.Warn("RAN_PROXY_TRUSTED=any: every peer may send PROXY headers, so any host that reaches a port can forge the source address; list your proxies instead")
-	case cfg.ProxyProtocol:
-		logger.Info("PROXY protocol active; only listed peers may send headers", "trusted_ranges", len(cfg.ProxyTrusted))
+	case cfg.ProxyAny() && cfg.ProxyTrustAny:
+		logger.Warn("RAN_PROXY_TRUSTED=any: every peer may send PROXY headers, so any host that reaches a port can forge the source address; list your proxies instead", "proxied_traps", cfg.ProxyTrapNames())
+	case cfg.ProxyAny():
+		logger.Info("PROXY protocol active; only listed peers may send headers", "proxied_traps", cfg.ProxyTrapNames(), "trusted_ranges", len(cfg.ProxyTrusted), "trusted_peers", config.FormatPrefixes(cfg.ProxyTrusted))
 		for _, p := range config.WideIgnoreRanges(cfg.ProxyTrusted) {
 			logger.Warn("RAN_PROXY_TRUSTED contains a very wide range; any peer in it may forge the source address", "range", p.String())
 		}
+	}
+	for _, name := range cfg.ProxyNotEnabled {
+		logger.Warn("RAN_PROXY_PROTOCOL names a trap that is not in RAN_TRAPS; the entry has no effect", "trap", name)
 	}
 }
 

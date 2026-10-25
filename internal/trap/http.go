@@ -147,7 +147,7 @@ func (t *HTTPTrap) connState(conn net.Conn, state http.ConnState) {
 
 func (t *HTTPTrap) Start(ctx context.Context) error {
 	addrs := t.cfg.TrapAddrs(t.proto)
-	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyTrust(), t.logger, t.metrics, t.proto)
+	ln, err := ListenMultiTCP(ctx, addrs, t.cfg.ProxyTrustFor(t.proto), t.logger, t.metrics, t.proto)
 	if err != nil {
 		return fmt.Errorf("%s listen: %w", t.proto, err)
 	}
