@@ -19,12 +19,8 @@ import (
 
 const defaultOut = "docs/traps.generated.md"
 
-// udpTraps lists the traps that speak UDP; every other trap is TCP. UDP traps
-// never raise CrowdSec alerts.
-var udpTraps = map[string]bool{"dns": true, "snmp": true, "sip": true, "ntp": true}
-
 func transport(name string) string {
-	if udpTraps[name] {
+	if config.UDPTraps[name] {
 		return "UDP"
 	}
 	return "TCP"

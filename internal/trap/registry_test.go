@@ -100,3 +100,35 @@ func TestSetOutcome(t *testing.T) {
 		t.Error("isTimeout misclassified")
 	}
 }
+
+// config.UDPTraps feeds the generated documentation; it must name exactly the
+// traps that are built on UDPTrap.
+func TestUDPTrapSetMatchesImplementation(t *testing.T) {
+	env := map[string]string{
+		"RAN_TRAPS":           "ssh,catchall,banner",
+		"RAN_CATCHALL_ADDR":   "127.0.0.1:19998",
+		"RAN_BANNER_SERVICES": "19999=custom:hello",
+	}
+	cfg, err := config.Load(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New(prometheus.NewRegistry(), "test")
+	limiter := NewLimiter(10, 10)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	for name, factory := range Registry {
+		tr, err := factory(cfg, logger, m, limiter, alert.NoopAlerter{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		_, isUDP := tr.(*UDPTrap)
+		if isUDP != config.UDPTraps[name] {
+			t.Errorf("trap %s: UDPTrap implementation = %v, config.UDPTraps = %v", name, isUDP, config.UDPTraps[name])
+		}
+	}
+	for name := range config.UDPTraps {
+		if _, ok := Registry[name]; !ok {
+			t.Errorf("config.UDPTraps names unknown trap %s", name)
+		}
+	}
+}

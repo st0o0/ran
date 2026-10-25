@@ -65,6 +65,11 @@ var AddresslessTraps = map[string]string{
 	"banner":   "RAN_BANNER_SERVICES",
 }
 
+// UDPTraps are the traps that speak UDP; every other trap is TCP. UDP traps never
+// raise alerts (see AGENTS.md). trap.TestUDPTrapSetMatchesImplementation keeps this
+// set in line with the trap implementations.
+var UDPTraps = map[string]bool{"dns": true, "snmp": true, "sip": true, "ntp": true}
+
 var ValidTraps = func() map[string]bool {
 	m := make(map[string]bool, len(DefaultPorts)+len(AddresslessTraps))
 	for k := range DefaultPorts {
