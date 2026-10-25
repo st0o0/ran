@@ -5,6 +5,12 @@
 |---|---|---|
 | `RAN_METRICS_ADDR` | `:9550` | Prometheus metrics listen address (a single `host:port`; also serves `/healthz`) |
 
+An empty value means the default `:9550`; there is no setting that switches the metrics
+server off (the health check uses the same listener). `/metrics` and
+`/healthz` are unauthenticated: publish the port on loopback only
+(`127.0.0.1:9550:9550`). A scraper in another container cannot reach the host loopback;
+put it on the same Docker network and scrape `ran:9550`.
+
 Exposed metrics, besides `ran_build_info{version,goversion}` and the standard Go
 runtime and process collectors:
 

@@ -2,10 +2,10 @@
 import { computed, onMounted, ref } from 'vue'
 import settingsJson from '../../../data/settings.generated.json'
 import type { BuilderState, Format, Register, ScenarioId, SettingDef } from './types'
-import { defaultState, effectiveEnv, envGet, findTrap, isActive, setProxied, setTrap, setValue, defaultOf } from './state'
+import { defaultState, effectiveEnv, envGet, findTrap, isActive, isTruthy, setProxied, setTrap, setValue, defaultOf } from './state'
 import { evaluate, hints } from './rules'
 import { serialize, importEnv } from './serializer'
-import { decodeState, encodeState } from './hash'
+import { SHARE_PROBLEM_TEXT, decodeShare, encodeState } from './hash'
 import { SCENARIOS, applyScenario, scenarioHints } from './scenarios'
 import { settingGroups, trapFields, trapGroups } from './groups'
 
@@ -17,6 +17,7 @@ const search = ref('')
 const importText = ref('')
 const importMsg = ref('')
 const copied = ref('')
+const shareMsg = ref('')
 
 const formats: Array<{ id: Format; label: string }> = [
   { id: 'env', label: 'Env file' },
@@ -30,6 +31,7 @@ const sGroups = settingGroups(reg)
 const env = computed(() => effectiveEnv(state.value))
 const issues = computed(() => evaluate(reg, state.value))
 const advice = computed(() => [...scenarioHints(reg, state.value), ...hints(reg, state.value)])
+const hasErrors = computed(() => issues.value.some((i) => i.level === 'error'))
 const output = computed(() => serialize(reg, state.value, format.value))
 const proxyChoices = computed(() =>
   state.value.traps.filter((t) => findTrap(reg, t)?.transport === 'TCP')
@@ -63,9 +65,15 @@ function commit(next: BuilderState) {
 
 onMounted(() => {
   try {
-    if (location.hash.length > 1) state.value = decodeState(location.hash)
+    if (location.hash.length > 1) {
+      const r = decodeShare(location.hash, reg)
+      state.value = r.state
+      if (r.problem) shareMsg.value = SHARE_PROBLEM_TEXT
+      else if (r.dropped.length) shareMsg.value = `Share link: ignored unknown entries (${r.dropped.join(', ')}).`
+    }
   } catch {
     state.value = defaultState()
+    shareMsg.value = SHARE_PROBLEM_TEXT
   }
 })
 
@@ -88,10 +96,11 @@ function onBool(key: string, ev: Event) {
   commit(setValue(reg, state.value, key, (ev.target as HTMLInputElement).checked ? 'on' : 'off'))
 }
 function isOn(def: SettingDef): boolean {
-  return envGet(reg, env.value, def.name).toLowerCase() === 'on'
+  return isTruthy(envGet(reg, env.value, def.name))
 }
 function reset() {
   commit(defaultState())
+  shareMsg.value = ''
   importMsg.value = ''
 }
 
@@ -124,6 +133,7 @@ function doImport() {
 
 <template>
   <div class="cb">
+    <p v-if="shareMsg" class="cb-banner" role="alert">{{ shareMsg }}</p>
     <section class="cb-sec">
       <h2>1. Scenario</h2>
       <div class="cb-scenarios" role="radiogroup" aria-label="Scenario">
@@ -239,6 +249,7 @@ function doImport() {
 
     <section class="cb-sec">
       <h2>5. Output</h2>
+      <p v-if="hasErrors" class="cb-banner" role="alert">Output has errors: fix the issues above.</p>
       <div class="cb-tabs" role="tablist">
         <button
           v-for="f in formats"
@@ -279,6 +290,7 @@ function doImport() {
 .cb h2 { margin-top: 32px; }
 .cb h3 { margin: 16px 0 8px; font-size: 1rem; }
 .cb-note { font-weight: 400; color: var(--vp-c-text-2); margin-left: 6px; }
+.cb-banner { margin: 8px 0; padding: 8px 12px; border-radius: 8px; border-left: 4px solid var(--vp-c-danger-1); background: var(--vp-c-danger-soft); }
 .cb-muted { color: var(--vp-c-text-2); font-size: 0.875rem; }
 .cb-ok { color: var(--vp-c-green-1); }
 .cb-scenarios, .cb-traps, .cb-fields { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }

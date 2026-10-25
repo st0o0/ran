@@ -6,6 +6,17 @@ import {
   type Register
 } from './types'
 import { crowdsecOn, effectiveEnv, envGet, findTrap, isTruthy, resolveSetting, splitList } from './state'
+import { MAX_IGNORE_ENTRIES, parseIgnoreList } from './netaddr'
+
+/** Spellings of the Go boolean reader (envReader.boolean), compared case-insensitively. */
+export const BOOL_ON = ['on', 'true', 'yes', '1']
+export const BOOL_OFF = ['off', 'false', 'no', '0']
+export const CLASSES = ['probe', 'attack', 'scan']
+/** config.MaxCooldown: upper bound of RAN_ALERT_COOLDOWN and RAN_REPEAT_COOLDOWN. */
+export const MAX_COOLDOWN = '8760h'
+const MAX_COOLDOWN_NS = BigInt(8760) * BigInt(3600) * BigInt(1000000000)
+const INT64_MAX = BigInt('9223372036854775807')
+const INT64_MIN = BigInt('-9223372036854775808')
 
 export interface ParsedAddr {
   host: string
@@ -77,9 +88,70 @@ export function durationMs(raw: string): number | null {
   return total
 }
 
+const UNIT_NS: Record<string, bigint> = {
+  ns: BigInt(1),
+  us: BigInt(1000),
+  ms: BigInt(1000000),
+  s: BigInt(1000000000),
+  m: BigInt(60000000000),
+  h: BigInt(3600000000000)
+}
+UNIT_NS[`${MICRO}s`] = BigInt(1000)
+UNIT_NS[`${MU}s`] = BigInt(1000)
+
+/** Exact nanoseconds of a valid duration (fractions truncated), or null when it is not valid. */
+export function durationNs(raw: string): bigint | null {
+  const v = raw.trim()
+  if (/^\+?0$/.test(v)) return BigInt(0)
+  if (!DURATION.test(v)) return null
+  let total = BigInt(0)
+  for (const m of v.matchAll(DURATION_PART)) {
+    const [whole, frac = ''] = m[1].split('.')
+    const unit = UNIT_NS[m[2]]
+    total += BigInt(whole || '0') * unit
+    if (frac !== '') total += (BigInt(frac) * unit) / BigInt(10) ** BigInt(frac.length)
+  }
+  return total
+}
+
 /** Durations that Load requires to be greater than zero (durationPositive). */
 function mustBePositive(def: { name: string; family?: string }): boolean {
   return def.name === 'RAN_SESSION_TIMEOUT' || def.name === 'RAN_REPEAT_COOLDOWN' || def.family === 'SESSION_TIMEOUT'
+}
+
+function hasCooldownCap(def: { name: string }): boolean {
+  return def.name === 'RAN_ALERT_COOLDOWN' || def.name === 'RAN_REPEAT_COOLDOWN'
+}
+
+const IGNORE_HELP = 'use IP addresses or CIDR ranges such as 8.8.8.8,1.1.1.0/24,2606:4700:4700::/48'
+
+/** RAN_IGNORE_IPS and RAN_PROXY_TRUSTED (the latter also takes a lone "any"). */
+function checkPrefixList(key: string, raw: string, out: Issue[]): void {
+  if (key === 'RAN_PROXY_TRUSTED' && raw.trim() === 'any') return
+  const r = parseIgnoreList(raw)
+  if ('count' in r) return
+  const tail = key === 'RAN_PROXY_TRUSTED' ? ` (or the single value "any" to trust every peer)` : ''
+  const message = r.bad === undefined
+    ? `${key} has more than ${MAX_IGNORE_ENTRIES} distinct entries; shorten the list or use wider CIDR ranges${tail}.`
+    : `${key} has an invalid entry "${r.bad}" (${r.error}); ${IGNORE_HELP}${tail}.`
+  out.push({ id: `bad-list-${key}`, level: 'error', message })
+}
+
+/** RAN_BAN_ON: a non-empty list of known classes, comma separated like Go. */
+function checkClasses(key: string, raw: string, out: Issue[]): void {
+  let n = 0
+  for (const part of raw.split(',')) {
+    const c = part.trim().toLowerCase()
+    if (c === '') continue
+    if (!CLASSES.includes(c)) {
+      out.push({ id: `bad-class-${key}`, level: 'error', message: `${key} contains invalid class "${c}" (valid: probe, attack, scan); use a comma-separated list such as attack,scan.` })
+      return
+    }
+    n++
+  }
+  if (n === 0) {
+    out.push({ id: `bad-class-${key}`, level: 'error', message: `${key} must list at least one of probe, attack, scan, got "${raw.trim()}"; use a comma-separated list such as attack,scan.` })
+  }
 }
 
 function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): void {
@@ -89,13 +161,25 @@ function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): 
     const { def } = hit
     const v = value.trim()
     if (v === '') continue
-    if (def.kind === 'int') {
+    if (key === 'RAN_IGNORE_IPS' || key === 'RAN_PROXY_TRUSTED') {
+      checkPrefixList(key, v, out)
+    } else if (key === 'RAN_BAN_ON') {
+      checkClasses(key, v, out)
+    } else if (def.kind === 'bool') {
+      const l = v.toLowerCase()
+      if (!BOOL_ON.includes(l) && !BOOL_OFF.includes(l)) {
+        out.push({ id: `bad-bool-${key}`, level: 'error', message: `${key} must be on or off, got "${v}"; use on, off, true, false, yes, no, 1 or 0.` })
+      }
+    } else if (def.kind === 'int') {
       const min = def.min ?? 0
-      const n = Number(v)
-      if (!/^[+-]?\d+$/.test(v) || n < min) {
-        out.push({ id: `bad-int-${key}`, level: 'error', message: `${key} must be a whole number >= ${min}, got "${v}".` })
-      } else if (def.max !== undefined && n > def.max) {
-        out.push({ id: `bad-int-${key}`, level: 'error', message: `${key} must be a whole number <= ${def.max}, got "${v}".` })
+      const bad = (message: string) => out.push({ id: `bad-int-${key}`, level: 'error', message })
+      if (!/^[+-]?\d+$/.test(v)) {
+        bad(`${key} must be a whole number >= ${min}, got "${v}".`)
+      } else {
+        const n = BigInt(v)
+        if (n < INT64_MIN || n > INT64_MAX) bad(`${key} is out of range for a 64-bit whole number, got "${v}".`)
+        else if (n < BigInt(min)) bad(`${key} must be a whole number >= ${min}, got "${v}".`)
+        else if (def.max !== undefined && n > BigInt(def.max)) bad(`${key} must be a whole number <= ${def.max}, got "${v}".`)
       }
     } else if (def.kind === 'duration') {
       const ms = durationMs(v)
@@ -103,6 +187,8 @@ function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): 
         out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be a duration such as 30s or 1h, got "${v}".` })
       } else if (ms <= 0 && mustBePositive(def)) {
         out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be greater than zero, got "${v}".` })
+      } else if (hasCooldownCap(def) && (durationNs(v) ?? BigInt(0)) > MAX_COOLDOWN_NS) {
+        out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must not exceed ${MAX_COOLDOWN}, got "${v}"; use a value up to ${MAX_COOLDOWN}.` })
       }
     } else if (def.kind === 'enum' && def.enum && !def.enum.includes(v.toLowerCase())) {
       out.push({ id: `bad-enum-${key}`, level: 'error', message: `${key} must be one of ${def.enum.join(', ')}, got "${v}".` })
@@ -132,8 +218,10 @@ export function evaluateEnv(reg: Register, env: Record<string, string>): Issue[]
 
   // PROXY protocol
   const proxyRaw = get('RAN_PROXY_PROTOCOL').trim().toLowerCase()
-  const proxyAll = proxyRaw === 'on'
-  const proxyList = proxyAll || !isTruthy(proxyRaw) ? [] : splitList(proxyRaw)
+  const proxyAll = BOOL_ON.includes(proxyRaw)
+  const proxyList = proxyAll || BOOL_OFF.includes(proxyRaw) || proxyRaw === ''
+    ? []
+    : proxyRaw.split(',').map((p) => p.trim()).filter((p) => p !== '')
   const proxyActive = proxyAll || proxyList.length > 0
   for (const name of proxyList) {
     const trap = findTrap(reg, name)
@@ -146,10 +234,13 @@ export function evaluateEnv(reg: Register, env: Record<string, string>): Issue[]
     }
   }
   const trusted = get('RAN_PROXY_TRUSTED').trim()
-  if (proxyActive && trusted === '') {
+  const trustedParsed = trusted === 'any' ? { count: 1 } : parseIgnoreList(trusted)
+  // An unparsable list is reported by checkValues; here only "empty" matters.
+  const trustedEmpty = 'count' in trustedParsed && trustedParsed.count === 0
+  if (proxyActive && trustedEmpty) {
     out.push({ id: 'proxy-no-trusted', level: 'error', message: 'RAN_PROXY_TRUSTED is required when PROXY protocol is used; list the proxy addresses or ranges.' })
   }
-  if (!proxyActive && trusted !== '') {
+  if (!proxyActive && !trustedEmpty) {
     out.push({ id: 'trusted-without-proxy', level: 'warning', message: 'RAN_PROXY_TRUSTED is set but no trap uses PROXY protocol, so it has no effect.' })
   }
 
@@ -167,11 +258,11 @@ export function evaluateEnv(reg: Register, env: Record<string, string>): Issue[]
     out.push({ id: 'repeat-below-cooldown', level: 'warning', message: 'RAN_REPEAT_COOLDOWN is smaller than RAN_ALERT_COOLDOWN; the repeat cooldown is meant to be longer than the base cooldown.' })
   }
 
-  // UDP rate
-  const burst = Number(get('RAN_UDP_RATE_BURST'))
-  const rate = Number(get('RAN_UDP_RATE_PER_SOURCE'))
-  if (Number.isFinite(burst) && Number.isFinite(rate) && burst < rate) {
-    out.push({ id: 'udp-burst-below-rate', level: 'error', message: `RAN_UDP_RATE_BURST (${burst}) must not be smaller than RAN_UDP_RATE_PER_SOURCE (${rate}).` })
+  // UDP rate (exact comparison: values may exceed 2^53)
+  const burstText = get('RAN_UDP_RATE_BURST').trim()
+  const rateText = get('RAN_UDP_RATE_PER_SOURCE').trim()
+  if (/^[+-]?\d+$/.test(burstText) && /^[+-]?\d+$/.test(rateText) && BigInt(burstText) < BigInt(rateText)) {
+    out.push({ id: 'udp-burst-below-rate', level: 'error', message: `RAN_UDP_RATE_BURST (${BigInt(burstText)}) must not be smaller than RAN_UDP_RATE_PER_SOURCE (${BigInt(rateText)}).` })
   }
 
   // Addressless traps need their address variable
@@ -183,6 +274,9 @@ export function evaluateEnv(reg: Register, env: Record<string, string>): Issue[]
   }
 
   // CrowdSec
+  if (isTruthy(get('RAN_SHUN')) && !crowdsecOn(reg, env)) {
+    out.push({ id: 'shun-without-crowdsec', level: 'warning', message: 'RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert.' })
+  }
   if (crowdsecOn(reg, env)) {
     if (get('RAN_CROWDSEC_URL').trim() === '') {
       out.push({ id: 'crowdsec-no-url', level: 'error', message: 'RAN_CROWDSEC_URL is required when RAN_CROWDSEC is on.' })
@@ -266,7 +360,7 @@ export function hints(reg: Register, state: BuilderState): Hint[] {
       message: 'catchall and banner listen on operator-chosen ports and see unfiltered scan traffic; keep the port set small and watch the log volume.'
     })
   }
-  if (splitList(env.RAN_PROXY_TRUSTED ?? '').some((x) => x.toLowerCase() === 'any')) {
+  if ((env.RAN_PROXY_TRUSTED ?? '').trim() === 'any') {
     out.push({
       id: 'trusted-any',
       message: 'RAN_PROXY_TRUSTED=any lets every peer send a PROXY header and so spoof the client address. Use a narrow list plus a firewall.'

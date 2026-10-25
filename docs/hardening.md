@@ -60,7 +60,7 @@ volumes:
   ran-data:
 ```
 
-Sizing: memory is dominated by the tracking maps (see *Memory sizing* above) and
+Sizing: memory is dominated by the tracking maps (see *Memory sizing* on the [CrowdSec](/crowdsec) page) and
 by concurrent sessions (`RAN_MAX_SESSIONS`). Set `GOMEMLIMIT` to about 80
 percent of the container limit.
 

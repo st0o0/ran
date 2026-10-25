@@ -1,91 +1,111 @@
 # Getting started
 
-Single-binary honeypot written in Go. Emulates 40 network services (SSH, RDP,
-Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
-pushes classified alerts to CrowdSec, whose profiles decide the bans. No external
-dependencies, ~8 MB scratch image.
+rán is a single-binary honeypot. It emulates 40 network services, captures
+credentials and payloads as structured JSON, and can push classified alerts to
+CrowdSec, whose profiles decide the bans. This page takes you from nothing to a
+running sensor you have checked yourself. For the design and the threat model see
+[Hardening](/hardening); for every setting see [Configuration](/configuration).
 
-Named after the Norse goddess who catches sailors in her net.
+## Prerequisites
 
-## Example compose file
+- A Linux host with Docker and the Compose plugin. The image is a static binary on
+  `scratch` for `linux/amd64` and `linux/arm64`.
+- Ports you can expose. Each trap listens on a default port; free the ones you
+  want or move them with `RAN_<PROTO>_ADDR` (see below).
+- Optional: a CrowdSec local API (LAPI) and a registered machine, only if you want
+  bans. Without it rán still logs everything and serves metrics.
 
-```yaml
-services:
-  ran:
-    image: ghcr.io/st0o0/ran:latest
-    restart: unless-stopped
-    environment:
-      RAN_TRAPS: ssh,http,ftp,telnet,redis,rdp,smb
-      RAN_CROWDSEC: "on"
-      RAN_CROWDSEC_URL: http://crowdsec:8080
-      RAN_CROWDSEC_MACHINE_ID: ran-honeypot
-      RAN_CROWDSEC_PASSWORD: ${CROWDSEC_PASSWORD}
-    ports:
-      - "2222:2222"   # SSH
-      - "8081:8081"   # HTTP
-      - "21:21"       # FTP
-      - "23:23"       # Telnet
-      - "6379:6379"   # Redis
-      - "3389:3389"   # RDP
-      - "445:445"     # SMB
-      - "9550:9550"   # Prometheus metrics
-```
+## 1. Build your configuration
 
-## Quick start
+Open the [config builder](/builder), pick a scenario, tick the traps and copy the
+`docker-compose.yml`. It writes only values that differ from the default, adds the
+hardening flags (read-only filesystem, no capabilities, non-root user), a `/data`
+volume and publishes metrics on loopback only. Save the output as
+`docker-compose.yml`.
 
-Not sure which settings you need? The [config builder](/builder) turns a
-deployment scenario into an env file, a compose file or a `docker run` line.
+## 2. Validate it
 
-Pick your traps, start the container:
+`check-config` validates an environment without starting any trap. Pass the same
+variables you put in the compose file:
 
 ```bash
-docker run --rm --name ran \
+docker run --rm -e RAN_TRAPS=ssh,http,ftp ghcr.io/st0o0/ran check-config
+```
+
+It prints the problem and how to fix it and exits 0 (valid) or 1 (invalid).
+
+## 3. Run it
+
+```bash
+docker compose up -d
+docker compose logs -f ran
+```
+
+On startup rán logs a `listening` line for each trap. A trap whose port is taken
+logs `trap failed to start` and is skipped while the others keep running.
+
+Without compose, the equivalent single command is below. The `/data` volume keeps
+the SSH host key and the banner seed across restarts; without it both change every
+time the container is recreated.
+
+```bash
+docker run -d --name ran -v ran-data:/data \
   -e RAN_TRAPS=ssh,http,ftp \
-  -p 2222:2222 -p 8081:8081 -p 21:21 -p 9550:9550 \
+  -p 2222:2222 -p 8081:8081 -p 21:21 -p 127.0.0.1:9550:9550 \
   ghcr.io/st0o0/ran:latest
 ```
 
-Watch the logs with `docker logs -f ran`. Prometheus metrics are at `:9550/metrics`.
+## 4. Confirm it works
 
-## How it works
+Touch a trap from another shell and watch the log:
 
-```
-attacker connects ──▶ protocol handshake ──▶ credential / command / payload capture
-        │                       │                            │
-        │                       │                            ▼
-        │                       │                    structured JSON → stdout
-        │                       │                            │
-        ▼                       ▼                            ▼
-   rate limiter           plausible error            CrowdSec LAPI alert
-  (per-IP + global)       (access denied)            (class, no decision)
-                                                           │
-                                                           ▼
-                                                    CrowdSec profile decides,
-                                                  bouncers enforce (Caddy, nginx)
+```bash
+nc localhost 2222            # prints an SSH banner; press Ctrl+C
+curl -i http://localhost:8081/   # answers like a web server
+docker logs ran | tail -n 5  # one JSON line per session
 ```
 
-Each trap emulates just enough protocol to complete the handshake, grab the
-interesting data, and return a plausible error. What is captured depends on the
-protocol: credentials for the login protocols, commands for line protocols such
-as Redis or IMAP, and payload metadata for binary protocols. There is no
-post-login session (no shell for `ssh` or `telnet`) and no filesystem emulation,
-which keeps the attack surface of the honeypot minimal.
+Check the health endpoint and the metrics (both unauthenticated):
+
+```bash
+curl http://127.0.0.1:9550/healthz
+curl -s http://127.0.0.1:9550/metrics | grep ran_connections_total
+```
+
+`ran_connections_total` counts the connection you just made. See
+[Log format](/log-format) and [Metrics](/metrics) for the fields.
+
+## Ports and privileges
+
+SSH defaults to `2222` and HTTP to `8081`, not `22` and `80`, so the container
+works without extra privileges. Docker allows low ports inside containers, so you
+can also set `RAN_SSH_ADDR=:22`. To keep the defaults inside the container and
+expose a classic port on the host, map it: `"22:2222"`. Move your real SSH daemon
+first, or the host port is already taken.
+
+## Metrics are not public
+
+`/metrics` and `/healthz` have no authentication. Publish them on loopback
+(`127.0.0.1:9550:9550`) as the examples do. A scraper on the host reaches that
+address; a scraper in another container does not, because container loopback and
+host loopback differ. Put the scraper on the same Docker network and scrape
+`ran:9550` instead, without publishing the port.
+
+## Banning with CrowdSec
+
+rán does not ban by itself. Pick the *With CrowdSec* scenario in the builder,
+register a machine (`cscli machines add`), install the profile printed by
+`ran crowdsec-profile` and follow [CrowdSec](/crowdsec). The LAPI must be reachable
+at the hostname in `RAN_CROWDSEC_URL` (the builder uses `crowdsec`); the first
+failed login is fatal, see [Troubleshooting](/troubleshooting).
 
 ## Image
-
 
 Registry: `ghcr.io/st0o0/ran`
 Tags: `latest`, `MAJOR.MINOR`, and exact `MAJOR.MINOR.PATCH` per release.
 Architectures: `linux/amd64`, `linux/arm64`.
 
-## Development
+## Next steps
 
-```bash
-go test ./...                                    # tests
-go vet ./... && golangci-lint run                 # lint
-docker run --rm -i hadolint/hadolint < Dockerfile # Dockerfile lint
-docker build -t ran:dev .                         # build
-```
-
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
-Releases and the GHCR image are cut automatically by release-please.
+[Traps](/traps), [Configuration](/configuration), [Hardening](/hardening). To work
+on rán itself, see `CONTRIBUTING.md` in the repository.

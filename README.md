@@ -30,7 +30,11 @@ services:
       - "6379:6379"   # Redis
       - "3389:3389"   # RDP
       - "445:445"     # SMB
-      - "9550:9550"   # Prometheus metrics
+      - "127.0.0.1:9550:9550"   # metrics and /healthz, unauthenticated: loopback only
+    volumes:
+      - ran-data:/data   # SSH host key, HTTPS certificate, fingerprint seed
+volumes:
+  ran-data:
 ```
 
 ## Why rán?
@@ -61,10 +65,12 @@ qeeqbox/honeypots, T-Pot and Beelzebub (facts last checked October 2026).
 Pick your traps, start the container:
 
 ```bash
-docker run --rm --name ran  -e RAN_TRAPS=ssh,http,ftp  -p 2222:2222 -p 8081:8081 -p 21:21 -p 9550:9550  ghcr.io/st0o0/ran:latest
+docker run --rm --name ran -v ran-data:/data \n  -e RAN_TRAPS=ssh,http,ftp \n  -p 2222:2222 -p 8081:8081 -p 21:21 -p 127.0.0.1:9550:9550 \n  ghcr.io/st0o0/ran:latest
 ```
 
-Watch the logs with `docker logs -f ran`. Prometheus metrics are at `:9550/metrics`.
+The `/data` volume keeps the SSH host key and the banner seed across restarts. Watch
+the logs with `docker logs -f ran`; metrics are at `127.0.0.1:9550/metrics` and
+are unauthenticated, so do not publish that port on a public interface.
 The [config builder](https://st0o0.github.io/ran/builder) turns a deployment scenario into an env file, a
 compose file or a `docker run` line, and `ran check-config` validates an
 environment without starting the traps. rán does not ban anything by itself: add
@@ -150,15 +156,9 @@ Full reference at **https://st0o0.github.io/ran/**:
 
 ## Development
 
-```bash
-go test ./...                                    # tests
-go vet ./... && golangci-lint run                 # lint
-docker run --rm -i hadolint/hadolint < Dockerfile # Dockerfile lint
-docker build -t ran:dev .                         # build
-```
-
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
-Releases and the GHCR image are cut automatically by release-please.
+Test, lint and build commands are in [CONTRIBUTING.md](CONTRIBUTING.md). Commits follow
+[Conventional Commits](https://www.conventionalcommits.org/); releases and the GHCR
+image are cut automatically by release-please.
 
 ## Image
 

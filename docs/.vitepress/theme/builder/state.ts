@@ -56,8 +56,16 @@ export function defaultOf(reg: Register, key: string): string {
   return hit.def.default
 }
 
-function sanitize(v: string): string {
-  return v.replace(/[\r\n]+/g, ' ').trim()
+/**
+ * Replaces line breaks and every other control character (including U+0085,
+ * U+2028 and U+2029) with a space, so a value always stays on one line in every
+ * output format.
+ */
+// C0 and C1 controls plus the Unicode line and paragraph separators U+2028 and U+2029.
+const CONTROL = new RegExp('[\u0000-\u001f\u007f-\u009f\u2028\u2029]+', 'g')
+
+export function sanitize(v: string): string {
+  return v.replace(CONTROL, ' ').trim()
 }
 
 export function setTrap(s: BuilderState, name: string, on: boolean): BuilderState {

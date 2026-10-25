@@ -7,7 +7,7 @@ import {
   PASSWORD_PLACEHOLDER,
   SECRET_KEYS
 } from './types'
-import { trapAddrs } from './rules'
+import { BOOL_OFF, BOOL_ON, trapAddrs } from './rules'
 import {
   crowdsecOn,
   defaultState,
@@ -16,7 +16,8 @@ import {
   resolveSetting,
   setValue,
   sortKeys,
-  splitList
+  splitList,
+  usesProxyList
 } from './state'
 
 export const IMAGE = 'ghcr.io/st0o0/ran:latest'
@@ -55,9 +56,11 @@ export function portMappings(reg: Register, state: BuilderState): PortMapping[] 
   const env = effectiveEnv(state)
   const out: PortMapping[] = []
   const seen = new Set<string>()
+  const proxied = usesProxyList(state) ? state.proxied : []
   for (const name of state.traps) {
     const trap = findTrap(reg, name)
-    if (!trap) continue
+    // A proxied trap must not also be published: direct connections to it are dropped.
+    if (!trap || proxied.includes(name)) continue
     const proto = trap.transport === 'UDP' ? 'udp' : 'tcp'
     for (const a of trapAddrs(reg, env, name)) {
       const spec = proto === 'udp' ? `${a.port}:${a.port}/udp` : `${a.port}:${a.port}`
@@ -73,14 +76,71 @@ export function portMappings(reg: Register, state: BuilderState): PortMapping[] 
   return out
 }
 
+const PLAIN_VALUE = /^[A-Za-z0-9_@%+=:,./-]+$/
+
+/**
+ * Quotes one env file value by docker compose .env rules: bare when it only has
+ * safe characters, single quotes (literal, no interpolation) otherwise, and
+ * double quotes with backslash escapes when the value itself holds a single quote.
+ */
+export function envQuote(v: string): string {
+  if (PLAIN_VALUE.test(v)) return v
+  if (!v.includes("'")) return `'${v}'`
+  return '"' + v.replace(/[\\"$]/g, (c) => '\\' + c) + '"'
+}
+
+const ENV_QUOTE_NOTE =
+  'Quoted values follow docker compose .env rules (env_file or --env-file of docker compose). "docker run --env-file" keeps the quotes literally: use the docker run output instead.'
+
 export function toEnvFile(reg: Register, state: BuilderState): Output {
   const { env, notes } = exportEnv(reg, state)
   const lines: string[] = []
+  let quoted = false
   for (const [k, v] of env) {
     if (SECRET_KEYS.includes(k)) lines.push(`# ${PASSWORD_COMMENT}`)
-    lines.push(`${k}=${v}`)
+    const q = envQuote(v)
+    if (q !== v) quoted = true
+    lines.push(`${k}=${q}`)
   }
+  if (quoted) lines.unshift(`# ${ENV_QUOTE_NOTE}`)
   return { text: lines.join('\n') + (lines.length ? '\n' : ''), notes }
+}
+
+/** Comment lines (without the comment marker) about proxied traps and how the proxy reaches ran. */
+export function proxyComment(reg: Register, state: BuilderState): string[] {
+  if (!usesProxyList(state)) return []
+  const env = effectiveEnv(state)
+  const shared = state.scenario === 'shared-namespace'
+  const where = state.proxied
+    .map((t) => {
+      const ports = trapAddrs(reg, env, t).map((a) => a.port)
+      return `${t} (${ports.map((p) => `${shared ? '127.0.0.1' : 'ran'}:${p}`).join(', ')})`
+    })
+    .join(', ')
+  return shared
+    ? [
+        `Proxied traps are not published: ${where}.`,
+        'The proxy shares this network namespace and reaches ran on loopback; it must send a PROXY v2 header.'
+      ]
+    : [
+        `Proxied traps are not published: ${where}.`,
+        'The proxy reaches ran at ran:<port> inside this compose network (same network, service name ran) and must send a PROXY v2 header.'
+      ]
+}
+
+/** Comment lines about the CrowdSec LAPI; empty when CrowdSec is off. */
+export function crowdsecComment(reg: Register, state: BuilderState, format: 'compose' | 'run'): string[] {
+  const env = effectiveEnv(state)
+  if (!crowdsecOn(reg, env)) return []
+  const url = env.RAN_CROWDSEC_URL || '<RAN_CROWDSEC_URL>'
+  return [
+    `CrowdSec: a LAPI must be reachable under the hostname in RAN_CROWDSEC_URL (${url}) on the same Docker network as this container.`,
+    format === 'run'
+      ? 'Put both containers on one network and add --network <name> to this command and to the LAPI container.'
+      : 'Run the LAPI as another service of this file or attach both to one shared network.',
+    'The first failed LAPI login is fatal: ran exits at startup if the LAPI is unreachable or the credentials are wrong.',
+    PASSWORD_COMMENT
+  ]
 }
 
 export function toCompose(reg: Register, state: BuilderState): Output {
@@ -88,6 +148,7 @@ export function toCompose(reg: Register, state: BuilderState): Output {
   const ports = portMappings(reg, state)
   const l: string[] = []
   l.push('services:')
+  for (const c of [...crowdsecComment(reg, state, 'compose'), ...proxyComment(reg, state)]) l.push(`  # ${c}`)
   l.push('  ran:')
   l.push(`    image: ${IMAGE}`)
   l.push('    restart: unless-stopped')
@@ -100,7 +161,8 @@ export function toCompose(reg: Register, state: BuilderState): Output {
     l.push('    environment:')
     for (const [k, v] of env) {
       if (SECRET_KEYS.includes(k)) l.push(`      # ${PASSWORD_COMMENT}`)
-      l.push(`      ${k}: ${JSON.stringify(v)}`)
+      // Compose interpolates $ in values; $$ is a literal dollar sign.
+      l.push(`      ${k}: ${JSON.stringify(v.split('$').join('$$'))}`)
     }
   }
   if (ports.length > 0) {
@@ -124,6 +186,7 @@ export function shellQuote(v: string): string {
 export function toDockerRun(reg: Register, state: BuilderState): Output {
   const { env, notes } = exportEnv(reg, state)
   const ports = portMappings(reg, state)
+  const comments = [...crowdsecComment(reg, state, 'run'), ...proxyComment(reg, state)]
   const parts: string[] = [
     'docker run -d --name ran',
     '--restart unless-stopped',
@@ -133,7 +196,8 @@ export function toDockerRun(reg: Register, state: BuilderState): Output {
   for (const [k, v] of env) parts.push(`-e ${shellQuote(`${k}=${v}`)}`)
   if (ports.length > 0) parts.push(ports.map((p) => `-p ${p.spec}`).join(' '))
   parts.push(IMAGE)
-  return { text: parts.join(' \\\n  ') + '\n', notes }
+  const head = comments.map((c) => `# ${c}\n`).join('')
+  return { text: head + parts.join(' \\\n  ') + '\n', notes }
 }
 
 export function serialize(reg: Register, state: BuilderState, format: Format): Output {
@@ -162,6 +226,7 @@ export function importEnv(reg: Register, text: string): ImportResult {
     const q = value[0]
     if (value.length >= 2 && (q === '"' || q === "'") && value[value.length - 1] === q) {
       value = value.slice(1, -1)
+      if (q === '"') value = value.replace(/\\([\\"$])/g, '$1')
     }
     if (SECRET_KEYS.includes(key)) {
       ignored.push(key)
@@ -176,10 +241,10 @@ export function importEnv(reg: Register, text: string): ImportResult {
     if (key === 'RAN_TRAPS') continue
     if (key === 'RAN_PROXY_PROTOCOL') {
       const v = value.trim().toLowerCase()
-      if (v === 'on' || v === 'off' || v === '') {
+      if (BOOL_ON.includes(v) || BOOL_OFF.includes(v) || v === '') {
         state = setValue(reg, state, key, v)
       } else {
-        state.proxied = splitList(v)
+        state.proxied = v.split(',').map((x) => x.trim()).filter((x) => x !== '')
         state.scenario = 'reverse-proxy'
       }
       continue

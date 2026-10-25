@@ -122,15 +122,15 @@ describe('hash', () => {
     let s = applyScenario(reg, defaultState(), 'reverse-proxy')
     s = setValue(reg, s, 'RAN_LOG_LEVEL', 'debug')
     s = setTrap(s, 'dns', true)
-    expect(decodeState(encodeState(s))).toEqual(s)
-    expect(decodeState('#' + encodeState(s))).toEqual(s)
+    expect(decodeState(encodeState(s), reg)).toEqual(s)
+    expect(decodeState('#' + encodeState(s), reg)).toEqual(s)
   })
 
   it('round trips non-Latin-1 input', () => {
     const s = setValue(reg, state(['banner']), 'RAN_BANNER_SERVICES', '2222=ssh:SSH-2.0-Über € 中文 🚀')
     const hash = encodeState(s)
     expect(/^[A-Za-z0-9_-]*$/.test(hash)).toBe(true)
-    expect(decodeState(hash)).toEqual(s)
+    expect(decodeState(hash, reg)).toEqual(s)
   })
 
   it('falls back to defaults for broken input without throwing', () => {
@@ -148,10 +148,10 @@ describe('hash', () => {
       bytesToBase64Url(Uint8Array.from([0xff, 0xfe, 0xfd]))
     ]
     for (const h of bad) {
-      expect(() => decodeState(h)).not.toThrow()
+      expect(() => decodeState(h, reg)).not.toThrow()
     }
     for (const h of bad.filter((x) => x !== 'e30')) {
-      expect(decodeState(h)).toEqual(defaultState())
+      expect(decodeState(h, reg)).toEqual(defaultState())
     }
   })
 
@@ -297,10 +297,12 @@ describe('value rules follow the register and Go', () => {
   it('warns about cooldown settings that do nothing', () => {
     const ids = (env: Record<string, string>) =>
       evaluateEnv(reg, { RAN_TRAPS: 'ssh', ...env }).map((i) => i.id)
-    expect(ids({ RAN_SHUN: 'on', RAN_ALERT_COOLDOWN: '0s' })).toEqual(['shun-without-cooldown'])
+    const cs = { RAN_CROWDSEC: 'on', RAN_CROWDSEC_URL: 'http://localhost:8080', RAN_CROWDSEC_MACHINE_ID: 'ran' }
+    expect(ids({ ...cs, RAN_SHUN: 'on', RAN_ALERT_COOLDOWN: '0s' })).toEqual(['shun-without-cooldown'])
+    expect(ids({ RAN_SHUN: 'on', RAN_ALERT_COOLDOWN: '0s' })).toEqual(['shun-without-cooldown', 'shun-without-crowdsec'])
     expect(ids({ RAN_REPEAT_COOLDOWN: '12h', RAN_ALERT_COOLDOWN: '0' })).toEqual(['repeat-without-cooldown'])
     expect(ids({ RAN_REPEAT_COOLDOWN: '30m' })).toEqual(['repeat-below-cooldown'])
     expect(ids({ RAN_REPEAT_COOLDOWN: '1h' })).toEqual([])
-    expect(ids({ RAN_SHUN: 'on' })).toEqual([])
+    expect(ids({ ...cs, RAN_SHUN: 'on' })).toEqual([])
   })
 })

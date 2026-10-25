@@ -68,6 +68,12 @@ Example docker-compose:
 services:
   ran:
     image: ghcr.io/st0o0/ran:latest
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    user: "65532:65532"
     environment:
       RAN_TRAPS: ssh,http,ftp,smtp,vnc,rdp
       RAN_CROWDSEC: "on"
@@ -75,8 +81,27 @@ services:
       RAN_CROWDSEC_MACHINE_ID: ran-honeypot
       RAN_CROWDSEC_PASSWORD: ${CROWDSEC_PASSWORD}
       RAN_BAN_ON: attack,scan
-      RAN_ALERT_COOLDOWN: 1h
+    ports:
+      - "2222:2222"
+      - "8081:8081"
+      - "21:21"
+      - "25:25"
+      - "5900:5900"
+      - "3389:3389"
+      - "127.0.0.1:9550:9550"
+    volumes:
+      - ran-data:/data
+    tmpfs:
+      - /tmp
+volumes:
+  ran-data:
 ```
+
+The hostname in `RAN_CROWDSEC_URL` (`crowdsec` here) must resolve from the rán
+container: run the LAPI as another service of the same compose file, or attach
+both containers to one shared Docker network. The first LAPI login happens at
+startup and a failure is fatal (see [Troubleshooting](/troubleshooting)). The
+[config builder](/builder) writes the same hardening flags for you.
 
 ## Escalation with CrowdSec profiles
 

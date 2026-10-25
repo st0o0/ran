@@ -1,12 +1,16 @@
 import type { BuilderState, ScenarioId } from './types'
 import { SECRET_KEYS } from './types'
-import { defaultState } from './state'
+import type { Register } from './types'
+import { defaultState, findTrap, resolveSetting, setValue } from './state'
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
 const SCENARIOS: ScenarioId[] = ['direct', 'reverse-proxy', 'shared-namespace', 'crowdsec']
 
 const MAX_ENTRIES = 400
-const MAX_VALUE = 4000
+/** Longest accepted value; banner services need about 3000, fixtures are bounded by the URL anyway. */
+const MAX_VALUE = 16384
+/** Longest accepted decoded JSON (bytes). */
+const MAX_JSON = 256 * 1024
 
 /** base64url without padding, straight from UTF-8 bytes (no btoa). */
 export function bytesToBase64Url(bytes: Uint8Array): string {
@@ -74,38 +78,74 @@ function names(x: unknown): string[] | null {
   return out
 }
 
-/** Never throws: anything unusable yields the default state. */
-export function decodeState(hash: string): BuilderState {
+
+/** Why a share link could not be used; null when it loaded (possibly with dropped entries). */
+export type ShareProblem = 'invalid' | 'too-large' | null
+
+export interface ShareResult {
+  state: BuilderState
+  problem: ShareProblem
+  /** Traps and keys that were left out because the register does not know them. */
+  dropped: string[]
+}
+
+export const SHARE_PROBLEM_TEXT = 'Share link could not be loaded, using defaults.'
+
+function fail(problem: Exclude<ShareProblem, null>): ShareResult {
+  return { state: defaultState(), problem, dropped: [] }
+}
+
+/**
+ * Never throws: anything unusable yields the default state plus a reason.
+ * Values are sanitized, unknown traps and variables are dropped (and listed).
+ */
+export function decodeShare(hash: string, reg: Register): ShareResult {
   try {
     const text = hash.replace(/^#/, '').trim()
-    if (text === '') return defaultState()
+    if (text === '') return { state: defaultState(), problem: null, dropped: [] }
     const bytes = base64UrlToBytes(text)
-    if (!bytes) return defaultState()
+    if (!bytes) return fail('invalid')
+    if (bytes.length > MAX_JSON) return fail('too-large')
     const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return defaultState()
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return fail('invalid')
     const c = parsed as Record<string, unknown>
-    const traps = c.t === undefined ? [] : names(c.t)
-    const proxied = c.p === undefined ? [] : names(c.p)
-    if (!traps || !proxied) return defaultState()
-    const values: Record<string, string> = {}
+    const rawTraps = c.t === undefined ? [] : names(c.t)
+    const rawProxied = c.p === undefined ? [] : names(c.p)
+    if (!rawTraps || !rawProxied) return fail('invalid')
+    const dropped: string[] = []
+    const known = (list: string[]) =>
+      list.filter((n) => {
+        if (findTrap(reg, n)) return true
+        dropped.push(n)
+        return false
+      })
+    const traps = [...new Set(known(rawTraps))]
+    const proxied = [...new Set(known(rawProxied))].filter((n) => traps.includes(n))
+    let state: BuilderState = { traps, values: {}, scenario: 'direct', proxied }
     if (c.v !== undefined) {
-      if (typeof c.v !== 'object' || c.v === null || Array.isArray(c.v)) return defaultState()
+      if (typeof c.v !== 'object' || c.v === null || Array.isArray(c.v)) return fail('invalid')
       const entries = Object.entries(c.v as Record<string, unknown>)
-      if (entries.length > MAX_ENTRIES) return defaultState()
+      if (entries.length > MAX_ENTRIES) return fail('too-large')
       for (const [k, v] of entries) {
-        if (typeof v !== 'string' || v.length > MAX_VALUE || !/^RAN_[A-Z0-9_]{1,80}$/.test(k)) {
-          return defaultState()
-        }
+        if (typeof v !== 'string' || !/^RAN_[A-Z0-9_]{1,80}$/.test(k)) return fail('invalid')
+        if (v.length > MAX_VALUE) return fail('too-large')
         if (SECRET_KEYS.includes(k) || k === 'RAN_TRAPS') continue
-        values[k] = v
+        if (!resolveSetting(reg, k)) {
+          dropped.push(k)
+          continue
+        }
+        state = setValue(reg, state, k, v)
       }
     }
     const scenario = c.s === undefined ? 'direct' : c.s
-    if (typeof scenario !== 'string' || !SCENARIOS.includes(scenario as ScenarioId)) {
-      return defaultState()
-    }
-    return { traps, values, scenario: scenario as ScenarioId, proxied }
+    if (typeof scenario !== 'string' || !SCENARIOS.includes(scenario as ScenarioId)) return fail('invalid')
+    state.scenario = scenario as ScenarioId
+    return { state, problem: null, dropped }
   } catch {
-    return defaultState()
+    return fail('invalid')
   }
+}
+
+export function decodeState(hash: string, reg: Register): BuilderState {
+  return decodeShare(hash, reg).state
 }
