@@ -2,12 +2,13 @@
 
 Roadmap for `ran`, derived from a comparison with Cowrie, OpenCanary, qeeqbox/honeypots, T-Pot (and its components) and Beelzebub/Galah, plus an audit of the traps in this repo (2026-10-24). Order is the planned order of work. Keep this file short and factual; update it whenever a change is created, archived or dropped.
 
-Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. All 13 changes below are written and validated; the order is the order of implementation. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
+Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. All 14 changes below are written and validated; the order is the order of implementation. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
 
 ## Now (build next)
 
 | # | Change | Content | Effort | Source |
 |---|---|---|---|---|
+| 14 | `docs-site` | VitePress site in `docs/` (layout of FunkArr and njord, shared `docs.yml` deploy, pnpm renovate preset), generated trap table, contract tests read README plus site; README shrinks in stage 2 | M | evaluation 2026-10-25 |
 | 13 | `webhook-sink` | One generic webhook, rate limited, no passwords. **Deferred by decision**: the change is written, do not implement it yet | S | OpenCanary, Beelzebub |
 
 ## Docs site (evaluate after `fingerprint-realism` and `ics-and-printer-traps`)
@@ -19,7 +20,7 @@ The README is about 1000 lines and used as reference documentation. Evaluate a V
 - Generate what can be generated instead of copying: the trap table and config reference from `config.DefaultPorts` and the contract test lists, so the site cannot drift.
 - Competitor facts (Cowrie licence, OpenCanary protocol list, T-Pot container count) need re-checking before they move into the site.
 
-Evaluation result (2026-10-25): go, medium size, no sensor risk. Proposed cut for the `docs-site` change: a `site/` folder with a pinned VitePress and its own `package.json`; contract tests read the README and every page under `site/`; generate only the trap table from `config.DefaultPorts` and guard it with `git diff --exit-code` in CI; a GitHub Pages workflow (repository setting needed from the owner); migrate in stages (configuration, metrics, CrowdSec and upgrade notes first, then shrink the README). Check first whether the renovate preset covers npm.
+Evaluation result (2026-10-25): go, medium size, no sensor risk. Proposed cut for the `docs-site` change: a `site/` folder with a pinned VitePress and its own `package.json`; contract tests read the README and every page under `site/`; generate only the trap table from `config.DefaultPorts` and guard it with `git diff --exit-code` in CI; a GitHub Pages workflow (repository setting needed from the owner); migrate in stages (configuration, metrics, CrowdSec and upgrade notes first, then shrink the README). The renovate `pnpm` preset covers npm (checked). Decision 2026-10-25: use `docs/` like FunkArr and njord (no local design docs exist, the ignore rule is replaced); the change is written as `docs-site` (item 14).
 
 ## To discuss next (all other changes are written)
 
