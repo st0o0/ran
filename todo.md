@@ -19,17 +19,23 @@ The README is about 1000 lines and used as reference documentation. Evaluate a V
 - Generate what can be generated instead of copying: the trap table and config reference from `config.DefaultPorts` and the contract test lists, so the site cannot drift.
 - Competitor facts (Cowrie licence, OpenCanary protocol list, T-Pot container count) need re-checking before they move into the site.
 
-Outcome of the evaluation is a go or no-go with a rough size, then an OpenSpec change (`docs-site`) if go.
+Evaluation result (2026-10-25): go, medium size, no sensor risk. Proposed cut for the `docs-site` change: a `site/` folder with a pinned VitePress and its own `package.json`; contract tests read the README and every page under `site/`; generate only the trap table from `config.DefaultPorts` and guard it with `git diff --exit-code` in CI; a GitHub Pages workflow (repository setting needed from the owner); migrate in stages (configuration, metrics, CrowdSec and upgrade notes first, then shrink the README). Check first whether the renovate preset covers npm.
 
 ## To discuss next (all other changes are written)
 
-`crowdsec-integration`: how rán relates to CrowdSec beyond the alert push. Candidate points:
+`crowdsec-integration`: how rán relates to CrowdSec beyond the alert push. Proposed order:
 
-- Ship the example profiles and a rán log parser as a Hub collection (the Hub has only a Cowrie text parser and open community PRs).
-- Sync the ignore list from LAPI allowlists.
-- Ask the LAPI whether a source is already banned and skip the alert.
-- Optional second sink (AbuseIPDB) for operators without CrowdSec.
-- Documented CAPI sharing choices per class.
+1. CI integration test with a real CrowdSec container, the shipped profile and rán: an alert must lead to a decision with escalation. Today "verified against v1.8.1" is a manual README statement.
+2. Ship the example profile as a file in the repo and print it with a subcommand, so it matches the binary version.
+3. Spike: can LAPI allowlists be queried to feed the ignore list? Probably needs a separate bouncer key; unverified.
+4. Later, optional: second sink (AbuseIPDB) for operators without CrowdSec, documented CAPI sharing choices per class.
+
+Corrections to earlier ideas:
+
+- A Hub collection for profiles does not work: profiles are local (`/etc/crowdsec/profiles.yaml` or `profiles.yaml.local`) and the Hub carries parsers, scenarios, postoverflows, contexts and AppSec rules. A rán log parser is of little use because rán pushes alerts through the LAPI.
+- Do NOT skip alerts for sources the LAPI already bans: the 1h cooldown deliberately renews bans, and `GetDecisionsCount` counts alerts, so skipping them lowers the escalation level and lets bans lapse.
+
+Open follow-ups: a MySQL scramble that ends in a zero byte (1 in 256) is mistaken for a clear password in seeded mode (see `openspec/changes/archive/2026-10-25-fingerprint-realism/design.md`).
 
 ## Icebox: needs an explicit design decision first
 
