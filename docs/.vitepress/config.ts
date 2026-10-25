@@ -14,6 +14,7 @@ export default defineConfig({
       { text: 'Guide', link: '/getting-started' },
       { text: 'Traps', link: '/traps' },
       { text: 'Configuration', link: '/configuration' },
+      { text: 'Config builder', link: '/builder' },
       { text: 'CrowdSec', link: '/crowdsec' },
       { text: 'Comparison', link: '/comparison' }
     ],
@@ -24,6 +25,7 @@ export default defineConfig({
           { text: 'Getting started', link: '/getting-started' },
           { text: 'Traps', link: '/traps' },
           { text: 'Configuration', link: '/configuration' },
+          { text: 'Config builder', link: '/builder' },
           { text: 'Classification and alerts', link: '/classification-and-alerts' },
           { text: 'CrowdSec', link: '/crowdsec' }
         ]

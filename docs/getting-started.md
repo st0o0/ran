@@ -33,6 +33,9 @@ services:
 
 ## Quick start
 
+Not sure which settings you need? The [config builder](/builder) turns a
+deployment scenario into an env file, a compose file or a `docker run` line.
+
 Pick your traps, start the container:
 
 ```bash
