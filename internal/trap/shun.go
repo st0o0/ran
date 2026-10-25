@@ -35,6 +35,10 @@ func closeIfShunned(r Reporter, protocol string, conn net.Conn) bool {
 	if !ok {
 		return false
 	}
+	// With shun off (the default) skip address parsing on every accept.
+	if a, ok := r.(interface{ ShunActive() bool }); ok && !a.ShunActive() {
+		return false
+	}
 	host, _ := ParseAddr(conn.RemoteAddr().String())
 	if !s.Shunned(host) {
 		return false
