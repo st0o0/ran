@@ -10,9 +10,13 @@ With `RAN_PROXY_PROTOCOL=on` any peer that can reach the port may send a forged 
 
 ## Capabilities
 
+### New Capabilities
+
+- `proxy-protocol-trust`: the trusted peer list for PROXY headers (`RAN_PROXY_TRUSTED`, `any`, validation, warnings, peer check scope).
+
 ### Modified Capabilities
 
-- `proxy-protocol` behavior in `multi-port-listener`/`config`.
+- `multi-port-listener`: `ListenMultiTCP` takes a `*config.ProxyTrust` instead of a `proxyProto bool`; nil means the protocol is off.
 
 ## Impact
 

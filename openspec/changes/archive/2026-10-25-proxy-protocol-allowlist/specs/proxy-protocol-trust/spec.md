@@ -23,7 +23,7 @@ A connection whose socket peer is not in the trusted list SHALL be closed withou
 - **THEN** the header address is used as before
 
 ### Requirement: List format
-`RAN_PROXY_TRUSTED` SHALL use the format of `RAN_IGNORE_IPS` (IPv4 and IPv6 addresses and CIDRs, whitespace, empty entries and duplicates tolerated, IPv4-mapped forms unmapped, zones rejected, at most 1024 distinct entries) or be exactly `any`. Ranges with fewer than 8 bits SHALL log a warning at startup and in `ran check-config`.
+`RAN_PROXY_TRUSTED` SHALL use the format of `RAN_IGNORE_IPS` (IPv4 and IPv6 addresses and CIDRs, whitespace, empty entries and duplicates tolerated, IPv4-mapped forms unmapped, zones rejected, at most 1024 distinct entries) or be exactly `any`. Prefixes shorter than /8 SHALL log a warning at startup and in `ran check-config`; the threshold is /8 for both IPv4 and IPv6.
 
 #### Scenario: Invalid entry
 - **WHEN** `RAN_PROXY_TRUSTED` contains an entry that is not an IP, a CIDR or `any` on its own

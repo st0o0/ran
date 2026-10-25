@@ -18,7 +18,7 @@ Decision: accept and ignore, with a warning at startup and in `check-config`. Re
 
 ## Wide ranges
 
-Ranges with fewer than 8 bits warn (startup log and `check-config`), like the ignore list. They are accepted.
+Prefixes shorter than /8 warn (startup log and `check-config`), like the ignore list; the threshold is /8 for both IPv4 and IPv6, so an IPv6 /16 or an IPv4 /9 does not warn. They are accepted.
 
 ## Tests
 

@@ -349,8 +349,9 @@ func TestEndToEndForgedProxyHeaderNoAlert(t *testing.T) {
 	fmt.Fprint(good, "PROXY TCP4 9.9.9.9 127.0.0.1 40000 23\r\nroot\r\nsecret\r\n")
 	_, _ = io.Copy(io.Discard, bufio.NewReader(good))
 
+	// The forged connection was dropped and counted before the trusted one was
+	// opened, so no further alert can arrive from it.
 	waitFor(t, func() bool { return lapi.acceptedCount() == 1 })
-	time.Sleep(400 * time.Millisecond)
 
 	lapi.mu.Lock()
 	defer lapi.mu.Unlock()
@@ -362,5 +363,90 @@ func TestEndToEndForgedProxyHeaderNoAlert(t *testing.T) {
 	}
 	if len(seen) != 1 || !seen["9.9.9.9"] || seen["8.8.8.8"] {
 		t.Errorf("alerted sources = %v, want only 9.9.9.9", seen)
+	}
+}
+
+// fakePeerConn reports a chosen remote address; the other end stays silent.
+type fakePeerConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c *fakePeerConn) RemoteAddr() net.Addr { return c.remote }
+
+// fakePeerListener hands out queued connections, then blocks until closed.
+type fakePeerListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+}
+
+func (l *fakePeerListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *fakePeerListener) Close() error {
+	select {
+	case <-l.closed:
+	default:
+		close(l.closed)
+	}
+	return nil
+}
+
+func (l *fakePeerListener) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1}
+}
+
+// The trust check runs before a handshake slot is taken. With the only slot
+// held by a trusted silent peer, an untrusted peer must still be rejected as
+// untrusted_peer and a second trusted peer as handshake_limit. If the check
+// moved behind the semaphore, the untrusted peer would show up as
+// handshake_limit. Both reasons share one metric; only the debug log tells
+// them apart.
+func TestProxyTrustCheckPrecedesHandshakeLimit(t *testing.T) {
+	// Only the slot count is changed: the holder goroutine may outlive the test
+	// and reads proxyHeaderTimeout, so that variable is left alone.
+	oldMax := maxPendingHandshakes
+	maxPendingHandshakes = 1
+	defer func() { maxPendingHandshakes = oldMax }()
+
+	peer := func(ip string) (net.Conn, net.Conn) {
+		server, client := net.Pipe()
+		t.Cleanup(func() { server.Close(); client.Close() })
+		addr := &net.TCPAddr{IP: net.ParseIP(ip), Port: 40000}
+		return &fakePeerConn{Conn: server, remote: addr}, client
+	}
+	holder, _ := peer("10.0.0.1")   // trusted, takes the only slot and stays silent
+	overflow, _ := peer("10.0.0.2") // trusted, no slot left
+	untrusted, _ := peer("8.8.8.8") // untrusted, must not be judged by the slot
+
+	logs := &syncBuffer{}
+	m := metrics.New(prometheus.NewRegistry(), "test")
+	fl := &fakePeerListener{conns: make(chan net.Conn, 3), closed: make(chan struct{})}
+	fl.conns <- holder
+	fl.conns <- overflow
+	fl.conns <- untrusted
+	pl := newProxyListener(fl, newJSONLogger(logs), m, "test", otherPeers())
+	defer pl.Close()
+	go func() { _, _ = pl.Accept() }()
+
+	waitFor(t, func() bool { return proxyDropped(t, m, "test") == 2 })
+	out := logs.String()
+	if got := strings.Count(out, `"reason":"untrusted_peer"`); got != 1 {
+		t.Errorf("untrusted_peer drops = %d, want 1: %s", got, out)
+	}
+	if got := strings.Count(out, `"reason":"handshake_limit"`); got != 1 {
+		t.Errorf("handshake_limit drops = %d, want 1: %s", got, out)
+	}
+	if len(pl.sem) != 1 {
+		t.Errorf("handshake slots in use = %d, want 1 (the trusted holder)", len(pl.sem))
+	}
+	if strings.Contains(out, "8.8.8.8") {
+		t.Errorf("drop log must not contain addresses: %s", out)
 	}
 }

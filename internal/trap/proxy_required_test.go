@@ -231,7 +231,8 @@ func TestAcceptPanicBacksOff(t *testing.T) {
 	m := metrics.New(prometheus.NewRegistry(), "test")
 	ml := newMultiListener([]net.Listener{ln}, newJSONLogger(io.Discard), m, "test")
 
-	time.Sleep(400 * time.Millisecond)
+	// Wait for a few attempts instead of sleeping a fixed time.
+	waitFor(t, func() bool { return ln.calls.Load() >= 3 })
 	closed := make(chan struct{})
 	go func() {
 		_ = ml.Close()
@@ -242,9 +243,9 @@ func TestAcceptPanicBacksOff(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close hung while Accept keeps panicking")
 	}
-	// 10ms doubling: about 6 attempts in 400ms. A spin would make thousands.
-	if calls := ln.calls.Load(); calls < 2 || calls > 20 {
-		t.Errorf("Accept called %d times in 400ms, want a small backed-off number", calls)
+	// 10ms doubling: a handful of attempts by now. A spin would make thousands.
+	if calls := ln.calls.Load(); calls < 3 || calls > 20 {
+		t.Errorf("Accept called %d times, want a small backed-off number", calls)
 	}
 	if got := panicCount(t, m, "test"); got < 2 {
 		t.Errorf("panics counted = %v, want at least 2", got)

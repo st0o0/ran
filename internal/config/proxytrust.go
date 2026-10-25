@@ -11,9 +11,13 @@ import (
 // peer. It keeps the pre-allowlist behavior and is meant as a migration aid.
 const ProxyTrustAnyValue = "any"
 
-// ProxyTrust decides which socket peers may send PROXY protocol headers. A nil
-// *ProxyTrust trusts nobody, so a listener that is built without a list fails
-// closed.
+// ProxyTrust decides which socket peers may send PROXY protocol headers.
+//
+// A nil *ProxyTrust has two meanings that depend on the caller. Its methods
+// (Trusts, Any) treat nil as "trusts nobody", so code that wraps a listener
+// with a nil value fails closed. At the listener level, trap.ListenMultiTCP
+// treats nil as "PROXY protocol off" and does not wrap the listener at all,
+// which is what Config.ProxyTrust returns when RAN_PROXY_PROTOCOL is off.
 type ProxyTrust struct {
 	any      bool
 	prefixes []netip.Prefix
@@ -79,7 +83,9 @@ func ParseProxyTrusted(raw string) (prefixes []netip.Prefix, any bool, err error
 }
 
 // ProxyTrust returns the trust set for PROXY protocol listeners, or nil when
-// RAN_PROXY_PROTOCOL is off.
+// RAN_PROXY_PROTOCOL is off. Callers must read nil as "protocol off, do not
+// wrap the listener", not as an empty trust set; a non-nil result with an empty
+// list trusts nobody.
 func (c *Config) ProxyTrust() *ProxyTrust {
 	if !c.ProxyProtocol {
 		return nil

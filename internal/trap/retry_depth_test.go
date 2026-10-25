@@ -93,7 +93,8 @@ func TestMySQLRetriesViaAuthSwitch(t *testing.T) {
 			t.Errorf("retries=%d: connection still open", retries)
 		}
 		d.waitCredentials(t, "mysql", float64(retries))
-		time.Sleep(20 * time.Millisecond)
+		// The session has ended once the outcome is counted, so no later credential can arrive.
+		d.waitOutcomeLabel(t, "mysql", "completed")
 		if got := d.credentials("mysql"); got != float64(retries) {
 			t.Errorf("retries=%d: credentials = %v", retries, got)
 		}
@@ -148,11 +149,13 @@ func TestMySQLRetryClientHangsUpIsCompleted(t *testing.T) {
 
 func TestMySQLRetryTimeout(t *testing.T) {
 	t.Parallel()
-	d := startDepthTrap(t, "mysql", func(c *config.Config) { c.SessionTimeout = 300 * time.Millisecond }, buildMySQLTrap)
+	d := startDepthTrap(t, "mysql", func(c *config.Config) { c.SessionTimeout = 1500 * time.Millisecond }, buildMySQLTrap)
 	conn := dialTrap(t, d.addr)
 	readMySQLFrame(t, conn)
 	_, _ = conn.Write(mysqlLoginPacket("root", "pw"))
 	readMySQLFrame(t, conn)
+	// The timeout only has to end the session; the credential must be logged first.
+	d.waitCredentials(t, "mysql", 1)
 	d.waitOutcomeLabel(t, "mysql", "timeout")
 }
 
@@ -161,6 +164,15 @@ func pgStartup(conn net.Conn, user string) {
 	body = append(body, "user\x00"+user+"\x00\x00"...)
 	pkt := binary.BigEndian.AppendUint32(nil, uint32(4+len(body)))
 	_, _ = conn.Write(append(pkt, body...))
+}
+
+// pgReadAuthRequest reads one 9 byte authentication request and fails the test on
+// a read error, so a connection that ends early is never mistaken for a timeout.
+func pgReadAuthRequest(t *testing.T, conn net.Conn) {
+	t.Helper()
+	if _, err := io.ReadFull(conn, make([]byte, 9)); err != nil {
+		t.Fatalf("read authentication request: %v", err)
+	}
 }
 
 func pgPassword(conn net.Conn, password string) {
@@ -213,13 +225,14 @@ func TestPostgresUnlimitedRetries(t *testing.T) {
 func TestPostgresRetryAuthDelayThenTimeout(t *testing.T) {
 	t.Parallel()
 	d := startDepthTrap(t, "postgres", func(c *config.Config) {
-		c.SessionTimeout = 400 * time.Millisecond
+		c.SessionTimeout = 1500 * time.Millisecond
 		c.AuthDelay = 10 * time.Millisecond
 	}, buildPostgresTrap)
 	conn := dialTrap(t, d.addr)
 	pgStartup(conn, "admin")
-	_, _ = io.ReadFull(conn, make([]byte, 9))
+	pgReadAuthRequest(t, conn)
 	pgPassword(conn, "pw")
+	d.waitCredentials(t, "postgres", 1)
 	d.waitOutcomeLabel(t, "postgres", "timeout")
 }
 
@@ -239,7 +252,7 @@ func TestRDPStaysSingleAttempt(t *testing.T) {
 		t.Error("connection still open after the negotiation failure")
 	}
 	d.waitCredentials(t, "rdp", 1)
-	time.Sleep(20 * time.Millisecond)
+	d.waitOutcomeLabel(t, "rdp", "completed")
 	if got := d.credentials("rdp"); got != 1 {
 		t.Errorf("credentials = %v, want 1", got)
 	}
@@ -322,14 +335,17 @@ func TestPostgresUnlimitedEndsAtSessionTimeout(t *testing.T) {
 	t.Parallel()
 	d := startDepthTrap(t, "postgres", func(c *config.Config) {
 		unlimitedRetries("postgres")(c)
-		c.SessionTimeout = 300 * time.Millisecond
+		c.SessionTimeout = 1500 * time.Millisecond
 	}, buildPostgresTrap)
 	conn := dialTrap(t, d.addr)
 	pgStartup(conn, "admin")
 	for i := range 3 {
-		_, _ = io.ReadFull(conn, make([]byte, 9))
+		pgReadAuthRequest(t, conn)
 		pgPassword(conn, "pw"+strconv.Itoa(i))
 	}
+	// Wait until the trap logged all three passwords before relying on the
+	// timeout; the timeout only has to end the session afterwards.
+	d.waitCredentials(t, "postgres", 3)
 	d.waitOutcomeLabel(t, "postgres", "timeout")
 	if got := d.credentials("postgres"); got != 3 {
 		t.Errorf("credentials = %v, want 3", got)
@@ -340,12 +356,13 @@ func TestMySQLUnlimitedEndsAtSessionTimeout(t *testing.T) {
 	t.Parallel()
 	d := startDepthTrap(t, "mysql", func(c *config.Config) {
 		unlimitedRetries("mysql")(c)
-		c.SessionTimeout = 300 * time.Millisecond
+		c.SessionTimeout = 1500 * time.Millisecond
 	}, buildMySQLTrap)
 	conn := dialTrap(t, d.addr)
 	readMySQLFrame(t, conn)
 	_, _ = conn.Write(mysqlLoginPacket("root", "pw"))
 	readMySQLFrame(t, conn) // auth switch, then silence
+	d.waitCredentials(t, "mysql", 1)
 	d.waitOutcomeLabel(t, "mysql", "timeout")
 }
 

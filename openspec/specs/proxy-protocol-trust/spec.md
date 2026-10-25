@@ -1,7 +1,7 @@
 # proxy-protocol-trust Specification
 
 ## Purpose
-TBD - created by archiving change proxy-protocol-allowlist. Update Purpose after archive.
+Control which socket peers may send PROXY protocol headers to TCP traps, so that a host that can reach a listener directly cannot forge the source address that ran reports and may get banned. The trust list is mandatory when the protocol is on and is checked on the socket peer before any header is read.
 ## Requirements
 ### Requirement: Trusted proxy list
 With `RAN_PROXY_PROTOCOL=on`, `RAN_PROXY_TRUSTED` SHALL list the IPs and CIDRs of peers allowed to send PROXY headers. The configuration SHALL be invalid when it is empty, unless it is exactly `any`.
@@ -26,7 +26,7 @@ A connection whose socket peer is not in the trusted list SHALL be closed withou
 - **THEN** the header address is used as before
 
 ### Requirement: List format
-`RAN_PROXY_TRUSTED` SHALL use the format of `RAN_IGNORE_IPS` (IPv4 and IPv6 addresses and CIDRs, whitespace, empty entries and duplicates tolerated, IPv4-mapped forms unmapped, zones rejected, at most 1024 distinct entries) or be exactly `any`. Ranges with fewer than 8 bits SHALL log a warning at startup and in `ran check-config`.
+`RAN_PROXY_TRUSTED` SHALL use the format of `RAN_IGNORE_IPS` (IPv4 and IPv6 addresses and CIDRs, whitespace, empty entries and duplicates tolerated, IPv4-mapped forms unmapped, zones rejected, at most 1024 distinct entries) or be exactly `any`. Prefixes shorter than /8 SHALL log a warning at startup and in `ran check-config`; the threshold is /8 for both IPv4 and IPv6.
 
 #### Scenario: Invalid entry
 - **WHEN** `RAN_PROXY_TRUSTED` contains an entry that is not an IP, a CIDR or `any` on its own

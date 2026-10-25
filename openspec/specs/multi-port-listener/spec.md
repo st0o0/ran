@@ -28,18 +28,18 @@ The system SHALL provide a `MultiListener` type implementing `net.Listener` that
 - **THEN** it returns the address of the first listener (port 8081)
 
 ### Requirement: ListenMultiTCP replaces ListenTCP
-The system SHALL provide a `ListenMultiTCP(ctx, addrs []string, proxyProto bool) (*MultiListener, error)` function. It SHALL create a TCP listener for each address, optionally wrapping each with PROXY protocol support. If any address fails to bind, the successfully bound listeners SHALL be closed and an error returned.
+The system SHALL provide a `ListenMultiTCP(ctx, addrs []string, proxy *config.ProxyTrust, logger, m, protocol) (*MultiListener, error)` function. It SHALL create a TCP listener for each address, optionally wrapping each with PROXY protocol support. A nil `proxy` means the PROXY protocol is off and the listeners are not wrapped; a non-nil `proxy` turns the protocol on and decides which socket peers may send a header (see the `proxy-protocol-trust` capability). If any address fails to bind, the successfully bound listeners SHALL be closed and an error returned.
 
 #### Scenario: All addresses bind successfully
-- **WHEN** `ListenMultiTCP(ctx, [":8081", ":8080"], false)` is called and both ports are available
+- **WHEN** `ListenMultiTCP(ctx, [":8081", ":8080"], nil, ...)` is called and both ports are available
 - **THEN** a `MultiListener` with two listeners is returned
 
 #### Scenario: One address fails to bind
-- **WHEN** `ListenMultiTCP(ctx, [":8081", ":8080"], false)` is called and port 8080 is already in use
+- **WHEN** `ListenMultiTCP(ctx, [":8081", ":8080"], nil, ...)` is called and port 8080 is already in use
 - **THEN** the listener on 8081 is closed and an error is returned
 
 #### Scenario: PROXY protocol applied to all listeners
-- **WHEN** `ListenMultiTCP(ctx, [":8081", ":8080"], true)` is called
+- **WHEN** `ListenMultiTCP(ctx, [":8081", ":8080"], trust, ...)` is called
 - **THEN** both listeners are wrapped with PROXY protocol support
 
 ### Requirement: ConnContext helper for HTTP-based traps

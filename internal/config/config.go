@@ -204,7 +204,7 @@ func ValidateAddr(name, raw string) error {
 const MaxIgnoreEntries = 1024
 
 // wideIgnoreBits is the prefix length below which an ignore entry counts as a
-// very wide range (fewer than 8 bits, for example 0.0.0.0/0 or ::/0).
+// very wide range (a prefix shorter than /8, for example 0.0.0.0/0 or ::/0).
 const wideIgnoreBits = 8
 
 // WideIgnoreRanges returns the prefixes that cover a very large part of the

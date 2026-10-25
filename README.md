@@ -378,7 +378,7 @@ their IPv4 entry. With `RAN_PROXY_PROTOCOL` on, the address from the PROXY heade
 is matched. UDP traps never alert anyway; for them the list only adds
 `ignored=true` to the log lines and counts the metric. The list is read once at
 startup (no reload) and the startup log reports the number of ranges. A very
-wide range (fewer than 8 bits, such as `0.0.0.0/0` or `::/0`) is accepted but
+wide range (a prefix shorter than /8, such as `0.0.0.0/0` or `::/0`) is accepted but
 logged as a warning at startup and printed by `ran check-config` on stderr.
 
 ### Limits
@@ -646,8 +646,9 @@ from any other peer is closed at once, counted in
 `ran_proxy_protocol_dropped_total`, and produces no session, no alert and no log
 line with a claimed address (only a debug line without addresses). The variable
 is mandatory with the protocol on; `RAN_PROXY_TRUSTED=any` trusts every peer and
-logs a warning at startup. Ranges wider than 8 bits (such as `0.0.0.0/0`) are
-accepted with a warning. A connection from a trusted peer must send a valid header within 3 seconds; a connection that sends other bytes,
+logs a warning at startup. Prefixes shorter than /8 (such as `0.0.0.0/0` or `::/0`) are
+accepted with a warning; the threshold is /8 for both address families, so an
+IPv6 `/16` or an IPv4 `/9` does not warn. A connection from a trusted peer must send a valid header within 3 seconds; a connection that sends other bytes,
 closes early or stays silent is closed and counted in
 `ran_proxy_protocol_dropped_total`, never handled as a plain connection. A
 silent peer does not block other clients. At most 1024 connections per listen
@@ -659,6 +660,14 @@ to every listener of every TCP trap. Keep it as narrow as possible and still
 firewall the listener where you can: a peer inside a trusted range can forge
 headers, and with `any` a header lets any peer that can connect directly choose
 the source address ran reports, so any public IP can be reported and then banned.
+
+**Warning: NAT, docker-proxy and load balancers.** Behind docker-proxy,
+Kubernetes SNAT (for example `externalTrafficPolicy: Cluster`) or any NAT or
+load balancer that rewrites the source address, every client reaches ran from
+the gateway address. Adding that address to `RAN_PROXY_TRUSTED` then trusts every
+client who can reach the port and re-opens header forging, exactly as `any`
+does. List only the real proxy or tunnel peer address as ran sees it, and prefer
+a listener that is isolated by a firewall so that only the proxy can connect.
 
 </details>
 
@@ -882,7 +891,9 @@ reports who touched them; it does not protect the host it runs on.
   are dropped and counted. `RAN_PROXY_TRUSTED=any` removes this protection: any
   host that can reach the port can then forge the address, so list your proxies
   and firewall the listener as well. A compromised or shared proxy in the list can
-  still forge addresses.
+  still forge addresses. Behind docker-proxy, Kubernetes SNAT or any NAT or load
+  balancer that rewrites the source, all clients appear from the gateway
+  address; trusting that address trusts everyone who can reach the port.
 - **TLS fingerprints are claims.** The `https` trap records SNI, JA3 and JA4 of
   the ClientHello as alert meta. They are client controlled (any client can
   send any SNI or mimic a fingerprint), so they are context for triage, never
