@@ -126,6 +126,14 @@ export function scenarioHints(reg: Register, state: BuilderState): Hint[] {
       id: 'crowdsec-url',
       message: 'Set RAN_CROWDSEC_URL to the address of your local API; http://crowdsec:8080 assumes both containers share a Docker network.'
     })
+    out.push({
+      id: 'crowdsec-profile',
+      message: 'rán does not ban by itself: CrowdSec needs a profile. Print the one that matches your binary with "ran crowdsec-profile" (for example: docker run --rm ghcr.io/st0o0/ran crowdsec-profile > profiles.yaml.local) and install it as /etc/crowdsec/profiles.yaml before any generic profile.'
+    })
+    out.push({
+      id: 'crowdsec-shun',
+      message: 'Optional: RAN_SHUN=on closes new TCP connections from a source while its alert cooldown runs, so trap ports honor the ban without a firewall bouncer (see Quiet repeat offenders in the hardening guide). It is off by default.'
+    })
   }
   return out
 }

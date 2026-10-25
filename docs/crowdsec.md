@@ -80,42 +80,45 @@ services:
 
 ## Escalation with CrowdSec profiles
 
-
 CrowdSec evaluates `profiles.yaml` only for alerts that carry no decisions,
 which is exactly what rán sends. Select on the class with the **event** form
 `Alert.Events[0].GetMeta("class")`: `Alert.GetMeta("class")` reads only
 alert-level meta and matches nothing. Profiles run top to bottom and stop at the
-first `on_success: break`, so put the `scan` profile first.
+first `on_success: break`, so the rán profiles must come before any generic one.
 
-```yaml
-# scan: one IP probing many protocols
-name: ran_scan
-filters:
-  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "scan"
-decisions:
-  - type: ban
-    scope: Ip
-    duration: 1h
-duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
-on_success: break
----
-# attack: credentials, commands or payloads
-name: ran_attack
-filters:
-  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "attack"
-decisions:
-  - type: ban
-    scope: Ip
-    duration: 1h
-duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
-on_success: break
-# probe: no profile, so a probe alert (only sent with RAN_BAN_ON=probe,...) never bans
+rán ships the profile that matches your binary, so there is nothing to copy by
+hand. Print it and save it as `/etc/crowdsec/profiles.yaml` (or append it above
+your own profiles):
+
+```bash
+docker run --rm ghcr.io/st0o0/ran crowdsec-profile > profiles.yaml.local
+# or, with a local binary
+ran crowdsec-profile > profiles.yaml.local
 ```
 
-`duration_expr` overrides the profile `duration` (the fallback), and the newest
-decision replaces the older one. The `scan` class uses the same formula as
-`attack` in this example. If you want scanners to stay out longer, give
-the `scan` profile a harder formula, for example a larger base or a longer cap.
+The subcommand needs no configuration and prints the file embedded in the
+binary. The same file is included below, and the integration test mounts it
+into a real CrowdSec, so the docs, the binary and CI cannot diverge.
+
+<!--@include: ./crowdsec-profile.generated.md-->
+
+The profiles, in order:
+
+- `ran_scan` and `ran_attack` ban the class with the escalating duration.
+- `ran_noban` catches every other `custom/ran-*` alert (for example `probe`,
+  which only reaches the LAPI when `RAN_BAN_ON` lists it), creates no decision
+  and stops evaluation. A later catch-all profile, such as the stock
+  `default_ip_remediation` (`Alert.Remediation == true`) or your own
+  `Remediation == true` policy, therefore never bans a probe. The shipped file
+  has no such fallback on purpose: it is your own policy and would hide the
+  effect of `ran_noban`. Keep it below the rán profiles.
+
+`duration_expr` overrides the profile `duration` (the fallback). Decisions
+accumulate: every ban alert adds a decision row and older rows stay until they
+expire, so a bouncer enforces the ban while any row is active (the longest one
+decides). The `scan` class uses the same formula as `attack`. If you want
+scanners to stay out longer, give the `scan` profile a harder formula, for
+example a larger base or a longer cap.
 
 | Alert for the IP | Prior decisions | Ban |
 |---|---|---|
@@ -126,26 +129,80 @@ the `scan` profile a harder formula, for example a larger base or a longer cap.
 | 5th | 4 | 81h |
 | 6th and later | 5 or more | 168h (cap) |
 
-Two expression pitfalls, both verified against CrowdSec v1.8.1:
+At the cap each further alert adds a fresh 168h decision, so a persistent
+source keeps its ban renewed instead of shortened.
+
+Two expression pitfalls, both covered by the integration test through the
+observed durations (`crowdsec -t` compiles the expression but does not catch
+the formatting fallback):
 
 - Use lowercase `min`. The capitalized `Min` does not compile and CrowdSec
   exits fatally with `unknown name Min`.
-- Use `%.0fh`, not `%dh`. `3 ^ n` is a float, so `%dh` silently falls back to
-  the base `duration` (`%!d(float64=...)`).
+- Use a float cap and `%.0fh`. `min(168, 3 ^ n)` returns the int literal at the
+  cap, and `%.0f` then fails silently and falls back to the base `duration`
+  (1h). `%dh` falls back the same way because `3 ^ n` is a float.
 
 > **Prerequisite:** `duration_expr` requires CrowdSec 1.4 or later.
 
-The profile syntax above is verified against CrowdSec v1.8.1 (profile syntax,
-expression and decisions tested). Use the list key `filters:`; the singular
-`filter:` key is rejected and the LAPI exits with `field filter not found in
-type csconfig.ProfileCfg`.
+**Tested version.** The profile and the escalation table are tested against the
+CrowdSec version stated above the profile, by a CI workflow that starts that
+image as LAPI only, pushes alerts through the real rán sink and reads the
+decisions back (scan and attack bans, escalation and cap, no decision for
+`probe`, no decision for an allowlisted IP). Renovate keeps the pinned image
+current, so a CrowdSec release that changes profile semantics fails CI first.
+Use the list key `filters:`; the singular `filter:` key is rejected and the LAPI
+exits with `field filter not found in type csconfig.ProfileCfg`. A comment-only
+YAML document after a `---` separator stops the profile list from loading
+further profiles, so keep comments inside a profile document.
 
 Verify with:
 
 ```bash
-cscli alerts list
+cscli alerts list -a
 cscli decisions list -o json
 ```
+
+`cscli alerts list` hides alerts without an active decision (probes,
+allowlisted sources) unless you pass `-a`.
+
+## What the ban protects
+
+A CrowdSec decision is only as useful as the component that enforces it.
+
+- A reverse proxy bouncer (Caddy, nginx, Traefik) only covers HTTP traffic
+  behind it. The trap ports stay open to a banned source unless a firewall
+  bouncer enforces the ban on the host, or `RAN_SHUN=on` closes the connections
+  at accept time (see [Quiet repeat offenders](/hardening#quiet-repeat-offenders)).
+- Persistent sources renew their ban: every alert after the cooldown adds a
+  decision, and the escalation pins at the 168h cap. Use `RAN_REPEAT_AFTER` and
+  `RAN_REPEAT_COOLDOWN` to slow the alert rate of sources that never leave.
+- The overlap between trap sources and the sites behind a proxy was small in
+  measurements, so the main value of the integration is detection and the
+  community sharing of what the honeypot sees, not protecting your own sites.
+
+## Reading the logs
+
+Sessions of UDP traps (`dns`, `ntp`, `snmp`, `sip`) log a source address that
+anyone can spoof: such lines never alert and must not be counted as attackers.
+When you count or rank sources in your log stack, filter on `transport=tcp`
+(the session log lines carry the `transport` attribute), for example in
+LogQL `{app="ran"} | json | transport="tcp"`.
+
+## Community sharing per class
+
+What reaches CrowdSec is decided in rán's sink and by your CAPI settings:
+
+| Class | Sent to the LAPI | Shared with the community |
+|---|---|---|
+| `scan` | yes (default `RAN_BAN_ON`) | yes, together with the bans your profile creates |
+| `attack` | yes (default `RAN_BAN_ON`) | yes |
+| `probe` | no, unless you list it in `RAN_BAN_ON` | not sent; if you list it, the alert is still shared even though `ran_noban` creates no decision |
+
+Alerts are `simulated: false`, so CrowdSec forwards them to the Central API
+when sharing is enabled; the profile decides bans only. Passwords never leave
+the host (the sink drops password-like meta keys and `RAN_LOG_PASSWORDS` only
+controls the logs). To keep everything local, disable CAPI sharing on the
+CrowdSec side or leave `probe` out of `RAN_BAN_ON`.
 
 
 ## CrowdSec behaviors to know

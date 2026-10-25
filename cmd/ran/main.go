@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/st0o0/ran/internal/config"
+	"github.com/st0o0/ran/internal/crowdsecprofile"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -32,6 +34,8 @@ func realMain(args []string) int {
 			return healthcheck()
 		case "check-config":
 			return checkConfig(os.Getenv, os.Stdout, os.Stderr)
+		case "crowdsec-profile":
+			return printCrowdSecProfile(os.Stdout)
 		case "version":
 			fmt.Println(version)
 			return 0
@@ -57,6 +61,16 @@ func realMain(args []string) int {
 
 	if err := run(ctx, cfg, logger, m, newMetricsServer(cfg.MetricsAddr, reg, startTime, cfg.EnabledTraps())); err != nil {
 		logger.Error("fatal", "error", err)
+		return 1
+	}
+	return 0
+}
+
+// printCrowdSecProfile writes the embedded example CrowdSec profile. It needs
+// no configuration.
+func printCrowdSecProfile(w io.Writer) int {
+	if _, err := io.WriteString(w, crowdsecprofile.YAML()); err != nil {
+		fmt.Fprintf(os.Stderr, "ran: %v\n", err)
 		return 1
 	}
 	return 0

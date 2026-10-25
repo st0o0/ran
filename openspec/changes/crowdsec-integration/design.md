@@ -27,3 +27,22 @@ Three profiles, in this order:
 
 - The test depends on a container image and some seconds of startup; the workflow has a timeout and retries the readiness probe, not the assertions.
 - A CrowdSec release can change profile semantics; that is exactly what the pinned tag plus a renovate PR is meant to surface.
+
+## Verified container facts
+
+Spike run against `crowdsecurity/crowdsec:v1.8.1`, digest `sha256:0f2523fa61ef507f15d953045cface490cc880670c62f2755ced17524107f71a` (also published as `ghcr.io/crowdsecurity/crowdsec`). The pin lives in `internal/crowdsecprofile/version.go` (`TestedImage`); a renovate regex custom manager in `renovate.json` keeps tag and digest current, because the shared docker preset only scans Dockerfiles, compose files and workflows, not a Go constant.
+
+- **LAPI only, no outbound traffic**: `DISABLE_AGENT=true` and `DISABLE_ONLINE_API=true` (the log shows "push and pull to Central API disabled"). `CROWDSEC_BYPASS_DB_VOLUME_CHECK=true` is required without a volume on `/var/lib/crowdsec/data`, otherwise the entrypoint prints "No volume mounted" and exits 0 without starting. The line `Error: no matches found` during startup (hub preparation) is harmless.
+- **Machine registration**: `AGENT_USERNAME` and `AGENT_PASSWORD` register a machine at startup (`Machine 'ran' successfully added to the local API`), no `cscli machines add` needed. The image also registers its own machine `localhost`.
+- **Bouncer registration**: `BOUNCER_KEY_<name>=<key>` registers a bouncer with that fixed key (`Registered bouncer for <name>`). The key is then used as `X-Api-Key` on `GET /v1/decisions?ip=<ip>`.
+- **Profile mount**: a read-only single-file bind mount `-v <file>:/etc/crowdsec/profiles.yaml:ro` works; the entrypoint prestages the rest of `/etc/crowdsec` with `rsync --ignore-existing`, so the mounted file wins. `docker cp` into a not yet started container does not work because `/etc/crowdsec` does not exist before the first start.
+- **Allowlist**: `cscli allowlists create <name> -d <description>` then `cscli allowlists add <name> <ip>`; `cscli allowlists check <ip>` confirms. The allowlist takes effect immediately, no restart. An alert for an allowlisted IP is dropped and not stored.
+- **Readiness**: `GET /health` on the LAPI port returns 200 once the server listens (machine and bouncer are registered before that). `docker exec <c> cscli lapi status` also works. Startup takes a few seconds; the test polls `/health` for up to 120 seconds.
+- **Port**: publish `-p 127.0.0.1::8080` and read the host port with `docker port <c> 8080/tcp`, so parallel runs never collide.
+- **Reading decisions**: the bouncer endpoint returns a JSON array or `null`; each row has `duration` (remaining time as a Go duration string such as `2h59m59s`), `origin`, `scope`, `type`, `value`. `cscli decisions list -o json` shows the same rows grouped under alerts.
+- **Reading alerts**: `cscli alerts list` hides alerts without an active decision (probe, allowlisted, expired). Use `-a`; `--ip` does not match them in this version, `--value <ip>` does: `cscli alerts list -a --value <ip> -o json --limit 0`.
+- **Speed**: nothing to tune. The profile is evaluated synchronously in `POST /v1/alerts`, so a decision is visible right after the alert is accepted (about 0.4 seconds per alert including the test's polling). The whole test takes about 7 seconds plus container start.
+- **Decisions accumulate**: every ban alert adds a new decision row; older rows are not replaced (after 7 alerts 7 rows exist, the longest one wins for the bouncer). The 168h cap therefore renews the ban with a fresh 168h row.
+- **Observed escalation** (alert n, longest remaining ban at read time): 1h, 2h59m59s, 8h59m59s, 27h, 80h59m59s, 167h59m59s, 167h59m59s. This matches 1h, 3h, 9h, 27h, 81h, then the 168h cap from the sixth alert on.
+- **Mutation checks** (both fail the integration test): with `min(168, ...)` (int literal) the sixth and seventh alert add a row that falls back to the base 1h, so the longest ban stays at 81h instead of reaching 168h; without `ran_noban` a following `Alert.Remediation == true` profile bans a probe for its own duration (4h in the test).
+- **Profile parsing pitfall**: a trailing YAML document that contains only comments after a `---` separator made the following profile (appended by the test) silently not load. Keep comments inside a profile document, never in a document of their own.

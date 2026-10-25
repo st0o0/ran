@@ -19,4 +19,4 @@
 ## 4. Verification
 
 - [x] 4.1 CI docs job runs the vitest suite; `AGENTS.md` note (new variable needs a register entry)
-- [ ] 4.2 `go test ./...`, `GOARCH=386` vet, lint, `openspec validate --all`, docs build
+- [x] 4.2 `go test ./...`, `GOARCH=386` vet, lint, `openspec validate --all`, docs build

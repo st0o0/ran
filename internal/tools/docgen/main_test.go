@@ -64,3 +64,19 @@ func TestRenderSettingsIsStable(t *testing.T) {
 		t.Error("addressless traps missing")
 	}
 }
+
+// TestGeneratedProfileIsCurrent fails when the embedded CrowdSec profile changed
+// without regenerating docs/crowdsec-profile.generated.md.
+func TestGeneratedProfileIsCurrent(t *testing.T) {
+	checkCurrent(t, profileOut, renderProfile())
+}
+
+func TestRenderProfileShape(t *testing.T) {
+	out := renderProfile()
+	if strings.Contains(out, "\r") || !strings.Contains(out, "```yaml\n") {
+		t.Error("profile fragment must be LF only and start a yaml fence")
+	}
+	if !strings.HasSuffix(out, "```\n") {
+		t.Error("fence not closed")
+	}
+}

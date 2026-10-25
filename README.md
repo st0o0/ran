@@ -282,6 +282,7 @@ exposes no catch-all or banner ports because they have no defaults.
 
 Command line helpers:
 
+- `ran crowdsec-profile` prints the example CrowdSec profile embedded in the binary (no configuration needed), for example `docker run --rm ghcr.io/st0o0/ran crowdsec-profile > profiles.yaml.local`. See [Escalation with CrowdSec profiles](#escalation-with-crowdsec-profiles).
 - `ran check-config` validates the environment without starting the traps. It
   prints the problem and how to fix it and exits 0 (valid) or 1 (invalid). It
   also warns on stderr when a removed variable is still set.
@@ -850,36 +851,29 @@ CrowdSec evaluates `profiles.yaml` only for alerts that carry no decisions,
 which is exactly what rán sends. Select on the class with the **event** form
 `Alert.Events[0].GetMeta("class")`: `Alert.GetMeta("class")` reads only
 alert-level meta and matches nothing. Profiles run top to bottom and stop at the
-first `on_success: break`, so put the `scan` profile first.
+first `on_success: break`, so the rán profiles must come before any generic one.
 
-```yaml
-# scan: one IP probing many protocols
-name: ran_scan
-filters:
-  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "scan"
-decisions:
-  - type: ban
-    scope: Ip
-    duration: 1h
-duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
-on_success: break
----
-# attack: credentials, commands or payloads
-name: ran_attack
-filters:
-  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "attack"
-decisions:
-  - type: ban
-    scope: Ip
-    duration: 1h
-duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
-on_success: break
-# probe: no profile, so a probe alert (only sent with RAN_BAN_ON=probe,...) never bans
+rán ships the profile that matches your binary. Print it and save it as
+`/etc/crowdsec/profiles.yaml` (or put it above your own profiles); there is no
+profile to copy by hand:
+
+```bash
+docker run --rm ghcr.io/st0o0/ran crowdsec-profile > profiles.yaml.local
 ```
 
-`duration_expr` overrides the profile `duration` (the fallback), and the newest
-decision replaces the older one. The `scan` class uses the same formula as
-`attack` in this example. If you want scanners to stay out longer, give
+The subcommand needs no configuration. The profile has three parts, in order:
+`ran_scan` and `ran_attack` ban their class with the escalating duration below,
+and `ran_noban` catches every other `custom/ran-*` alert (for example `probe`,
+which only reaches the LAPI when `RAN_BAN_ON` lists it), creates no decision and
+stops evaluation, so a later catch-all profile such as a stock
+`Remediation == true` ban never bans a probe. The documentation site shows the
+same file (generated from the binary's copy), and an integration test runs it
+against a pinned `crowdsecurity/crowdsec` image in CI (the tested version is stated on the docs page).
+
+`duration_expr` overrides the profile `duration` (the fallback). Decisions
+accumulate: every ban alert adds a decision row and older rows stay until they
+expire, so a bouncer enforces the ban while any row is active. The `scan` class
+uses the same formula as `attack`. If you want scanners to stay out longer, give
 the `scan` profile a harder formula, for example a larger base or a longer cap.
 
 | Alert for the IP | Prior decisions | Ban |
@@ -895,12 +889,12 @@ Two expression pitfalls, both verified against CrowdSec v1.8.1:
 
 - Use lowercase `min`. The capitalized `Min` does not compile and CrowdSec
   exits fatally with `unknown name Min`.
-- Use `%.0fh`, not `%dh`. `3 ^ n` is a float, so `%dh` silently falls back to
-  the base `duration` (`%!d(float64=...)`).
+- Use a float cap and `%.0fh`: `min(168, 3 ^ n)` returns an int at the cap and `%.0f` then fails silently; `%dh` fails the same way. Both fall back to
+  the base `duration` (1h). The integration test catches both.
 
 > **Prerequisite:** `duration_expr` requires CrowdSec 1.4 or later.
 
-The profile syntax above is verified against CrowdSec v1.8.1 (profile syntax,
+The profile syntax above is tested against CrowdSec v1.8.1 (profile syntax,
 expression and decisions tested). Use the list key `filters:`; the singular
 `filter:` key is rejected and the LAPI exits with `field filter not found in
 type csconfig.ProfileCfg`.
@@ -908,9 +902,19 @@ type csconfig.ProfileCfg`.
 Verify with:
 
 ```bash
-cscli alerts list
+cscli alerts list -a
 cscli decisions list -o json
 ```
+
+**What the ban protects.** A reverse proxy bouncer only covers HTTP behind it;
+the trap ports stay open to a banned source unless a firewall bouncer or
+`RAN_SHUN=on` enforces the ban there. Persistent sources renew their ban and the
+escalation pins at the 168h cap. The main value is detection and community
+sharing. **Reading the logs:** UDP source addresses are spoofable, so filter
+`transport=tcp` before counting attackers. **Sharing:** `scan` and `attack`
+alerts are sent and shared (default `RAN_BAN_ON`), `probe` is never sent unless
+you list it, and passwords never leave the host. Details are on the
+[CrowdSec page](docs/crowdsec.md).
 
 </details>
 

@@ -1,0 +1,30 @@
+# rán example CrowdSec profile. Put it in /etc/crowdsec/profiles.yaml, before any
+# generic profile, or print the one matching your binary with `ran crowdsec-profile`.
+# scan: one IP probing many protocols
+name: ran_scan
+filters:
+  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "scan"
+decisions:
+  - type: ban
+    scope: Ip
+    duration: 1h
+duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
+on_success: break
+---
+# attack: credentials, commands or payloads
+name: ran_attack
+filters:
+  - Alert.GetScenario() startsWith "custom/ran-" && Alert.Events[0].GetMeta("class") == "attack"
+decisions:
+  - type: ban
+    scope: Ip
+    duration: 1h
+duration_expr: "Sprintf('%.0fh', min(168.0, 3 ^ GetDecisionsCount(Alert.GetValue())))"
+on_success: break
+---
+# any other ran alert (for example probe): no decision, and stop here so a later
+# generic profile (for example a catch-all ban) cannot ban it
+name: ran_noban
+filters:
+  - Alert.GetScenario() startsWith "custom/ran-"
+on_success: break

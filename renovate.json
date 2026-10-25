@@ -1,4 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>st0o0/renovate-config:go", "local>st0o0/renovate-config:docker", "local>st0o0/renovate-config:pnpm"]
+  "extends": ["local>st0o0/renovate-config:go", "local>st0o0/renovate-config:docker", "local>st0o0/renovate-config:pnpm"],
+  "customManagers": [
+    {
+      "description": "CrowdSec image tag and digest used by the integration test and the docs",
+      "customType": "regex",
+      "managerFilePatterns": ["/^internal/crowdsecprofile/version\.go$/"],
+      "matchStrings": [
+        "// renovate: datasource=docker depName=(?<depName>\S+)\s+const TestedImage = \"[^:\"]+:(?<currentValue>[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]+)\""
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ]
 }

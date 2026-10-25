@@ -1,0 +1,36 @@
+name: CrowdSec integration
+
+on:
+  pull_request:
+    paths:
+      - 'internal/alert/**'
+      - 'internal/crowdsecprofile/**'
+      - '.github/workflows/crowdsec-it.yml'
+  schedule:
+    # Weekly, so a new CrowdSec release that changes profile semantics shows up.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crowdsec-it-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crowdsec:
+    name: Shipped profile against a real CrowdSec LAPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # The test starts the pinned crowdsecurity/crowdsec image (LAPI only) through
+      # the docker CLI and fails when escalation, class filtering or allowlists differ.
+      - name: Integration test
+        env:
+          RAN_CROWDSEC_IT: '1'
+        run: go test -tags crowdsec ./internal/alert/ -run CrowdSecIntegration -count=1 -v
