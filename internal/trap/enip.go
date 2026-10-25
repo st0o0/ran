@@ -171,14 +171,15 @@ func enipHeader(cmd uint16, session uint32, status uint32, ctxBytes [8]byte, dat
 func enipIdentityItem() []byte {
 	name := "1769-L33ER/A LOGIX5333ER"
 	b := binary.LittleEndian.AppendUint16(nil, 1) // encapsulation protocol version
-	// Socket address, big endian: family AF_INET, port 44818, address 0.0.0.0.
-	b = append(b, 0x00, 0x02, 0xAF, 0x12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	// Socket address, big endian: family AF_INET, port 44818, a private RFC 1918
+	// placeholder address (10.0.0.12, not a real host) and 8 zero bytes.
+	b = append(b, 0x00, 0x02, 0xAF, 0x12, 10, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0)
 	b = binary.LittleEndian.AppendUint16(b, 1)    // vendor ID
 	b = binary.LittleEndian.AppendUint16(b, 14)   // device type
 	b = binary.LittleEndian.AppendUint16(b, 166)  // product code
 	b = append(b, 20, 11)                         // revision
 	b = binary.LittleEndian.AppendUint16(b, 0x30) // status
-	b = binary.LittleEndian.AppendUint32(b, 0x00C0FFEE)
+	b = binary.LittleEndian.AppendUint32(b, 0x40A7D5E3)
 	b = append(b, byte(len(name)))
 	b = append(b, name...)
 	b = append(b, 3) // state: operational

@@ -47,7 +47,14 @@ const (
 	s7ErrCode  = 0x04
 )
 
-var errS7Malformed = errors.New("s7comm: not a TPKT packet")
+var (
+	// errS7NotTPKT is a header that is not TPKT at all (wrong version byte or
+	// reserved byte): cross-protocol noise as far as the first packet goes.
+	errS7NotTPKT = errors.New("s7comm: not a TPKT packet")
+	// errS7Malformed is a TPKT header with a valid version but a length below the
+	// header plus the smallest COTP unit.
+	errS7Malformed = errors.New("s7comm: malformed TPKT packet")
+)
 
 // S7Trap is a stub of an S7 PLC (ISO on TCP, port 102). It answers the COTP
 // connection request, the setup communication request and SZL reads with a
@@ -69,14 +76,14 @@ func NewS7Comm(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limi
 // readTPKT reads one TPKT (RFC 1006) packet. The declared length is checked
 // against s7MaxTPKT before anything is allocated, so the payload is never larger
 // than the bytes read. hdr is returned for diagnostics even on error. A length
-// above the cap is bufio.ErrTooLong; a bad version or a length below the header
-// is errS7Malformed.
+// above the cap is bufio.ErrTooLong; a bad version is errS7NotTPKT and a length
+// below the header is errS7Malformed.
 func readTPKT(r io.Reader) (hdr [4]byte, payload []byte, err error) {
 	if _, err = io.ReadFull(r, hdr[:]); err != nil {
 		return hdr, nil, err
 	}
 	if hdr[0] != 3 || hdr[1] != 0 {
-		return hdr, nil, errS7Malformed
+		return hdr, nil, errS7NotTPKT
 	}
 	total, ok := fitsInt(uint32(binary.BigEndian.Uint16(hdr[2:4])), s7MaxTPKT)
 	if !ok {
@@ -94,7 +101,8 @@ func readTPKT(r io.Reader) (hdr [4]byte, payload []byte, err error) {
 
 // s7Request is what the trap decodes from one TPKT payload.
 type s7Request struct {
-	// cotp is the COTP PDU type (high nibble kept for CR and CC).
+	// cotp is the COTP PDU type: the high nibble of the second byte. The low
+	// nibble is the credit (CR, CC) or a flag and never decides the type.
 	cotp byte
 	// srcRef is the source reference of a connection request.
 	srcRef [2]byte
@@ -117,7 +125,7 @@ func parseS7(p []byte) s7Request {
 		return req
 	}
 	li := int(p[0])
-	req.cotp = p[1]
+	req.cotp = p[1] & 0xF0
 	switch req.cotp {
 	case cotpCR:
 		if len(p) >= 6 {
@@ -178,6 +186,10 @@ func parseS7(p []byte) s7Request {
 			case req.userGroup == 3:
 				// Block functions (list blocks): read only, answered with an error.
 				req.kind = s7KindIdentify
+			case req.userGroup == 7 && (req.userSub == 1 || req.userSub == 3):
+				// Time functions: read clock (1) and read clock, following (3).
+				// Set clock (2, 4) is a write and stays unknown.
+				req.kind = s7KindIdentify
 			}
 		}
 	default:
@@ -236,7 +248,7 @@ const (
 	s7SystemName   = "SIMATIC 300(1)"
 	s7ModuleName   = "CPU 315-2 PN/DP"
 	s7Copyright    = "Original Siemens Equipment"
-	s7SerialNumber = "S C-X0RAN0000001"
+	s7SerialNumber = "S C-F5U412342021"
 	s7ModuleType   = "CPU 315-2 PN/DP"
 )
 
@@ -332,11 +344,27 @@ func s7Response(req s7Request) []byte {
 }
 
 func (t *S7Trap) handle(ctx context.Context, conn net.Conn, sess *Session) {
-	for range s7MaxPackets {
-		hdr, payload, err := readTPKT(conn)
+	r := bufio.NewReader(conn)
+	for i := range s7MaxPackets {
+		hdr, payload, err := readTPKT(r)
 		switch {
-		case errors.Is(err, errS7Malformed):
-			// Not S7: keep the four bytes that were read as the payload.
+		case errors.Is(err, errS7NotTPKT) && i == 0:
+			// The very first bytes are not TPKT: an HTTP request line, a TLS
+			// hello, an SSH banner, blank lines or another protocol's probe. That
+			// is cross-protocol noise and stays a probe, like modbus and catchall.
+			// Whatever arrived with the header (already buffered, nothing more is
+			// waited for) helps to name the protocol.
+			rest, _ := r.Peek(min(r.Buffered(), 12))
+			sniffed := sniffProtocol(append(append([]byte(nil), hdr[:]...), rest...))
+			sess.Log("s7comm_request",
+				slog.String("kind", "noise"),
+				slog.String("sniffed_protocol", sniffed),
+				slog.String("raw", hex.EncodeToString(hdr[:])))
+			sess.SetOutcome("probe")
+			return
+		case errors.Is(err, errS7NotTPKT), errors.Is(err, errS7Malformed):
+			// Garbage after valid traffic, or a TPKT header with an impossible
+			// length: keep the four bytes that were read as the payload.
 			raw := hex.EncodeToString(hdr[:])
 			sess.LogPayloadSize("s7comm_unknown", len(hdr), slog.String("raw", raw))
 			sess.Alert(ctx, map[string]string{"kind": s7KindUnknown})

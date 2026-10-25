@@ -23,7 +23,8 @@ const (
 	pjlMaxChunk = 1024
 	// pjlMaxTotal bounds the bytes read per session.
 	pjlMaxTotal = 64 << 10
-	// pjlMaxEvents bounds the PJL commands and print data runs served per session.
+	// pjlMaxEvents bounds the PJL commands served per session. Print data runs do
+	// not count; they are bounded by pjlMaxTotal.
 	pjlMaxEvents = 64
 	// pjlSampleBytes is the printable prefix of a print data run that is logged.
 	pjlSampleBytes = 64
@@ -45,7 +46,7 @@ var pjlUEL = []byte("\x1b%-12345X")
 // number is invented.
 const (
 	pjlModel  = "HP LaserJet M605dn"
-	pjlSerial = "CNRAN00001"
+	pjlSerial = "CNB8K12345"
 )
 
 // PJLTrap is a stub of a JetDirect printer (TCP 9100). PJL information queries
@@ -71,6 +72,8 @@ type pjlCommand struct {
 	kind string
 	verb string
 	what string
+	// arg is the sanitized echo token of an ECHO command (see pjlEchoToken).
+	arg string
 }
 
 var pjlFSVerbs = map[string]bool{
@@ -119,6 +122,8 @@ func classifyPJL(line string) (cmd pjlCommand, ok bool) {
 		return pjlCommand{kind: pjlKindFS, verb: verb}, true
 	case pjlSetVerbs[verb]:
 		return pjlCommand{kind: pjlKindSet, verb: verb}, true
+	case verb == "ECHO":
+		return pjlCommand{kind: pjlKindJob, verb: verb, arg: pjlEchoToken(line)}, true
 	case pjlJobVerbs[verb]:
 		return pjlCommand{kind: pjlKindJob, verb: verb}, true
 	default:
@@ -132,6 +137,36 @@ func pjlAttack(kind string) bool {
 }
 
 const pjlFF = "\r\n\f"
+
+// pjlMaxEchoBytes bounds the text an ECHO answer reflects.
+const pjlMaxEchoBytes = 32
+
+// pjlFilesysInfo is the static answer to @PJL INFO FILESYS: one writable volume.
+const pjlFilesysInfo = "@PJL INFO FILESYS\r\n[1 TABLE]\r\nVOLUME TOTAL SIZE FREE SPACE LOCATION LABEL STATUS\r\n" +
+	"0: 125829120 98566144 RAM DISK ? READ-WRITE" + pjlFF
+
+// pjlEchoToken returns the text after "@PJL ECHO" cut down to what an ECHO answer
+// may reflect: printable ASCII only (every other byte is dropped, which includes
+// ESC, so no escape sequence or UEL can come back), trimmed, at most
+// pjlMaxEchoBytes bytes. This is the only place where client text reaches a
+// response of the pjl trap.
+func pjlEchoToken(line string) string {
+	rest := strings.TrimSpace(line)
+	for range 2 { // skip "@PJL" and "ECHO"
+		i := strings.IndexAny(rest, " \t")
+		if i < 0 {
+			return ""
+		}
+		rest = strings.TrimLeft(rest[i:], " \t")
+	}
+	out := make([]byte, 0, pjlMaxEchoBytes)
+	for i := 0; i < len(rest) && len(out) < pjlMaxEchoBytes; i++ {
+		if c := rest[i]; c >= 0x20 && c < 0x7F {
+			out = append(out, c)
+		}
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // pjlResponse builds the fixed answer to a command. Nothing in it comes from the
 // request.
@@ -151,6 +186,8 @@ func pjlResponse(c pjlCommand) string {
 			return "@PJL USTATUS DEVICE\r\nCODE=10001\r\nDISPLAY=\"Ready\"\r\nONLINE=TRUE" + pjlFF
 		case "PAGECOUNT":
 			return "@PJL INFO PAGECOUNT\r\n1337" + pjlFF
+		case "FILESYS":
+			return pjlFilesysInfo
 		case "MEMORY":
 			return "@PJL INFO MEMORY\r\nTOTAL=268435456\r\nLARGEST=201326592" + pjlFF
 		}
@@ -162,7 +199,10 @@ func pjlResponse(c pjlCommand) string {
 	case pjlKindJob:
 		switch c.verb {
 		case "ECHO":
-			return "@PJL ECHO" + pjlFF
+			if c.arg == "" {
+				return "@PJL ECHO" + pjlFF
+			}
+			return "@PJL ECHO " + c.arg + pjlFF
 		case "USTATUS":
 			return "@PJL USTATUS DEVICE\r\nCODE=10001\r\nDISPLAY=\"Ready\"\r\nONLINE=TRUE" + pjlFF
 		case "INQUIRE", "DINQUIRE":
@@ -179,6 +219,34 @@ func stripUEL(b []byte) ([]byte, bool) {
 		return b, false
 	}
 	return bytes.ReplaceAll(b, pjlUEL, nil), true
+}
+
+// uelStripper removes UEL sequences from a stream of chunks, also when a
+// sequence is split across two reads. A trailing partial UEL (at most 9 bytes)
+// is held back and prepended to the next chunk; flush returns what is left at
+// the end of the stream.
+type uelStripper struct{ carry []byte }
+
+func (u *uelStripper) strip(chunk []byte) []byte {
+	data := chunk
+	if len(u.carry) > 0 {
+		data = append(append(make([]byte, 0, len(u.carry)+len(chunk)), u.carry...), chunk...)
+		u.carry = nil
+	}
+	data, _ = stripUEL(data)
+	for n := min(len(pjlUEL)-1, len(data)); n > 0; n-- {
+		if bytes.HasSuffix(data, pjlUEL[:n]) {
+			u.carry = append([]byte(nil), data[len(data)-n:]...)
+			return data[:len(data)-n]
+		}
+	}
+	return data
+}
+
+func (u *uelStripper) flush() []byte {
+	out := u.carry
+	u.carry = nil
+	return out
 }
 
 // printableSample returns at most n bytes of b with every non-printable byte
@@ -234,7 +302,9 @@ func readPJLChunk(r *bufio.Reader) ([]byte, error) {
 func (t *PJLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	r := bufio.NewReaderSize(conn, pjlMaxChunk)
 	var run pjlDataRun
+	var uel uelStripper
 	events, total := 0, 0
+	first := true
 
 	flush := func() {
 		if run.n == 0 {
@@ -254,28 +324,56 @@ func (t *PJLTrap) handle(ctx context.Context, conn net.Conn, sess *Session) {
 	}
 	defer flush()
 
-	for events < pjlMaxEvents {
-		chunk, err := readPJLChunk(r)
-		total += len(chunk)
-		if len(chunk) > 0 {
-			stripped, _ := stripUEL(chunk)
-			line := strings.TrimSpace(string(stripped))
+	// consume handles UEL-free bytes: PJL commands and print data. A line ends at
+	// CR, LF or CRLF. It reports false when the session is over.
+	consume := func(piece []byte) bool {
+		if first && len(bytes.TrimSpace(piece)) > 0 {
+			first = false
+			if label := sniffProtocol(piece); label != sniffUnknown {
+				// HTTP, TLS, SMB, SSH or RDP on a printer port is cross-protocol
+				// noise, not a print job: log it and stay a probe.
+				sess.Log("pjl_request", slog.String("kind", "noise"), slog.String("sniffed_protocol", label))
+				sess.SetOutcome("probe")
+				return false
+			}
+		}
+		for len(piece) > 0 {
+			n := len(piece)
+			if i := bytes.IndexAny(piece, "\r\n"); i >= 0 {
+				n = i + 1
+			}
+			seg := piece[:n]
+			piece = piece[n:]
+			line := strings.TrimSpace(string(seg))
 			cmd, isPJL := classifyPJL(line)
 			switch {
 			case isPJL:
 				flush()
 				events++
-				if !t.command(ctx, conn, sess, cmd, line) {
-					return
+				if !t.command(ctx, conn, sess, cmd, line) || events >= pjlMaxEvents {
+					return false
 				}
-			case len(bytes.TrimSpace(stripped)) > 0:
-				run.add(stripped)
+			case len(bytes.TrimSpace(seg)) > 0:
+				run.add(seg)
 			}
 		}
+		return true
+	}
+
+	for {
+		chunk, err := readPJLChunk(r)
+		total += len(chunk)
+		ok := consume(uel.strip(chunk))
 		if err != nil {
+			if ok {
+				consume(uel.flush())
+			}
 			if !errors.Is(err, io.EOF) {
 				setOutcome(sess, err)
 			}
+			return
+		}
+		if !ok {
 			return
 		}
 		if total > pjlMaxTotal {

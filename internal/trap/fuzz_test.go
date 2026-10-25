@@ -480,13 +480,17 @@ func FuzzReadPJL(f *testing.F) {
 		r := bufio.NewReaderSize(bytes.NewReader(data), pjlMaxChunk)
 		total := 0
 		var run pjlDataRun
+		var uel uelStripper
 		for {
 			chunk, err := readPJLChunk(r)
 			if len(chunk) > pjlMaxChunk {
 				t.Fatalf("chunk of %d bytes", len(chunk))
 			}
 			total += len(chunk)
-			stripped, _ := stripUEL(chunk)
+			stripped := uel.strip(chunk)
+			if len(uel.carry) > 16 {
+				t.Fatalf("carry of %d bytes", len(uel.carry))
+			}
 			line := strings.TrimSpace(string(stripped))
 			if cmd, ok := classifyPJL(line); ok {
 				switch cmd.kind {

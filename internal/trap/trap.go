@@ -284,12 +284,22 @@ func (s *Session) LogPayload(payloadType string, attrs ...slog.Attr) {
 	s.LogPayloadSize(payloadType, n, attrs...)
 }
 
+// maxPayloadBytes caps the payload byte counter of a session and each single
+// addition to it. It is the largest value an int holds on 32-bit platforms.
+const maxPayloadBytes = 1<<31 - 1
+
 // LogPayloadSize is LogPayload for callers that log only a bounded sample of the
 // data: size is the number of bytes received (at least 1 is counted).
 func (s *Session) LogPayloadSize(payloadType string, size int, attrs ...slog.Attr) {
 	s.payloads++
-	n := max(size, 1)
-	s.payloadBytes += n
+	// Both the addition and the total saturate at maxPayloadBytes, so a huge
+	// declared size cannot overflow an int on 32-bit platforms.
+	n := min(max(size, 1), maxPayloadBytes)
+	if s.payloadBytes > maxPayloadBytes-n {
+		s.payloadBytes = maxPayloadBytes
+	} else {
+		s.payloadBytes += n
+	}
 	s.flushConnect()
 	args := make([]any, 0, 2+len(attrs))
 	args = append(args, slog.String("action", "payload"))

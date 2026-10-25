@@ -34,6 +34,7 @@ const (
 
 	ippStatusOK                    = 0x0000
 	ippStatusNotAuthorized         = 0x0403
+	ippStatusNotFound              = 0x0406
 	ippStatusOperationNotSupp      = 0x0501
 	ippKindAttributes              = "attributes"
 	ippKindPrintJob                = "print_job"
@@ -49,6 +50,13 @@ const (
 	ippTagOperationAttrs      byte = 0x01
 	ippTagEnd                 byte = 0x03
 	ippTagPrinterAttrs        byte = 0x04
+)
+
+const (
+	// ippMaxDocBytes caps the document size reported in alert meta.
+	ippMaxDocBytes int64 = 1 << 31
+	// ippPrinterUpTime is the static printer-up-time value.
+	ippPrinterUpTime = 1893021
 )
 
 // IPPTrap is a stub of an IPP printer (CUPS style). It reuses the HTTP trap for
@@ -97,13 +105,20 @@ func parseIPP(b []byte) (ippRequest, error) {
 	off := 8
 	attrs := 0
 	lastName := ""
+	// Past ippMaxAttrs attributes the values are skipped, not inspected, and a
+	// structural error is tolerated; the scan goes on only to find the end tag.
+	bad := func() (ippRequest, error) {
+		if attrs > ippMaxAttrs {
+			return req, nil
+		}
+		return req, errIPPMalformed
+	}
 	for off < len(b) {
 		tag := b[off]
 		off++
 		if tag == ippTagEnd {
-			if off < len(b) {
-				req.docOffset = off
-			}
+			// The document starts here; off == len(b) means no document byte is in hand.
+			req.docOffset = off
 			return req, nil
 		}
 		if tag < 0x10 {
@@ -112,19 +127,19 @@ func parseIPP(b []byte) (ippRequest, error) {
 			continue
 		}
 		if off+2 > len(b) {
-			return req, errIPPMalformed
+			return bad()
 		}
 		nl := int(binary.BigEndian.Uint16(b[off : off+2]))
 		off += 2
 		if nl > ippMaxNameLen || off+nl+2 > len(b) {
-			return req, errIPPMalformed
+			return bad()
 		}
 		name := string(b[off : off+nl])
 		off += nl
 		vl := int(binary.BigEndian.Uint16(b[off : off+2]))
 		off += 2
 		if off+vl > len(b) {
-			return req, errIPPMalformed
+			return bad()
 		}
 		val := b[off : off+vl]
 		off += vl
@@ -134,15 +149,28 @@ func parseIPP(b []byte) (ippRequest, error) {
 		} else {
 			lastName = name
 		}
-		if attrs++; attrs > ippMaxAttrs {
-			// Stop inspecting; the rest is neither parsed nor logged.
-			return req, nil
-		}
-		if name == "job-name" && req.jobName == "" && (tag == 0x41 || tag == 0x42) {
+		if attrs++; attrs <= ippMaxAttrs && name == "job-name" && req.jobName == "" && (tag == 0x41 || tag == 0x42) {
 			req.jobName = truncateRunes(strings.ToValidUTF8(string(val[:min(len(val), ippMaxJobName)]), "?"), ippMaxJobName)
 		}
 	}
-	return req, errIPPMalformed
+	return bad()
+}
+
+// ippDocBytes returns the size of the document of a request, at most
+// ippMaxDocBytes. The bytes in hand after the end-of-attributes tag are counted;
+// when the body was cut at maxHTTPBody the declared Content-Length (clamped first)
+// is the better figure. Without an offset (the end tag was not found) it is 0.
+// A chunked body has no declared length, so a cut chunked document is
+// understated by everything past the cut.
+func ippDocBytes(req ippRequest, bodyLen int, truncated bool, contentLength int64) int64 {
+	if req.docOffset < 0 {
+		return 0
+	}
+	n := int64(bodyLen - req.docOffset)
+	if truncated {
+		n = max(n, contentLength-int64(req.docOffset))
+	}
+	return min(max(n, 0), ippMaxDocBytes)
 }
 
 // ippOpName names the operations the trap distinguishes; others get their code.
@@ -174,11 +202,12 @@ func ippOpName(op uint16) string {
 	return "op-0x" + strconv.FormatUint(uint64(op), 16)
 }
 
-// ippKindOf classifies an operation: queries are probes, job submission is
-// print_job, everything else is other.
+// ippKindOf classifies an operation: read-only queries (Get-Printer-Attributes,
+// Get-Jobs, Get-Job-Attributes, Validate-Job and the CUPS listings) are probes,
+// job submission is print_job, everything else is other.
 func ippKindOf(op uint16) (kind string, attack bool) {
 	switch op {
-	case ippOpGetPrinterAttrs, ippOpGetJobs, ippOpValidateJob, ippOpCUPSGetDefault, ippOpCUPSGetPrinters:
+	case ippOpGetPrinterAttrs, ippOpGetJobs, ippOpGetJobAttributes, ippOpValidateJob, ippOpCUPSGetDefault, ippOpCUPSGetPrinters:
 		return ippKindAttributes, false
 	case ippOpPrintJob, ippOpCreateJob, ippOpSendDocument, ippOpSendURI:
 		return ippKindPrintJob, true
@@ -231,8 +260,11 @@ func ippPrinterAttrs() []byte {
 	w.integer(0x23, "printer-state", ippPrinterState)
 	w.str(0x44, "printer-state-reasons", "none")
 	w.boolean("printer-is-accepting-jobs", true)
-	w.str(0x44, "ipp-versions-supported", "1.1")
-	w.str(0x44, "", "2.0")
+	w.str(0x44, "ipp-versions-supported", "1.0")
+	for _, v := range []string{"1.1", "2.0", "2.1", "2.2"} {
+		w.str(0x44, "", v)
+	}
+	w.integer(0x21, "printer-up-time", ippPrinterUpTime)
 	w.integer(0x23, "operations-supported", ippOpPrintJob)
 	for _, op := range []uint32{ippOpValidateJob, ippOpCreateJob, ippOpSendDocument, ippOpCancelJob, ippOpGetJobAttributes, ippOpGetJobs, ippOpGetPrinterAttrs} {
 		w.integer(0x23, "", op)
@@ -300,14 +332,7 @@ func (t *IPPTrap) handle(w http.ResponseWriter, r *http.Request) {
 
 	kind, attack := ippKindOf(ipp.operation)
 	op := ippOpName(ipp.operation)
-	docBytes := 0
-	if ipp.docOffset >= 0 {
-		docBytes = len(req.body) - ipp.docOffset
-	}
-	if req.truncated {
-		// The body was cut at maxHTTPBody: the declared length is the best size.
-		docBytes = max(docBytes, int(max(r.ContentLength, 0))-max(ipp.docOffset, 0))
-	}
+	docBytes := ippDocBytes(ipp, len(req.body), req.truncated, r.ContentLength)
 	attrs := append(req.attrs, slog.String("kind", kind), slog.String("operation", op))
 
 	if attack || req.jndi {
@@ -315,16 +340,21 @@ func (t *IPPTrap) handle(w http.ResponseWriter, r *http.Request) {
 		if ipp.jobName != "" {
 			cmd += " job-name=" + ipp.jobName
 		}
+		// The alert vocabulary has no "attributes": a JNDI string in a read-only
+		// request is reported as other.
 		req.meta["kind"] = kind
+		if !attack {
+			req.meta["kind"] = ippKindOther
+		}
 		req.meta["operation"] = op
-		req.meta["document_bytes"] = strconv.Itoa(docBytes)
+		req.meta["document_bytes"] = strconv.FormatInt(docBytes, 10)
 		if ipp.jobName != "" {
 			req.meta["job_name"] = metaCommandText(ipp.jobName)
 		}
 		req.attrs = attrs
 		req.command(cmd)
 		if docBytes > 0 {
-			sess.LogPayloadSize("ipp_document", docBytes, slog.Int("bytes", docBytes))
+			sess.LogPayloadSize("ipp_document", int(min(docBytes, int64(maxPayloadBytes))), slog.Int64("bytes", docBytes))
 		}
 		sess.Alert(r.Context(), req.meta)
 	} else {
@@ -334,6 +364,9 @@ func (t *IPPTrap) handle(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", "application/ipp")
 	w.WriteHeader(http.StatusOK)
 	switch {
+	case ipp.operation == ippOpGetJobAttributes:
+		// There is no job to describe.
+		_, _ = w.Write(ippResponse(ipp, ippStatusNotFound, false))
 	case !attack:
 		_, _ = w.Write(ippResponse(ipp, ippStatusOK, ipp.operation == ippOpGetPrinterAttrs || ipp.operation == ippOpCUPSGetDefault || ipp.operation == ippOpCUPSGetPrinters))
 	case kind == ippKindPrintJob:

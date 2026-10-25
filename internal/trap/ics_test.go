@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/st0o0/ran/internal/alert"
 	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
@@ -266,10 +267,47 @@ func TestS7MalformedAndOversized(t *testing.T) {
 		}
 		waitAttack(t, it.sink)
 	})
-	t.Run("not TPKT", func(t *testing.T) {
+	t.Run("not TPKT first input is cross-protocol noise", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name  string
+			in    []byte
+			label string
+		}{
+			{"http request line", []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), sniffHTTP},
+			{"http post", []byte("POST /a HTTP/1.1\r\n\r\n"), sniffHTTP},
+			{"tls hello", []byte{0x16, 0x03, 0x01, 0x00, 0xA5, 0x01, 0x00, 0x00, 0xA1, 0x03, 0x03}, sniffTLS},
+			{"blank lines", []byte("\r\n\r\n"), sniffUnknown},
+			{"ssh banner", []byte("SSH-2.0-OpenSSH_9.6\r\n"), sniffSSH},
+			{"other text", []byte("hello there\r\n"), sniffUnknown},
+			{"modbus frame", []byte{0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1}, sniffUnknown},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				it := startICS(t, "s7comm", buildS7)
+				conn := dialTrap(t, it.addr)
+				_, _ = conn.Write(tc.in)
+				_ = conn.Close()
+				if got := it.sink.waitOutcome(t); got != alert.ClassProbe {
+					t.Errorf("class = %s, want probe", got)
+				}
+				if hasClass(it.sink.snapshot(), alert.ClassAttack) {
+					t.Error("noise produced an attack")
+				}
+				waitUntil(t, func() bool { return strings.Contains(it.logs.String(), `"sniffed_protocol":"`+tc.label+`"`) })
+				if strings.Contains(it.logs.String(), `"action":"payload"`) {
+					t.Error("noise logged a payload")
+				}
+			})
+		}
+	})
+	t.Run("not TPKT after valid traffic stays unknown", func(t *testing.T) {
 		t.Parallel()
 		it := startICS(t, "s7comm", buildS7)
 		conn := dialTrap(t, it.addr)
+		_, _ = conn.Write(s7CR())
+		readS7(t, conn)
 		_, _ = conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
 		ev := waitAttack(t, it.sink)
 		assertMetaKeys(t, ev, "kind")
@@ -496,4 +534,237 @@ func TestENIPStopClosesConnection(t *testing.T) {
 	_, _ = conn.Write(enipReq(enipRegisterSession, 0, []byte{1, 0, 0, 0}))
 	readENIPResp(t, conn)
 	assertStopClosesConn(t, it, conn)
+}
+
+// s7UserReq builds a userdata request of a function group and subfunction.
+func s7UserReq(group, sub byte) []byte {
+	pdu := []byte{s7ProtocolID, s7Userdata, 0, 0, 0, 7, 0, 8, 0, 4}
+	pdu = append(pdu, 0x00, 0x01, 0x12, 0x04, 0x11, 0x40|group, sub, 0x01)
+	pdu = append(pdu, 0x0A, 0x00, 0x00, 0x00)
+	return s7TPKT(append([]byte{0x02, cotpDT, 0x80}, pdu...))
+}
+
+func TestS7UserdataGroups(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		group, sub byte
+		attack     bool
+	}{
+		{"block functions list blocks", 3, 1, false},
+		{"block functions get block info", 3, 3, false},
+		{"time read clock", 7, 1, false},
+		{"time read clock following", 7, 3, false},
+		{"time set clock", 7, 2, true},
+		{"time set clock following", 7, 4, true},
+		{"security", 5, 1, true},
+		{"unknown group", 9, 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			it := startICS(t, "s7comm", buildS7)
+			conn := dialTrap(t, it.addr)
+			_, _ = conn.Write(s7CR())
+			readS7(t, conn)
+			_, _ = conn.Write(s7UserReq(tc.group, tc.sub))
+			resp := readS7(t, conn)
+			if resp[3+1] != s7Userdata && resp[3+1] != s7AckData {
+				t.Errorf("response = %x", resp)
+			}
+			if tc.attack {
+				ev := waitAttack(t, it.sink)
+				assertMetaKeys(t, ev, "kind")
+				if ev.Meta["kind"] != s7KindUnknown {
+					t.Errorf("kind = %s", ev.Meta["kind"])
+				}
+				return
+			}
+			if !bytes.Contains(resp, []byte{0x81, 0x04}) {
+				t.Errorf("response lacks the function-not-supported code: %x", resp)
+			}
+			_ = conn.Close()
+			if got := it.sink.waitOutcome(t); got != alert.ClassProbe {
+				t.Errorf("class = %s, want probe", got)
+			}
+			if hasClass(it.sink.snapshot(), alert.ClassAttack) {
+				t.Error("read-only userdata produced an attack")
+			}
+			if strings.Contains(it.logs.String(), `"action":"payload"`) {
+				t.Error("read-only userdata logged a payload")
+			}
+		})
+	}
+}
+
+func TestS7COTPTypes(t *testing.T) {
+	t.Parallel()
+	cr := func(typ byte) []byte {
+		return s7TPKT([]byte{0x11, typ, 0, 0, 0x12, 0x34, 0, 0xC0, 1, 0x0A, 0xC1, 2, 1, 0, 0xC2, 2, 1, 2})
+	}
+	t.Run("connection request with any credit nibble", func(t *testing.T) {
+		t.Parallel()
+		for _, typ := range []byte{0xE0, 0xE1, 0xEF} {
+			it := startICS(t, "s7comm", buildS7)
+			conn := dialTrap(t, it.addr)
+			_, _ = conn.Write(cr(typ))
+			cc := readS7(t, conn)
+			if cc[1] != cotpCC || cc[2] != 0x12 || cc[3] != 0x34 {
+				t.Errorf("CR 0x%02x: confirm = %x", typ, cc)
+			}
+		}
+	})
+	t.Run("disconnect request ends the session as a probe", func(t *testing.T) {
+		t.Parallel()
+		for _, typ := range []byte{0x80, 0x81} {
+			it := startICS(t, "s7comm", buildS7)
+			conn := dialTrap(t, it.addr)
+			_, _ = conn.Write(cr(cotpCR))
+			readS7(t, conn)
+			_, _ = conn.Write(s7TPKT([]byte{0x06, typ, 0, 0, 0x12, 0x34, 0x00}))
+			if _, err := io.Copy(io.Discard, conn); err != nil {
+				t.Errorf("DR 0x%02x: want a clean close: %v", typ, err)
+			}
+			if got := it.sink.waitOutcome(t); got != alert.ClassProbe {
+				t.Errorf("DR 0x%02x: class = %s, want probe", typ, got)
+			}
+			if hasClass(it.sink.snapshot(), alert.ClassAttack) {
+				t.Errorf("DR 0x%02x produced an attack", typ)
+			}
+		}
+	})
+	t.Run("unknown type is unknown", func(t *testing.T) {
+		t.Parallel()
+		it := startICS(t, "s7comm", buildS7)
+		conn := dialTrap(t, it.addr)
+		_, _ = conn.Write(s7TPKT([]byte{0x02, 0x50, 0x80}))
+		ev := waitAttack(t, it.sink)
+		assertMetaKeys(t, ev, "kind")
+		if ev.Meta["kind"] != s7KindUnknown {
+			t.Errorf("kind = %s", ev.Meta["kind"])
+		}
+		if !strings.Contains(it.logs.String(), `"cotp_type":80`) {
+			t.Errorf("cotp type missing from log: %s", it.logs.String())
+		}
+	})
+}
+
+func TestParseS7COTPNibble(t *testing.T) {
+	t.Parallel()
+	for _, b := range []byte{0xE0, 0xE1, 0xEF} {
+		if got := parseS7([]byte{0x11, b, 0, 0, 0x12, 0x34}).cotp; got != cotpCR {
+			t.Errorf("type of 0x%02x = 0x%02x, want CR", b, got)
+		}
+	}
+	if got := parseS7([]byte{0x06, 0x81, 0, 0, 0, 0}).cotp; got != cotpDR {
+		t.Errorf("type of 0x81 = 0x%02x, want DR", got)
+	}
+}
+
+func TestENIPPacketLimit(t *testing.T) {
+	t.Parallel()
+	it := startICS(t, "enip", buildENIP)
+	conn := dialTrap(t, it.addr)
+	// Lockstep, so no unread input turns the close into a reset that eats answers.
+	for i := range enipMaxPackets {
+		if _, err := conn.Write(enipReq(enipListServices, 0, nil)); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		if p := readENIPResp(t, conn); p.command != enipListServices {
+			t.Fatalf("answer %d = %+v", i, p)
+		}
+	}
+	// The 65th packet is not served: the trap has closed the connection.
+	_, _ = conn.Write(enipReq(enipListServices, 0, nil))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if p, err := readENIP(conn); err == nil {
+		t.Errorf("packet %d was answered: %+v", enipMaxPackets+1, p)
+	}
+}
+
+// The fixed identities carry no marker of this project and no obviously made up
+// value.
+func TestFixedIdentitiesHaveNoTells(t *testing.T) {
+	t.Parallel()
+	for name, s := range map[string]string{"s7 serial": s7SerialNumber, "pjl serial": pjlSerial} {
+		if strings.Contains(strings.ToUpper(s), "RAN") {
+			t.Errorf("%s %q names the project", name, s)
+		}
+	}
+	id := enipIdentityItem()
+	if bytes.Contains(id, binary.LittleEndian.AppendUint32(nil, 0x00C0FFEE)) {
+		t.Error("ENIP identity carries a joke serial number")
+	}
+	// Socket address: AF_INET, port 44818, a non-zero private placeholder address.
+	if !bytes.Contains(id, []byte{0x00, 0x02, 0xAF, 0x12, 10, 0, 0, 12}) {
+		t.Errorf("ENIP socket address = %x", id[6:22])
+	}
+}
+
+// The payload counter saturates instead of wrapping, also on 32-bit platforms.
+func TestPayloadCounterSaturates(t *testing.T) {
+	t.Parallel()
+	sess := NewSession("test", alert.TransportTCP, "127.0.0.1", 1, 1, quietLogger())
+	sess.LogPayloadSize("a", 100)
+	if sess.payloadBytes != 100 {
+		t.Fatalf("payload bytes = %d", sess.payloadBytes)
+	}
+	sess.LogPayloadSize("a", maxPayloadBytes)
+	sess.LogPayloadSize("a", maxPayloadBytes)
+	sess.LogPayloadSize("a", 1)
+	if sess.payloadBytes != maxPayloadBytes {
+		t.Errorf("payload bytes = %d, want the cap %d", sess.payloadBytes, maxPayloadBytes)
+	}
+	sess = NewSession("test", alert.TransportTCP, "127.0.0.1", 1, 1, quietLogger())
+	sess.LogPayloadSize("a", int(^uint(0)>>1)) // the largest int of the platform
+	if sess.payloadBytes != maxPayloadBytes {
+		t.Errorf("payload bytes = %d, want the cap", sess.payloadBytes)
+	}
+}
+
+// RAN_TRAPS=s7comm,enip,pjl,ipp enables all four traps on their default ports,
+// and the registry builds them.
+func TestICSTrapsEnabledByConfig(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"RAN_TRAPS": "s7comm,enip,pjl,ipp"}
+	cfg, err := config.Load(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := map[string]string{"s7comm": ":102", "enip": ":44818", "pjl": ":9100", "ipp": ":631"}
+	if got := cfg.EnabledTraps(); len(got) != len(want) {
+		t.Fatalf("enabled traps = %v", got)
+	}
+	for name, port := range want {
+		if got := cfg.TrapAddr(name); got != port {
+			t.Errorf("%s address = %q, want %q", name, got, port)
+		}
+	}
+	m := metrics.New(prometheus.NewRegistry(), "test")
+	traps, err := CreateTraps(cfg, quietLogger(), m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), nil)
+	if err != nil {
+		t.Fatalf("CreateTraps: %v", err)
+	}
+	if len(traps) != 4 {
+		t.Fatalf("created %d traps, want 4", len(traps))
+	}
+	var s7 *S7Trap
+	var en *ENIPTrap
+	var pj *PJLTrap
+	var ip *IPPTrap
+	for _, tr := range traps {
+		switch v := tr.(type) {
+		case *S7Trap:
+			s7 = v
+		case *ENIPTrap:
+			en = v
+		case *PJLTrap:
+			pj = v
+		case *IPPTrap:
+			ip = v
+		}
+	}
+	if s7 == nil || en == nil || pj == nil || ip == nil {
+		t.Errorf("types = %T", traps)
+	}
 }

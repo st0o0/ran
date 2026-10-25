@@ -14,11 +14,11 @@ Industrial and printer services are scanned constantly and are cheap to emulate 
 
 ### New Capabilities
 
-- `trap-s7comm`, `trap-enip`, `trap-pjl`, `trap-ipp`.
+- `trap-ics-printer`: one capability that covers the four traps `s7comm`, `enip`, `pjl` and `ipp`.
 
 ### Modified Capabilities
 
-- `config-traps-list`: four traps added.
+None. The trap names are registered in `DefaultPorts`, `ValidTraps` and `Registry`; the `config-traps-list` capability has no delta in this change.
 
 ## Impact
 

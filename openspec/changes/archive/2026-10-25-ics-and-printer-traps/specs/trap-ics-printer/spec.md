@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: S7comm trap
-The `s7comm` trap SHALL answer a COTP connection request and the S7 setup communication request with valid static responses and an `SZL` read (module identification `0x0011`, component identification `0x001C`) with a fixed, invented identity. Read variable requests SHALL be answered with an S7 error and stay a probe. Write variable, block download and upload, PLC control and stop, and any unknown function SHALL be recorded as payload, answered with an S7 error and raise an alert whose `kind` is `write`, `control` or `unknown`. The identity SHALL be static, not seeded.
+The `s7comm` trap SHALL answer a COTP connection request and the S7 setup communication request with valid static responses and an `SZL` read (module identification `0x0011`, component identification `0x001C`) with a fixed, invented identity. Read variable requests, block-function userdata (group 3) and the read-clock userdata functions (group 7, subfunctions 1 and 3) SHALL be answered with an S7 error and stay a probe. The COTP PDU type SHALL be compared by its high nibble. Write variable, block download and upload, PLC control and stop, and any unknown function SHALL be recorded as payload, answered with an S7 error and raise an alert whose `kind` is `write`, `control` or `unknown`. The identity SHALL be static, not seeded.
 
 #### Scenario: Setup and read
 - **WHEN** a client connects, negotiates and reads the module identification
@@ -15,8 +15,12 @@ The `s7comm` trap SHALL answer a COTP connection request and the S7 setup commun
 - **WHEN** the TPKT length exceeds 1024 bytes
 - **THEN** the connection is closed with outcome `too_long` without allocating that length
 
-#### Scenario: Not TPKT
-- **WHEN** the first four bytes are not a TPKT header
+#### Scenario: Cross-protocol noise
+- **WHEN** the first four bytes are not a TPKT header (an HTTP request line, a TLS hello, an SSH banner, blank lines or any other bytes)
+- **THEN** they are logged with a `sniffed_protocol` label, no alert is raised, nothing is answered, the connection is closed and the session stays a `probe`
+
+#### Scenario: Not TPKT after valid traffic
+- **WHEN** bytes that are not a TPKT header arrive after a valid packet, or a TPKT header declares a length below the minimum
 - **THEN** they are logged as payload, an alert with `kind` `unknown` is raised and the connection is closed
 
 ### Requirement: EtherNet/IP trap
@@ -35,7 +39,7 @@ The `enip` trap SHALL answer `ListIdentity`, `ListServices`, `ListInterfaces` an
 - **THEN** the connection is closed with outcome `too_long` without allocating that length
 
 ### Requirement: PJL trap
-The `pjl` trap SHALL answer `@PJL INFO ID|STATUS|CONFIG|VARIABLES|USTATUS` and `@PJL ECHO` with static text that contains nothing from the request. Filesystem commands SHALL be recorded as commands (`kind` `fs_command`) and refused. `SET`, `DEFAULT` and similar commands SHALL be recorded as commands (`kind` `set`) and refused. Raw print data SHALL be counted as payload bytes; only its length, a SHA-256 prefix and a printable prefix of at most 64 bytes SHALL be logged and none of it stored. The session SHALL read at most 64 KiB and serve at most 64 PJL commands.
+The `pjl` trap SHALL answer `@PJL INFO ID|STATUS|CONFIG|VARIABLES|USTATUS|FILESYS` with static text that contains nothing from the request, and `@PJL ECHO <text>` with the same text cut to printable ASCII and at most 32 bytes (the only reflection). Lines SHALL end with CR, LF or CRLF, and a UEL sequence SHALL be stripped also when it is split across two reads. A first chunk that is HTTP, TLS, SMB, SSH or RDP traffic SHALL be a `probe`: logged with its `sniffed_protocol` label, not answered and not counted as print data. Filesystem commands SHALL be recorded as commands (`kind` `fs_command`) and refused. `SET`, `DEFAULT` and similar commands SHALL be recorded as commands (`kind` `set`) and refused. Raw print data SHALL be counted as payload bytes; only its length, a SHA-256 prefix and a printable prefix of at most 64 bytes SHALL be logged and none of it stored. The session SHALL read at most 64 KiB and serve at most 64 PJL commands.
 
 #### Scenario: Info query
 - **WHEN** a client sends `@PJL INFO ID`
@@ -45,12 +49,16 @@ The `pjl` trap SHALL answer `@PJL INFO ID|STATUS|CONFIG|VARIABLES|USTATUS` and `
 - **WHEN** a client sends `@PJL FSDIR NAME="0:\"`
 - **THEN** a command is logged, an alert with `kind` `fs_command` is raised and the session is `attack`
 
+#### Scenario: Cross-protocol noise
+- **WHEN** a client sends an HTTP request line to the printer port
+- **THEN** it is logged with `sniffed_protocol` `http`, no print data is counted and the session is a `probe`
+
 #### Scenario: Print data
 - **WHEN** a client sends PostScript or PCL data after the PJL header
 - **THEN** a payload with length, hash prefix and a sanitized 64 byte prefix is logged, an alert with `kind` `print_data` is raised and the data is not stored
 
 ### Requirement: IPP trap
-The `ipp` trap SHALL answer `Get-Printer-Attributes` over HTTP with a valid IPP response of static attributes, and `Get-Jobs` and `Validate-Job` with a successful response; no value of the request SHALL appear in a response. `Print-Job`, `Create-Job`, `Send-Document` and `Send-URI` SHALL be recorded as a command (`kind` `print_job`) with the operation, the job name (bounded) and the document size only, and refused with `client-error-not-authorized`. Every other operation SHALL be recorded as a command (`kind` `other`) and refused with `server-error-operation-not-supported`. Read-only HTTP methods SHALL stay a probe; other methods and a `POST` that is not IPP SHALL be commands.
+The `ipp` trap SHALL answer `Get-Printer-Attributes` over HTTP with a valid IPP response of static attributes (advertising IPP 1.0, 1.1, 2.0, 2.1 and 2.2 and a static `printer-up-time`), `Get-Jobs` and `Validate-Job` with a successful response and `Get-Job-Attributes` with `client-error-not-found`, all as a probe (a JNDI string in such a request makes it a command with `kind` `other`); no value of the request SHALL appear in a response. `Print-Job`, `Create-Job`, `Send-Document` and `Send-URI` SHALL be recorded as a command (`kind` `print_job`) with the operation, the job name (bounded) and the document size only, and refused with `client-error-not-authorized`. The document size SHALL be the bytes after the end-of-attributes tag, or the declared `Content-Length` minus the attribute bytes when the body was cut, clamped to 2 GiB; no declared value SHALL be added unbounded to the session payload counter. Every other operation SHALL be recorded as a command (`kind` `other`) and refused with `server-error-operation-not-supported`. Read-only HTTP methods SHALL stay a probe; other methods and a `POST` that is not IPP SHALL be commands.
 
 #### Scenario: Printer attributes
 - **WHEN** a client posts `Get-Printer-Attributes`
