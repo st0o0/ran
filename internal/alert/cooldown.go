@@ -38,7 +38,7 @@ type cooldownFilter struct {
 	// created with, so entries are not ordered by expiry any more: the sweep
 	// stops at the first live entry and later expired ones wait for it or for
 	// eviction (the map stays bounded).
-	offenders *Offenders
+	offenders *offenderTable
 }
 
 func newCooldownFilter(window time.Duration, maxEntries int) *cooldownFilter {
@@ -80,7 +80,7 @@ func (d *cooldownFilter) allow(ip string, class Class) (key string, slot uint64,
 		}
 	}
 
-	win = d.offenders.WindowFor(ip, class, d.window)
+	win = d.offenders.windowFor(ip, class, d.window)
 	key = cooldownKey(ip, class)
 	d.nextSlot++
 	if el, found := d.seen[key]; found {

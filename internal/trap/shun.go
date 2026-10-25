@@ -12,11 +12,18 @@ type shunner interface {
 }
 
 // CanShun reports whether r can shun sources (it implements Shunned and
-// ShunRejected, as the Sensor does). Startup uses it to fail loudly when RAN_SHUN
-// is on but the reporter handed to the traps would silently never shun.
+// ShunRejected, as the Sensor does) and, if it reports it, whether shunning is
+// actually active (the Sensor's sink supplied a shun table with RAN_SHUN on).
+// Startup uses it to fail loudly when RAN_SHUN is on but the reporter handed to
+// the traps would silently never shun.
 func CanShun(r Reporter) bool {
-	_, ok := r.(shunner)
-	return ok
+	if _, ok := r.(shunner); !ok {
+		return false
+	}
+	if a, ok := r.(interface{ ShunActive() bool }); ok {
+		return a.ShunActive()
+	}
+	return true
 }
 
 // closeIfShunned closes conn and reports true when its peer is in a shun window

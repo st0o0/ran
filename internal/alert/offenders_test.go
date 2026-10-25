@@ -17,12 +17,12 @@ import (
 	"github.com/st0o0/ran/internal/metrics"
 )
 
-func testOffenders(t *testing.T, cfg OffenderConfig) (*Offenders, *fakeClock, *lockedBuffer) {
+func testOffenders(t *testing.T, cfg offenderConfig) (*offenderTable, *fakeClock, *lockedBuffer) {
 	t.Helper()
 	buf := &lockedBuffer{}
 	clk := newFakeClock()
 	cfg.Now = clk.Now
-	return NewOffenders(cfg, slog.New(slog.NewJSONHandler(buf, nil))), clk, buf
+	return newOffenderTable(cfg, slog.New(slog.NewJSONHandler(buf, nil))), clk, buf
 }
 
 func counterValue(t *testing.T, c prometheus.Collector) float64 {
@@ -48,78 +48,78 @@ func counterValue(t *testing.T, c prometheus.Collector) float64 {
 
 func TestShunWindowOpensAndEnds(t *testing.T) {
 	t.Parallel()
-	o, clk, _ := testOffenders(t, OffenderConfig{Shun: true})
+	o, clk, _ := testOffenders(t, offenderConfig{Shun: true})
 	ip := "8.8.8.8"
-	if o.Shunned(ip) {
+	if o.shunned(ip) {
 		t.Fatal("shunned before any alert")
 	}
-	o.Accepted(ip, ClassAttack, time.Hour)
-	if !o.Shunned(ip) {
+	o.accepted(ip, ClassAttack, time.Hour)
+	if !o.shunned(ip) {
 		t.Fatal("not shunned right after an accepted alert")
 	}
-	if o.Shunned("1.1.1.1") {
+	if o.shunned("1.1.1.1") {
 		t.Error("another source is shunned")
 	}
 	clk.Advance(59 * time.Minute)
-	if !o.Shunned(ip) {
+	if !o.shunned(ip) {
 		t.Error("window ended early")
 	}
 	clk.Advance(2 * time.Minute)
-	if o.Shunned(ip) {
+	if o.shunned(ip) {
 		t.Error("still shunned after the window")
 	}
 }
 
 func TestShunAppliesToAllClassesOfTheSource(t *testing.T) {
 	t.Parallel()
-	o, _, _ := testOffenders(t, OffenderConfig{Shun: true})
-	o.Accepted("8.8.8.8", ClassScan, time.Hour)
+	o, _, _ := testOffenders(t, offenderConfig{Shun: true})
+	o.accepted("8.8.8.8", ClassScan, time.Hour)
 	// The IPv4-mapped form is the same source.
-	if !o.Shunned("::ffff:8.8.8.8") {
+	if !o.shunned("::ffff:8.8.8.8") {
 		t.Error("mapped address is not shunned")
 	}
 }
 
 func TestShunOffByDefaultAndProbeNeverShuns(t *testing.T) {
 	t.Parallel()
-	off, _, _ := testOffenders(t, OffenderConfig{})
-	off.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	if off.Shunned("8.8.8.8") {
+	off, _, _ := testOffenders(t, offenderConfig{})
+	off.accepted("8.8.8.8", ClassAttack, time.Hour)
+	if off.shunned("8.8.8.8") {
 		t.Error("shunned with shun off")
 	}
-	on, _, _ := testOffenders(t, OffenderConfig{Shun: true})
-	on.Accepted("8.8.8.8", ClassProbe, time.Hour)
-	if on.Shunned("8.8.8.8") {
+	on, _, _ := testOffenders(t, offenderConfig{Shun: true})
+	on.accepted("8.8.8.8", ClassProbe, time.Hour)
+	if on.shunned("8.8.8.8") {
 		t.Error("probe alert started a shun")
 	}
-	on.Accepted("8.8.4.4", ClassAttack, 0)
-	if on.Shunned("8.8.4.4") {
+	on.accepted("8.8.4.4", ClassAttack, 0)
+	if on.shunned("8.8.4.4") {
 		t.Error("zero window started a shun")
 	}
 }
 
-func TestNilOffendersAreInert(t *testing.T) {
+func TestNilOffenderTableIsInert(t *testing.T) {
 	t.Parallel()
-	var o *Offenders
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	o.Rejected("8.8.8.8", "ssh")
-	o.Sweep()
-	o.Flush()
-	if o.Shunned("8.8.8.8") || o.ShunEnabled() || o.Len() != 0 {
+	var o *offenderTable
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
+	o.rejected("8.8.8.8", "ssh")
+	o.sweep()
+	o.flush()
+	if o.shunned("8.8.8.8") || o.shunEnabled() || o.length() != 0 {
 		t.Error("nil table reported state")
 	}
-	if got := o.WindowFor("8.8.8.8", ClassAttack, time.Hour); got != time.Hour {
-		t.Errorf("WindowFor = %v, want the base window", got)
+	if got := o.windowFor("8.8.8.8", ClassAttack, time.Hour); got != time.Hour {
+		t.Errorf("windowFor = %v, want the base window", got)
 	}
 }
 
 func TestWindowForRepeatThreshold(t *testing.T) {
 	t.Parallel()
-	o, clk, _ := testOffenders(t, OffenderConfig{RepeatAfter: 3, RepeatCooldown: 12 * time.Hour})
+	o, clk, _ := testOffenders(t, offenderConfig{RepeatAfter: 3, RepeatCooldown: 12 * time.Hour})
 	ip := "8.8.8.8"
 	base := time.Hour
 	for i := 1; i <= 5; i++ {
-		got := o.WindowFor(ip, ClassAttack, base)
+		got := o.windowFor(ip, ClassAttack, base)
 		want := base
 		if i >= 3 {
 			want = 12 * time.Hour
@@ -127,61 +127,61 @@ func TestWindowForRepeatThreshold(t *testing.T) {
 		if got != want {
 			t.Errorf("alert %d: window %v, want %v", i, got, want)
 		}
-		o.Accepted(ip, ClassAttack, got)
+		o.accepted(ip, ClassAttack, got)
 		clk.Advance(time.Minute)
 	}
 	// Another class counts separately.
-	if got := o.WindowFor(ip, ClassScan, base); got != base {
+	if got := o.windowFor(ip, ClassScan, base); got != base {
 		t.Errorf("scan window = %v, want base", got)
 	}
 	// A disabled cooldown stays disabled.
-	if got := o.WindowFor(ip, ClassAttack, 0); got != 0 {
+	if got := o.windowFor(ip, ClassAttack, 0); got != 0 {
 		t.Errorf("window with base 0 = %v, want 0", got)
 	}
 }
 
 func TestWindowForUnsetRepeatKeepsBase(t *testing.T) {
 	t.Parallel()
-	o, _, _ := testOffenders(t, OffenderConfig{RepeatAfter: 1})
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	if got := o.WindowFor("8.8.8.8", ClassAttack, time.Hour); got != time.Hour {
+	o, _, _ := testOffenders(t, offenderConfig{RepeatAfter: 1})
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
+	if got := o.windowFor("8.8.8.8", ClassAttack, time.Hour); got != time.Hour {
 		t.Errorf("window = %v, want base without a repeat cooldown", got)
 	}
 }
 
 func TestRepeatCountsResetAfterSilence(t *testing.T) {
 	t.Parallel()
-	o, clk, _ := testOffenders(t, OffenderConfig{RepeatAfter: 2, RepeatCooldown: 12 * time.Hour})
+	o, clk, _ := testOffenders(t, offenderConfig{RepeatAfter: 2, RepeatCooldown: 12 * time.Hour})
 	ip := "8.8.8.8"
-	o.Accepted(ip, ClassAttack, time.Hour)
-	if got := o.WindowFor(ip, ClassAttack, time.Hour); got != 12*time.Hour {
+	o.accepted(ip, ClassAttack, time.Hour)
+	if got := o.windowFor(ip, ClassAttack, time.Hour); got != 12*time.Hour {
 		t.Fatalf("window = %v, want the repeat cooldown", got)
 	}
-	clk.Advance(DefaultOffenderReset + time.Second)
-	if got := o.WindowFor(ip, ClassAttack, time.Hour); got != time.Hour {
+	clk.Advance(defaultOffenderReset + time.Second)
+	if got := o.windowFor(ip, ClassAttack, time.Hour); got != time.Hour {
 		t.Errorf("window after silence = %v, want base", got)
 	}
-	o.Accepted(ip, ClassAttack, time.Hour)
-	if n := o.Len(); n != 1 {
+	o.accepted(ip, ClassAttack, time.Hour)
+	if n := o.length(); n != 1 {
 		t.Errorf("table holds %d entries, want 1 after expiry and re-insert", n)
 	}
 }
 
 func TestSummaryAtWindowEndLazily(t *testing.T) {
 	t.Parallel()
-	o, clk, buf := testOffenders(t, OffenderConfig{Shun: true})
+	o, clk, buf := testOffenders(t, offenderConfig{Shun: true})
 	ip := "8.8.8.8"
-	o.Accepted(ip, ClassAttack, time.Hour)
+	o.accepted(ip, ClassAttack, time.Hour)
 	for i := 0; i < 5; i++ {
-		o.Rejected(ip, "ssh")
-		o.Rejected(ip, "telnet")
+		o.rejected(ip, "ssh")
+		o.rejected(ip, "telnet")
 		clk.Advance(time.Minute)
 	}
 	if strings.Contains(buf.String(), "shun summary") {
 		t.Fatal("summary written while the window is open")
 	}
 	clk.Advance(time.Hour)
-	if o.Shunned(ip) {
+	if o.shunned(ip) {
 		t.Fatal("still shunned")
 	}
 	out := buf.String()
@@ -194,8 +194,8 @@ func TestSummaryAtWindowEndLazily(t *testing.T) {
 		}
 	}
 	// No second line for the same window.
-	o.Sweep()
-	o.Flush()
+	o.sweep()
+	o.flush()
 	if n := strings.Count(buf.String(), "shun summary"); n != 1 {
 		t.Errorf("got %d summary lines after sweep and flush, want 1", n)
 	}
@@ -203,12 +203,12 @@ func TestSummaryAtWindowEndLazily(t *testing.T) {
 
 func TestSummaryBySweepOnlyWhenSuppressed(t *testing.T) {
 	t.Parallel()
-	o, clk, buf := testOffenders(t, OffenderConfig{Shun: true})
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	o.Accepted("1.1.1.1", ClassAttack, time.Hour)
-	o.Rejected("8.8.8.8", "rdp")
+	o, clk, buf := testOffenders(t, offenderConfig{Shun: true})
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
+	o.accepted("1.1.1.1", ClassAttack, time.Hour)
+	o.rejected("8.8.8.8", "rdp")
 	clk.Advance(2 * time.Hour)
-	o.Sweep()
+	o.sweep()
 	out := buf.String()
 	if strings.Count(out, "shun summary") != 1 || !strings.Contains(out, `"source_ip":"8.8.8.8"`) {
 		t.Errorf("want exactly one summary for 8.8.8.8:\n%s", out)
@@ -217,20 +217,20 @@ func TestSummaryBySweepOnlyWhenSuppressed(t *testing.T) {
 
 func TestSummaryFlushAtShutdown(t *testing.T) {
 	t.Parallel()
-	o, _, buf := testOffenders(t, OffenderConfig{Shun: true})
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	o.Rejected("8.8.8.8", "smb")
-	o.Rejected("8.8.8.8", "smb")
-	o.Flush()
+	o, _, buf := testOffenders(t, offenderConfig{Shun: true})
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
+	o.rejected("8.8.8.8", "smb")
+	o.rejected("8.8.8.8", "smb")
+	o.flush()
 	out := buf.String()
 	if strings.Count(out, "shun summary") != 1 || !strings.Contains(out, `"count":2`) {
 		t.Errorf("flush output:\n%s", out)
 	}
-	if !o.Shunned("8.8.8.8") {
+	if !o.shunned("8.8.8.8") {
 		t.Error("flush closed the window")
 	}
 	// Counting restarts after the flush; no empty second summary.
-	o.Flush()
+	o.flush()
 	if strings.Count(buf.String(), "shun summary") != 1 {
 		t.Error("second flush wrote an empty summary")
 	}
@@ -238,12 +238,12 @@ func TestSummaryFlushAtShutdown(t *testing.T) {
 
 func TestSummaryProtocolListIsBounded(t *testing.T) {
 	t.Parallel()
-	o, _, buf := testOffenders(t, OffenderConfig{Shun: true})
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
+	o, _, buf := testOffenders(t, offenderConfig{Shun: true})
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
 	for i := 0; i < 50; i++ {
-		o.Rejected("8.8.8.8", fmt.Sprintf("p%02d", i))
+		o.rejected("8.8.8.8", fmt.Sprintf("p%02d", i))
 	}
-	o.Flush()
+	o.flush()
 	line := buf.String()
 	if n := strings.Count(line, `"p0`) + strings.Count(line, `"p1`) + strings.Count(line, `"p2`) + strings.Count(line, `"p3`) + strings.Count(line, `"p4`); n != maxShunProtocols {
 		t.Errorf("summary lists %d protocols, want %d:\n%s", n, maxShunProtocols, line)
@@ -255,19 +255,19 @@ func TestSummaryProtocolListIsBounded(t *testing.T) {
 
 func TestEvictionWritesSummaryAndStaysBounded(t *testing.T) {
 	t.Parallel()
-	o, _, buf := testOffenders(t, OffenderConfig{Shun: true, MaxEntries: 3})
+	o, _, buf := testOffenders(t, offenderConfig{Shun: true, MaxEntries: 3})
 	for i := 1; i <= 3; i++ {
-		o.Accepted(fmt.Sprintf("8.8.8.%d", i), ClassAttack, time.Hour)
+		o.accepted(fmt.Sprintf("8.8.8.%d", i), ClassAttack, time.Hour)
 	}
-	o.Rejected("8.8.8.1", "ssh")
-	o.Accepted("8.8.8.4", ClassAttack, time.Hour)
-	if n := o.Len(); n != 3 {
+	o.rejected("8.8.8.1", "ssh")
+	o.accepted("8.8.8.4", ClassAttack, time.Hour)
+	if n := o.length(); n != 3 {
 		t.Fatalf("table holds %d entries, want 3", n)
 	}
-	if o.Shunned("8.8.8.1") {
+	if o.shunned("8.8.8.1") {
 		t.Error("evicted entry is still shunned")
 	}
-	if !o.Shunned("8.8.8.4") || !o.Shunned("8.8.8.2") {
+	if !o.shunned("8.8.8.4") || !o.shunned("8.8.8.2") {
 		t.Error("live entries lost")
 	}
 	if !strings.Contains(buf.String(), `"source_ip":"8.8.8.1"`) {
@@ -278,18 +278,18 @@ func TestEvictionWritesSummaryAndStaysBounded(t *testing.T) {
 func TestOffenderTableSoak(t *testing.T) {
 	t.Parallel()
 	const capEntries = 500
-	o, clk, _ := testOffenders(t, OffenderConfig{Shun: true, MaxEntries: capEntries})
+	o, clk, _ := testOffenders(t, offenderConfig{Shun: true, MaxEntries: capEntries})
 	for i := 0; i < 200000; i++ {
 		ip := netip.AddrFrom4([4]byte{byte(11 + i>>16), byte(i >> 8), byte(i), 7}).String()
-		o.Accepted(ip, ClassAttack, time.Hour)
+		o.accepted(ip, ClassAttack, time.Hour)
 		if i%7 == 0 {
-			o.Rejected(ip, "ssh")
+			o.rejected(ip, "ssh")
 		}
 		if i%1000 == 0 {
 			clk.Advance(time.Second)
-			o.Sweep()
+			o.sweep()
 		}
-		if n := o.Len(); n > capEntries {
+		if n := o.length(); n > capEntries {
 			t.Fatalf("table grew to %d entries, cap %d", n, capEntries)
 		}
 		o.mu.Lock()
@@ -303,11 +303,11 @@ func TestOffenderTableSoak(t *testing.T) {
 
 func TestSweepRemovesSilentEntries(t *testing.T) {
 	t.Parallel()
-	o, clk, _ := testOffenders(t, OffenderConfig{Shun: true})
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	clk.Advance(DefaultOffenderReset + time.Minute)
-	o.Sweep()
-	if n := o.Len(); n != 0 {
+	o, clk, _ := testOffenders(t, offenderConfig{Shun: true})
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
+	clk.Advance(defaultOffenderReset + time.Minute)
+	o.sweep()
+	if n := o.length(); n != 0 {
 		t.Errorf("table holds %d entries after the silence, want 0", n)
 	}
 }
@@ -315,10 +315,10 @@ func TestSweepRemovesSilentEntries(t *testing.T) {
 func TestMetricsRejectedAndActive(t *testing.T) {
 	t.Parallel()
 	m := metrics.New(prometheus.NewRegistry(), "test")
-	o, clk, _ := testOffenders(t, OffenderConfig{Shun: true, Metrics: m})
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	o.Rejected("8.8.8.8", "ssh")
-	o.Rejected("8.8.8.8", "ssh")
+	o, clk, _ := testOffenders(t, offenderConfig{Shun: true, Metrics: m})
+	o.accepted("8.8.8.8", ClassAttack, time.Hour)
+	o.rejected("8.8.8.8", "ssh")
+	o.rejected("8.8.8.8", "ssh")
 	if v := counterValue(t, m.ConnectionsRejected); v != 2 {
 		t.Errorf("rejected counter = %v, want 2", v)
 	}
@@ -326,7 +326,7 @@ func TestMetricsRejectedAndActive(t *testing.T) {
 		t.Errorf("active gauge = %v, want 1", v)
 	}
 	clk.Advance(2 * time.Hour)
-	o.Sweep()
+	o.sweep()
 	if v := counterValue(t, m.ShunActive); v != 0 {
 		t.Errorf("active gauge after the window = %v, want 0", v)
 	}
@@ -334,14 +334,17 @@ func TestMetricsRejectedAndActive(t *testing.T) {
 
 func TestSensorShunnedAppliesIgnoreList(t *testing.T) {
 	t.Parallel()
-	o, _, _ := testOffenders(t, OffenderConfig{Shun: true})
+	a, _ := newOffenderCrowdSec(t, time.Hour, func(c *CrowdSecConfig) { c.Shun = true })
 	buf := &lockedBuffer{}
 	logger := slog.New(slog.NewJSONHandler(buf, nil))
-	s := newSensor(SensorConfig{Offenders: o, IgnoreIPs: []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}}, nil, logger)
+	s := newSensor(SensorConfig{IgnoreIPs: []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}}, a, logger)
+	if !s.ShunActive() {
+		t.Fatal("sensor did not discover the shun gate of its sink")
+	}
 	// An ignored source can only get into the table through a bug; the sensor
 	// check must still refuse to shun it.
-	o.Accepted("8.8.8.8", ClassAttack, time.Hour)
-	o.Accepted("1.1.1.1", ClassAttack, time.Hour)
+	a.offenders.accepted("8.8.8.8", ClassAttack, time.Hour)
+	a.offenders.accepted("1.1.1.1", ClassAttack, time.Hour)
 	if s.Shunned("8.8.8.8") {
 		t.Error("ignored source is shunned")
 	}
@@ -349,79 +352,90 @@ func TestSensorShunnedAppliesIgnoreList(t *testing.T) {
 		t.Error("non-ignored source is not shunned")
 	}
 	bare := newSensor(SensorConfig{}, nil, logger)
-	if bare.Shunned("1.1.1.1") {
-		t.Error("sensor without a table shuns")
+	if bare.Shunned("1.1.1.1") || bare.ShunActive() {
+		t.Error("sensor without a sink shuns")
 	}
 	bare.ShunRejected("1.1.1.1", "ssh")
+	// A sink with the table but shun off: the gate is found, shunning stays off.
+	off, _ := newOffenderCrowdSec(t, time.Hour, nil)
+	offSensor := newSensor(SensorConfig{}, off, logger)
+	off.offenders.accepted("1.1.1.1", ClassAttack, time.Hour)
+	if offSensor.ShunActive() || offSensor.Shunned("1.1.1.1") {
+		t.Error("sensor shuns with RAN_SHUN off")
+	}
 }
 
-// newOffenderCrowdSec builds a CrowdSec sink on a fake LAPI that shares the
-// offender table and uses the fake clock for the cooldown too.
-func newOffenderCrowdSec(t *testing.T, cooldown time.Duration, o *Offenders, clk *fakeClock) *CrowdSecAlerter {
+// newOffenderCrowdSec builds a CrowdSec sink on a fake LAPI. The sink owns the
+// offender table and uses the fake clock for the table and the cooldown.
+func newOffenderCrowdSec(t *testing.T, cooldown time.Duration, mutate func(*CrowdSecConfig)) (*CrowdSecAlerter, *fakeClock) {
 	t.Helper()
 	srv := testServer(t, "ran", "secret", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	t.Cleanup(srv.Close)
+	clk := newFakeClock()
 	cfg := testConfig(srv.URL)
 	cfg.Cooldown = cooldown
-	cfg.Offenders = o
+	cfg.Now = clk.Now
+	if mutate != nil {
+		mutate(&cfg)
+	}
 	a, err := NewCrowdSec(context.Background(), cfg, slog.Default(), testMetrics(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.cooldown.nowFunc = clk.Now
 	t.Cleanup(a.Close)
-	return a
+	return a, clk
 }
 
 func TestRepeatCooldownThroughCrowdSec(t *testing.T) {
 	t.Parallel()
-	o, clk, _ := testOffenders(t, OffenderConfig{Shun: true, RepeatAfter: 2, RepeatCooldown: 12 * time.Hour})
-	a := newOffenderCrowdSec(t, time.Hour, o, clk)
+	a, clk := newOffenderCrowdSec(t, time.Hour, func(c *CrowdSecConfig) {
+		c.Shun, c.RepeatAfter, c.RepeatCooldown = true, 2, 12*time.Hour
+	})
 	ip := "8.8.8.8"
 	ctx := context.Background()
 
 	a.Submit(ctx, ev(ip, "ssh")) // alert 1, window 1h
-	if !o.Shunned(ip) {
+	if !a.Shunned(ip) {
 		t.Fatal("no shun after the first accepted alert")
 	}
 	clk.Advance(30 * time.Minute)
 	a.Submit(ctx, ev(ip, "ssh")) // within the cooldown: filtered
 	clk.Advance(31 * time.Minute)
-	if o.Shunned(ip) {
+	if a.Shunned(ip) {
 		t.Fatal("shun window is longer than the cooldown")
 	}
 	a.Submit(ctx, ev(ip, "ssh")) // alert 2, window 12h
 	clk.Advance(2 * time.Hour)
-	if !o.Shunned(ip) {
+	if !a.Shunned(ip) {
 		t.Error("shun window did not become the repeat cooldown")
 	}
 	a.Submit(ctx, ev(ip, "ssh")) // still inside 12h: filtered
 	clk.Advance(9 * time.Hour)
-	if !o.Shunned(ip) {
+	if !a.Shunned(ip) {
 		t.Error("shun ended before 12h")
 	}
 	clk.Advance(2 * time.Hour)
-	if o.Shunned(ip) {
+	if a.Shunned(ip) {
 		t.Error("shun lasted beyond 12h")
 	}
 	a.Submit(ctx, ev(ip, "ssh")) // alert 3, allowed after 12h
-	if !o.Shunned(ip) {
+	if !a.Shunned(ip) {
 		t.Error("third alert after the repeat cooldown was not accepted")
 	}
 }
 
 func TestFilteredAlertsDoNotShun(t *testing.T) {
 	t.Parallel()
-	o, clk, _ := testOffenders(t, OffenderConfig{Shun: true})
-	a := newOffenderCrowdSec(t, time.Hour, o, clk)
+	a, _ := newOffenderCrowdSec(t, time.Hour, func(c *CrowdSecConfig) { c.Shun = true })
 	// Probe is not in the default BanOn: filtered, never accepted.
 	a.Submit(context.Background(), evClass("8.8.8.8", "ssh", ClassProbe))
-	if o.Shunned("8.8.8.8") || o.Len() != 0 {
+	if a.Shunned("8.8.8.8") || a.offenders.length() != 0 {
 		t.Error("filtered probe alert reached the offender table")
 	}
 	// Invalid (private) source: rejected before the cooldown.
 	a.Submit(context.Background(), ev("10.0.0.1", "ssh"))
-	if o.Len() != 0 {
+	if a.offenders.length() != 0 {
 		t.Error("invalid source reached the offender table")
 	}
 }
@@ -446,22 +460,22 @@ func TestSlowLogHandlerDoesNotHoldTableLock(t *testing.T) {
 	t.Parallel()
 	h := &blockingHandler{entered: make(chan struct{}), release: make(chan struct{})}
 	clk := newFakeClock()
-	o := NewOffenders(OffenderConfig{Shun: true, Now: clk.Now}, slog.New(h))
+	o := newOffenderTable(offenderConfig{Shun: true, Now: clk.Now}, slog.New(h))
 	const a, b = "8.8.8.8", "1.1.1.1"
-	o.Accepted(a, ClassAttack, time.Minute)
-	o.Rejected(a, "ssh")
-	o.Accepted(b, ClassAttack, 24*time.Hour)
+	o.accepted(a, ClassAttack, time.Minute)
+	o.rejected(a, "ssh")
+	o.accepted(b, ClassAttack, 24*time.Hour)
 	clk.Advance(2 * time.Minute) // a's window has ended, b's is open
 
 	first := make(chan struct{})
 	go func() {
 		defer close(first)
-		o.Shunned(a) // closes the window and logs the summary; the handler blocks
+		o.shunned(a) // closes the window and logs the summary; the handler blocks
 	}()
 	<-h.entered
 
 	second := make(chan bool)
-	go func() { second <- o.Shunned(b) }()
+	go func() { second <- o.shunned(b) }()
 	if got := <-second; !got {
 		t.Error("b should still be shunned")
 	}

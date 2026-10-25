@@ -92,16 +92,15 @@ func TestShunClosesRepeatConnectionsOnTCPTrap(t *testing.T) {
 	defer cancel()
 
 	clk := &shunClock{now: time.Unix(1_700_000_000, 0)}
-	offenders := alert.NewOffenders(alert.OffenderConfig{Shun: true, Now: clk.Now, Metrics: m}, logger)
 	sink, err := alert.NewCrowdSec(ctx, alert.CrowdSecConfig{
 		URL: srv.URL, MachineID: "ran", Password: "secret",
 		Cooldown: time.Hour, BatchInterval: 100 * time.Millisecond, BatchSize: 10,
-		Offenders: offenders,
+		Shun: true, Now: clk.Now,
 	}, logger, m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sensor := alert.NewSensor(alert.SensorConfig{SummaryWindow: time.Hour, Metrics: m, Offenders: offenders}, sink, logger)
+	sensor := alert.NewSensor(alert.SensorConfig{SummaryWindow: time.Hour, Metrics: m}, sink, logger)
 	defer sensor.Close()
 
 	cfg := &config.Config{
@@ -215,11 +214,34 @@ func (plainReporter) Alert(context.Context, alert.SessionInfo, map[string]string
 }
 func (plainReporter) SessionEnd(alert.SessionInfo) bool { return false }
 
+// gateSink is a sink that carries a shun gate, like the CrowdSec sink does.
+type gateSink struct{ shun bool }
+
+func (gateSink) Submit(context.Context, alert.Event) {}
+func (gateSink) Close()                              {}
+func (g gateSink) ShunEnabled() bool                 { return g.shun }
+func (gateSink) Shunned(string) bool                 { return false }
+func (gateSink) ShunRejected(string, string)         {}
+func (gateSink) Sweep()                              {}
+func (gateSink) Flush()                              {}
+
 func TestCanShun(t *testing.T) {
 	t.Parallel()
-	sensor := alert.NewSensor(alert.SensorConfig{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sensor := alert.NewSensor(alert.SensorConfig{}, gateSink{shun: true}, logger)
+	defer sensor.Close()
 	if !CanShun(sensor) {
-		t.Error("the sensor must be able to shun")
+		t.Error("a sensor whose sink has an enabled shun gate must be able to shun")
+	}
+	noGate := alert.NewSensor(alert.SensorConfig{}, nil, logger)
+	defer noGate.Close()
+	if CanShun(noGate) {
+		t.Error("a sensor without a shun gate must not be reported as able to shun")
+	}
+	gateOff := alert.NewSensor(alert.SensorConfig{}, gateSink{}, logger)
+	defer gateOff.Close()
+	if CanShun(gateOff) {
+		t.Error("a sensor whose gate has shun off must not be reported as able to shun")
 	}
 	if CanShun(plainReporter{}) {
 		t.Error("a reporter without Shunned/ShunRejected must not be reported as able to shun")

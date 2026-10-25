@@ -13,17 +13,18 @@ import (
 
 // Offender table defaults.
 const (
-	// DefaultOffenderReset is the silence after which a source is forgotten and
+	// defaultOffenderReset is the silence after which a source is forgotten and
 	// its alert counters start again.
-	DefaultOffenderReset = 7 * 24 * time.Hour
+	defaultOffenderReset = 7 * 24 * time.Hour
 	// maxShunProtocols bounds the protocol list of one shun summary line.
 	maxShunProtocols = 8
 	// mapOffender is the "map" label of the offender table in the tracking gauges.
 	mapOffender = "offender"
 )
 
-// OffenderConfig configures the offender table.
-type OffenderConfig struct {
+// offenderConfig configures the offender table. The CrowdSec sink owns the table
+// and builds this from its own config.
+type offenderConfig struct {
 	// Shun turns on the shun deadline: after an accepted alert the source is
 	// refused at accept time for the window that was applied to that alert.
 	Shun bool
@@ -37,7 +38,7 @@ type OffenderConfig struct {
 	// other tracking maps.
 	MaxEntries int
 	// Reset is the silence after which an entry expires; 0 uses
-	// DefaultOffenderReset (raised to twice RepeatCooldown if that is longer).
+	// defaultOffenderReset (raised to twice RepeatCooldown if that is longer).
 	Reset time.Duration
 	// Now is the clock; nil uses time.Now.
 	Now func() time.Time
@@ -62,16 +63,16 @@ type offender struct {
 	active bool
 }
 
-// Offenders is the bounded table behind the repeat cooldown and the shun
+// offenderTable is the bounded table behind the repeat cooldown and the shun
 // window. It is keyed by source IP and holds, per class, the number of accepted
 // alerts, the time of the last alert and the shun deadline. It is FIFO ordered
 // by the last alert, expires entries after a period of silence and is safe for
-// concurrent use. A nil *Offenders is valid and does nothing.
+// concurrent use. A nil *offenderTable is valid and does nothing.
 //
 // Eviction trade-off: a flood of unique sources can evict an entry, which loses
 // a shun or a repeat counter. That is a missed suppression, never a wrong ban:
 // ran stays a sensor.
-type Offenders struct {
+type offenderTable struct {
 	mu          sync.Mutex
 	entries     map[string]*offender
 	order       *list.List // oldest last alert first
@@ -84,13 +85,13 @@ type Offenders struct {
 	now         func() time.Time
 	logger      *slog.Logger
 	stats       *trackStats
-	rejected    interface{ Inc() }
+	rejectedCtr interface{ Inc() }
 	activeGauge interface{ Set(float64) }
 }
 
-// NewOffenders creates the table. The logger receives the "shun summary" lines.
-func NewOffenders(cfg OffenderConfig, logger *slog.Logger) *Offenders {
-	o := &Offenders{
+// newOffenderTable creates the table. The logger receives the "shun summary" lines.
+func newOffenderTable(cfg offenderConfig, logger *slog.Logger) *offenderTable {
+	o := &offenderTable{
 		entries:     make(map[string]*offender),
 		order:       list.New(),
 		active:      make(map[*offender]struct{}),
@@ -109,7 +110,7 @@ func NewOffenders(cfg OffenderConfig, logger *slog.Logger) *Offenders {
 		o.max = defaultMaxTracked
 	}
 	if o.reset <= 0 {
-		o.reset = DefaultOffenderReset
+		o.reset = defaultOffenderReset
 		if 2*o.repeat > o.reset {
 			o.reset = 2 * o.repeat
 		}
@@ -119,14 +120,14 @@ func NewOffenders(cfg OffenderConfig, logger *slog.Logger) *Offenders {
 	}
 	o.stats = newTrackStats(cfg.Metrics, mapOffender)
 	if cfg.Metrics != nil {
-		o.rejected = cfg.Metrics.ConnectionsRejected.WithLabelValues("shun")
+		o.rejectedCtr = cfg.Metrics.ConnectionsRejected.WithLabelValues("shun")
 		o.activeGauge = cfg.Metrics.ShunActive
 	}
 	return o
 }
 
-// ShunEnabled reports whether accepted alerts open shun windows.
-func (o *Offenders) ShunEnabled() bool { return o != nil && o.shun }
+// shunEnabled reports whether accepted alerts open shun windows.
+func (o *offenderTable) shunEnabled() bool { return o != nil && o.shun }
 
 func classIndex(c Class) int {
 	if r := c.rank(); r > 0 {
@@ -144,11 +145,11 @@ func normalizeIP(ip string) (string, bool) {
 	return addr.Unmap().String(), true
 }
 
-// WindowFor returns the cooldown that applies to the next accepted alert for
+// windowFor returns the cooldown that applies to the next accepted alert for
 // ip and class: base until RepeatAfter alerts were accepted (counting that one),
 // RepeatCooldown from then on. A zero base disables cooldowns altogether and
 // stays zero.
-func (o *Offenders) WindowFor(ip string, class Class, base time.Duration) time.Duration {
+func (o *offenderTable) windowFor(ip string, class Class, base time.Duration) time.Duration {
 	if o == nil || base <= 0 || o.repeat <= 0 {
 		return base
 	}
@@ -174,14 +175,14 @@ func (o *Offenders) WindowFor(ip string, class Class, base time.Duration) time.D
 
 // expired reports whether e was silent for the reset period and has no shun
 // window left.
-func (o *Offenders) expired(e *offender, now time.Time) bool {
+func (o *offenderTable) expired(e *offender, now time.Time) bool {
 	return now.Sub(e.last) >= o.reset && !now.Before(e.shunUntil)
 }
 
-// Accepted records an alert that passed the cooldown and was queued, with the
+// accepted records an alert that passed the cooldown and was queued, with the
 // window that was applied to it. With shun on, a class other than probe opens
 // (or extends) the shun window of the source.
-func (o *Offenders) Accepted(ip string, class Class, window time.Duration) {
+func (o *offenderTable) accepted(ip string, class Class, window time.Duration) {
 	if o == nil {
 		return
 	}
@@ -193,14 +194,14 @@ func (o *Offenders) Accepted(ip string, class Class, window time.Duration) {
 	now := o.now()
 	var sums []shunSummary
 	o.mu.Lock()
-	o.accepted(key, idx, class, window, now, &sums)
+	o.acceptLocked(key, idx, class, window, now, &sums)
 	o.mu.Unlock()
 	o.logSummaries(sums)
 }
 
-// accepted is the body of Accepted. Callers hold mu; summaries of closed windows
+// acceptLocked is the body of accepted. Callers hold mu; summaries of closed windows
 // are appended to sums and must be logged after mu is released.
-func (o *Offenders) accepted(key string, idx int, class Class, window time.Duration, now time.Time, sums *[]shunSummary) {
+func (o *offenderTable) acceptLocked(key string, idx int, class Class, window time.Duration, now time.Time, sums *[]shunSummary) {
 	e := o.entries[key]
 	if e != nil && o.expired(e, now) {
 		o.remove(e, now, sums)
@@ -240,9 +241,9 @@ func (o *Offenders) accepted(key string, idx int, class Class, window time.Durat
 	o.setGauge()
 }
 
-// Shunned reports whether new connections from ip are refused right now. A
+// shunned reports whether new connections from ip are refused right now. A
 // window that has ended is closed here (lazily) and its summary is written.
-func (o *Offenders) Shunned(ip string) bool {
+func (o *offenderTable) shunned(ip string) bool {
 	if o == nil || !o.shun {
 		return false
 	}
@@ -274,14 +275,14 @@ func (o *Offenders) Shunned(ip string) bool {
 	return false
 }
 
-// Rejected counts one refused connection for ip on protocol. The protocol list
+// rejected counts one refused connection for ip on protocol. The protocol list
 // of the summary is bounded; the counter has no client labels.
-func (o *Offenders) Rejected(ip, protocol string) {
+func (o *offenderTable) rejected(ip, protocol string) {
 	if o == nil {
 		return
 	}
-	if o.rejected != nil {
-		o.rejected.Inc()
+	if o.rejectedCtr != nil {
+		o.rejectedCtr.Inc()
 	}
 	key, ok := normalizeIP(ip)
 	if !ok {
@@ -313,7 +314,7 @@ type shunSummary struct {
 }
 
 // logSummaries writes the collected summaries. Callers must not hold mu.
-func (o *Offenders) logSummaries(sums []shunSummary) {
+func (o *offenderTable) logSummaries(sums []shunSummary) {
 	for _, s := range sums {
 		o.logger.Info("shun summary",
 			"action", "shun_summary",
@@ -327,7 +328,7 @@ func (o *Offenders) logSummaries(sums []shunSummary) {
 
 // endWindow closes the shun window of e and, if connections were suppressed,
 // appends the summary to sums. Callers hold mu and log sums after releasing it.
-func (o *Offenders) endWindow(e *offender, now time.Time, sums *[]shunSummary) {
+func (o *offenderTable) endWindow(e *offender, now time.Time, sums *[]shunSummary) {
 	if e.suppressed > 0 {
 		end := e.shunUntil
 		if now.Before(end) {
@@ -352,14 +353,14 @@ func (o *Offenders) endWindow(e *offender, now time.Time, sums *[]shunSummary) {
 	o.setGauge()
 }
 
-func (o *Offenders) setGauge() {
+func (o *offenderTable) setGauge() {
 	if o.activeGauge != nil {
 		o.activeGauge.Set(float64(len(o.active)))
 	}
 }
 
 // remove drops e from the table, writing a pending summary first. Callers hold mu.
-func (o *Offenders) remove(e *offender, now time.Time, sums *[]shunSummary) {
+func (o *offenderTable) remove(e *offender, now time.Time, sums *[]shunSummary) {
 	if e.active {
 		o.endWindow(e, now, sums)
 	}
@@ -368,7 +369,7 @@ func (o *Offenders) remove(e *offender, now time.Time, sums *[]shunSummary) {
 	o.stats.size(len(o.entries))
 }
 
-func (o *Offenders) makeRoom(now time.Time, sums *[]shunSummary) {
+func (o *offenderTable) makeRoom(now time.Time, sums *[]shunSummary) {
 	o.sweepFront(now, sums)
 	if len(o.entries) >= o.max {
 		if el := o.order.Front(); el != nil {
@@ -380,7 +381,7 @@ func (o *Offenders) makeRoom(now time.Time, sums *[]shunSummary) {
 
 // sweepFront removes silent entries; the list is ordered by last alert, so it
 // stops at the first live one.
-func (o *Offenders) sweepFront(now time.Time, sums *[]shunSummary) {
+func (o *offenderTable) sweepFront(now time.Time, sums *[]shunSummary) {
 	for el := o.order.Front(); el != nil; el = o.order.Front() {
 		e := el.Value.(*offender)
 		if !o.expired(e, now) {
@@ -390,9 +391,9 @@ func (o *Offenders) sweepFront(now time.Time, sums *[]shunSummary) {
 	}
 }
 
-// Sweep closes ended shun windows (writing their summaries) and removes silent
-// entries. It is called periodically by the sensor.
-func (o *Offenders) Sweep() {
+// sweep closes ended shun windows (writing their summaries) and removes silent
+// entries. It is called periodically by the sensor through the ShunGate.
+func (o *offenderTable) sweep() {
 	if o == nil {
 		return
 	}
@@ -409,9 +410,9 @@ func (o *Offenders) Sweep() {
 	o.logSummaries(sums)
 }
 
-// Flush writes the summary of every open window (shutdown). The windows stay
+// flush writes the summary of every open window (shutdown). The windows stay
 // open, so a connection that is still being accepted keeps being refused.
-func (o *Offenders) Flush() {
+func (o *offenderTable) flush() {
 	if o == nil {
 		return
 	}
@@ -428,7 +429,7 @@ func (o *Offenders) Flush() {
 }
 
 // endWindowKeep writes the summary and resets the counters but keeps the window.
-func (o *Offenders) endWindowKeep(e *offender, now time.Time, sums *[]shunSummary) {
+func (o *offenderTable) endWindowKeep(e *offender, now time.Time, sums *[]shunSummary) {
 	until := e.shunUntil
 	o.endWindow(e, now, sums)
 	e.shunStart, e.shunUntil = now, until
@@ -437,8 +438,8 @@ func (o *Offenders) endWindowKeep(e *offender, now time.Time, sums *[]shunSummar
 	o.setGauge()
 }
 
-// Len returns the number of tracked sources (tests and diagnostics).
-func (o *Offenders) Len() int {
+// length returns the number of tracked sources (tests and diagnostics).
+func (o *offenderTable) length() int {
 	if o == nil {
 		return 0
 	}

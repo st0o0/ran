@@ -106,9 +106,21 @@ type CrowdSecConfig struct {
 	BanOn []Class
 	// Cooldown allows at most one alert per IP and class per window; 0 disables it.
 	Cooldown time.Duration
-	// Offenders supplies the repeat cooldown and receives accepted alerts (shun);
-	// nil disables both.
-	Offenders     *Offenders
+	// Shun turns on the shun deadline (RAN_SHUN): after an accepted alert the
+	// source is refused at accept time. The sink owns the offender table and
+	// exposes it to the Sensor through ShunGate.
+	Shun bool
+	// RepeatAfter is the number of accepted alerts for a source and class after
+	// which RepeatCooldown applies; values below 1 mean 5.
+	RepeatAfter int
+	// RepeatCooldown replaces Cooldown once RepeatAfter is reached; 0 keeps the
+	// base cooldown.
+	RepeatCooldown time.Duration
+	// OffenderReset is the silence after which the offender table forgets a
+	// source; 0 uses the default (7 days, or twice RepeatCooldown if longer).
+	OffenderReset time.Duration
+	// Now is the clock of the offender table; nil uses time.Now (tests).
+	Now           func() time.Time
 	BatchInterval time.Duration
 	BatchSize     int
 	MaxTracked    int
@@ -132,7 +144,7 @@ type CrowdSecAlerter struct {
 
 	banOn         map[Class]bool
 	cooldown      *cooldownFilter
-	offenders     *Offenders
+	offenders     *offenderTable
 	batchInterval time.Duration
 	batchSize     int
 
@@ -208,8 +220,17 @@ func NewCrowdSec(ctx context.Context, cfg CrowdSecConfig, logger *slog.Logger, m
 	}
 
 	a.cooldown.stats = newTrackStats(m, mapCooldown)
-	a.cooldown.offenders = cfg.Offenders
-	a.offenders = cfg.Offenders
+	// The sink owns the offender table; the Sensor reaches it through ShunGate.
+	a.offenders = newOffenderTable(offenderConfig{
+		Shun:           cfg.Shun,
+		RepeatAfter:    cfg.RepeatAfter,
+		RepeatCooldown: cfg.RepeatCooldown,
+		MaxEntries:     cfg.MaxTracked,
+		Reset:          cfg.OffenderReset,
+		Now:            cfg.Now,
+		Metrics:        m,
+	}, logger)
+	a.cooldown.offenders = a.offenders
 
 	if err := a.login(ctx); err != nil {
 		return nil, fmt.Errorf("crowdsec login: %w", err)
@@ -268,7 +289,7 @@ func (a *CrowdSecAlerter) Submit(_ context.Context, ev Event) {
 	select {
 	case a.ch <- msg:
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "queued").Inc()
-		a.offenders.Accepted(ip, ev.Class, win)
+		a.offenders.accepted(ip, ev.Class, win)
 		a.metrics.CrowdSecQueueLength.Set(float64(len(a.ch)))
 	default:
 		// Release the cooldown slot so a retry is not suppressed.
@@ -397,6 +418,39 @@ func (a *CrowdSecAlerter) rejectInvalid(ip, protocol string) {
 	a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "stage", "invalid")
 	a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "invalid").Inc()
 }
+
+// ShunGate is the narrow view of the offender table that the Sensor needs. The
+// CrowdSec sink implements it (the sink owns the table); the Sensor discovers it
+// by type assertion on its sink when it is constructed.
+type ShunGate interface {
+	// ShunEnabled reports whether accepted alerts open shun windows.
+	ShunEnabled() bool
+	// Shunned reports whether new connections from ip are refused right now.
+	Shunned(ip string) bool
+	// ShunRejected counts one connection refused because Shunned was true.
+	ShunRejected(ip, protocol string)
+	// Sweep closes ended shun windows and removes silent entries.
+	Sweep()
+	// Flush writes the summary of every open window (shutdown).
+	Flush()
+}
+
+var _ ShunGate = (*CrowdSecAlerter)(nil)
+
+// ShunEnabled implements ShunGate.
+func (a *CrowdSecAlerter) ShunEnabled() bool { return a.offenders.shunEnabled() }
+
+// Shunned implements ShunGate.
+func (a *CrowdSecAlerter) Shunned(ip string) bool { return a.offenders.shunned(ip) }
+
+// ShunRejected implements ShunGate.
+func (a *CrowdSecAlerter) ShunRejected(ip, protocol string) { a.offenders.rejected(ip, protocol) }
+
+// Sweep implements ShunGate.
+func (a *CrowdSecAlerter) Sweep() { a.offenders.sweep() }
+
+// Flush implements ShunGate.
+func (a *CrowdSecAlerter) Flush() { a.offenders.flush() }
 
 // Close stops the alerter and drains the queue, waiting at most flushTimeout.
 func (a *CrowdSecAlerter) Close() {
