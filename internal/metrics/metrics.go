@@ -26,6 +26,8 @@ type Metrics struct {
 	TrackedEvictions     *prometheus.CounterVec
 	ProbeSuppressed      prometheus.Counter
 	SessionsRejected     *prometheus.CounterVec
+	ConnectionsRejected  *prometheus.CounterVec
+	ShunActive           prometheus.Gauge
 }
 
 // SessionDurationBuckets cover short probes up to the longest session timeout (seconds).
@@ -95,11 +97,11 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 	})
 	m.TrackedEntries = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ran_tracked_entries",
-		Help: "Entries in the bounded tracking maps (map: scan, probe, cooldown).",
+		Help: "Entries in the bounded tracking maps (map: scan, probe, cooldown, offender).",
 	}, []string{"map"})
 	m.TrackedEvictions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "ran_tracked_evictions_total",
-		Help: "Live entries evicted from a tracking map because it was full (map: scan, probe, cooldown).",
+		Help: "Live entries evicted from a tracking map because it was full (map: scan, probe, cooldown, offender).",
 	}, []string{"map"})
 	m.ProbeSuppressed = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "ran_probe_summary_suppressed_sessions_total",
@@ -110,6 +112,16 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 		Help: "Total number of TCP connections rejected by the session limiter.",
 	}, []string{"protocol"})
 
+	m.ConnectionsRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ran_connections_rejected_total",
+		Help: "Total number of TCP connections closed at accept time before a session existed (reason: shun).",
+	}, []string{"reason"})
+	m.ShunActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ran_shun_active_sources",
+		Help: "Sources currently shunned (RAN_SHUN).",
+	})
+	m.ConnectionsRejected.WithLabelValues("shun")
+
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ran_build_info",
 		Help: "Build information for ran.",
@@ -118,6 +130,6 @@ func New(reg prometheus.Registerer, version string) *Metrics {
 
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, m.IgnoredSessions, m.CrowdSecPushDuration, m.CrowdSecPushErrors, m.CrowdSecQueueLength, m.TrackedEntries, m.TrackedEvictions, m.ProbeSuppressed, m.SessionsRejected, buildInfo)
+	reg.MustRegister(m.Connections, m.CredentialsCaptured, m.ActiveSessions, m.SessionDuration, m.CrowdSecPipeline, m.CrowdSecDropped, m.PanicsRecovered, m.ProxyDropped, m.UDPRateLimited, m.IgnoredSessions, m.CrowdSecPushDuration, m.CrowdSecPushErrors, m.CrowdSecQueueLength, m.TrackedEntries, m.TrackedEvictions, m.ProbeSuppressed, m.SessionsRejected, m.ConnectionsRejected, m.ShunActive, buildInfo)
 	return m
 }

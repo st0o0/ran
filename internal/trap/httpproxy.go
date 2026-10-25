@@ -56,7 +56,7 @@ func (t *HTTPProxyTrap) Start(ctx context.Context) error {
 		t.srv.Close()
 	}()
 
-	if err := t.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+	if err := t.srv.Serve(newShunListener(ln, t.alerter, "httpproxy")); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

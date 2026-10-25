@@ -29,17 +29,21 @@ type SensorConfig struct {
 	// IgnoreIPs lists sources that never alert, never enter the scan tracker and
 	// never enter the probe summary (RAN_IGNORE_IPS).
 	IgnoreIPs []netip.Prefix
+	// Offenders is the repeat and shun table (RAN_SHUN); nil disables shunning.
+	// The same table must be given to the CrowdSec sink, which feeds it.
+	Offenders *Offenders
 }
 
 // Sensor classifies sessions (probe, attack, scan), detects scans, aggregates
 // probe log output and forwards classified events to a Sink. The Sink may be
 // nil (no CrowdSec): classification and log aggregation still run.
 type Sensor struct {
-	sink   Sink
-	logger *slog.Logger
-	scan   *scanTracker
-	probes *probeLog
-	ignore []netip.Prefix
+	sink      Sink
+	logger    *slog.Logger
+	scan      *scanTracker
+	probes    *probeLog
+	ignore    []netip.Prefix
+	offenders *Offenders
 
 	// interval overrides the maintenance interval (tests only).
 	interval time.Duration
@@ -63,12 +67,13 @@ func newSensor(cfg SensorConfig, sink Sink, logger *slog.Logger) *Sensor {
 	}
 	lg := logger.With("component", "sensor")
 	s := &Sensor{
-		sink:   sink,
-		logger: lg,
-		scan:   newScanTracker(scanWindow, scanProtocols, maxTracked),
-		probes: newProbeLog(cfg.SummaryWindow, maxTracked, lg),
-		ignore: cfg.IgnoreIPs,
-		stop:   make(chan struct{}),
+		sink:      sink,
+		logger:    lg,
+		scan:      newScanTracker(scanWindow, scanProtocols, maxTracked),
+		probes:    newProbeLog(cfg.SummaryWindow, maxTracked, lg),
+		ignore:    cfg.IgnoreIPs,
+		offenders: cfg.Offenders,
+		stop:      make(chan struct{}),
 	}
 	s.scan.stats = newTrackStats(cfg.Metrics, mapScan)
 	s.probes.stats = newTrackStats(cfg.Metrics, mapProbe)
@@ -107,6 +112,7 @@ func (s *Sensor) start() {
 					s.probes.flushDue()
 				}
 				s.scan.cleanup()
+				s.offenders.Sweep()
 			case <-s.stop:
 				return
 			}
@@ -132,6 +138,22 @@ func (s *Sensor) touchScan(info SessionInfo) bool {
 // are unmapped before matching.
 func (s *Sensor) Ignored(ip string) bool {
 	return config.MatchesPrefixes(s.ignore, ip)
+}
+
+// Shunned reports whether new connections from ip must be refused at accept
+// time (RAN_SHUN). Every accept path calls it, so the ignore list applies in one
+// place: an ignored source is never shunned.
+func (s *Sensor) Shunned(ip string) bool {
+	if !s.offenders.ShunEnabled() || s.Ignored(ip) {
+		return false
+	}
+	return s.offenders.Shunned(ip)
+}
+
+// ShunRejected records one connection refused because Shunned was true. It
+// counts it in the shun summary of the source and in the rejection metric.
+func (s *Sensor) ShunRejected(ip, protocol string) {
+	s.offenders.Rejected(ip, protocol)
 }
 
 func (s *Sensor) classify(info SessionInfo) Class {
@@ -198,6 +220,7 @@ func (s *Sensor) CloseContext(ctx context.Context) {
 		close(s.stop)
 		s.wg.Wait()
 		s.probes.closeAndFlush()
+		s.offenders.Flush()
 		switch sink := s.sink.(type) {
 		case nil:
 		case contextCloser:

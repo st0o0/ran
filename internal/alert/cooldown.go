@@ -9,6 +9,7 @@ import (
 type cooldownEntry struct {
 	key  string
 	at   time.Time
+	win  time.Duration
 	slot uint64
 }
 
@@ -32,6 +33,12 @@ type cooldownFilter struct {
 	window     time.Duration
 	maxEntries int
 	nowFunc    func() time.Time
+	// offenders, when set, supplies the repeat cooldown that replaces window
+	// after RAN_REPEAT_AFTER alerts. Each entry remembers the window it was
+	// created with, so entries are not ordered by expiry any more: the sweep
+	// stops at the first live entry and later expired ones wait for it or for
+	// eviction (the map stays bounded).
+	offenders *Offenders
 }
 
 func newCooldownFilter(window time.Duration, maxEntries int) *cooldownFilter {
@@ -50,8 +57,14 @@ func cooldownKey(ip string, c Class) string { return ip + "|" + string(c) }
 // proceed. Callers that fail to enqueue must pass the returned key and slot to
 // Release so the alert can be retried.
 func (d *cooldownFilter) Allow(ip string, class Class) (key string, slot uint64, ok bool) {
+	key, slot, _, ok = d.allow(ip, class)
+	return key, slot, ok
+}
+
+// allow is Allow that also returns the window applied to the new alert.
+func (d *cooldownFilter) allow(ip string, class Class) (key string, slot uint64, win time.Duration, ok bool) {
 	if d.window == 0 {
-		return "", 0, true
+		return "", 0, 0, true
 	}
 	now := d.nowFunc()
 	d.mu.Lock()
@@ -62,25 +75,26 @@ func (d *cooldownFilter) Allow(ip string, class Class) (key string, slot uint64,
 		if c.rank() < class.rank() {
 			continue
 		}
-		if el, found := d.seen[cooldownKey(ip, c)]; found && now.Sub(el.Value.(*cooldownEntry).at) < d.window {
-			return "", 0, false
+		if el, found := d.seen[cooldownKey(ip, c)]; found && now.Sub(el.Value.(*cooldownEntry).at) < el.Value.(*cooldownEntry).win {
+			return "", 0, 0, false
 		}
 	}
 
+	win = d.offenders.WindowFor(ip, class, d.window)
 	key = cooldownKey(ip, class)
 	d.nextSlot++
 	if el, found := d.seen[key]; found {
 		e := el.Value.(*cooldownEntry)
-		e.at, e.slot = now, d.nextSlot
+		e.at, e.win, e.slot = now, win, d.nextSlot
 		d.order.MoveToBack(el)
-		return key, e.slot, true
+		return key, e.slot, win, true
 	}
 	if len(d.seen) >= d.maxEntries {
 		d.makeRoom(now)
 	}
-	d.seen[key] = d.order.PushBack(&cooldownEntry{key: key, at: now, slot: d.nextSlot})
+	d.seen[key] = d.order.PushBack(&cooldownEntry{key: key, at: now, win: win, slot: d.nextSlot})
 	d.stats.size(len(d.seen))
-	return key, d.nextSlot, true
+	return key, d.nextSlot, win, true
 }
 
 // Release frees the slot taken by Allow after a failed enqueue. It does nothing
@@ -116,7 +130,7 @@ func (d *cooldownFilter) makeRoom(now time.Time) {
 // at the first live one.
 func (d *cooldownFilter) sweepFront(now time.Time) {
 	for el := d.order.Front(); el != nil; el = d.order.Front() {
-		if now.Sub(el.Value.(*cooldownEntry).at) < d.window {
+		if now.Sub(el.Value.(*cooldownEntry).at) < el.Value.(*cooldownEntry).win {
 			return
 		}
 		d.remove(el)

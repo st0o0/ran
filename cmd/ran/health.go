@@ -80,6 +80,10 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
+	fmt.Fprintf(stdout, "ran: shun %s (repeat after %d alerts, repeat cooldown %s, alert cooldown %s)\n", onOff(cfg.Shun), cfg.RepeatAfter, cfg.EffectiveRepeatCooldown(), cfg.AlertCooldown)
+	if cfg.Shun && !cfg.CrowdSec {
+		fmt.Fprintln(stderr, "ran: warning: RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert")
+	}
 	for _, name := range cfg.ProxyNotEnabled {
 		fmt.Fprintf(stderr, "ran: warning: RAN_PROXY_PROTOCOL names %s, which is not in RAN_TRAPS; the entry has no effect\n", name)
 	}
@@ -96,4 +100,11 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "ran: RAN_HTTP_FIXTURES ok (%d operator fixtures)\n", len(cfg.HTTPFixtures))
 	}
 	return 0
+}
+
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
 }

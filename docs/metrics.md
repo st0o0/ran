@@ -19,7 +19,9 @@ runtime and process collectors:
 - `ran_sessions_rejected_total{protocol}`: TCP connections and UDP packets rejected by the session limiter (`RAN_MAX_SESSIONS`, `RAN_MAX_PER_IP`)
 - `ran_probe_summary_suppressed_sessions_total`: probe sessions whose per-session log lines were replaced by a summary
 - `ran_ignored_sessions_total{protocol}`: sessions from sources in `RAN_IGNORE_IPS` (served and logged, never alerted; also counted in `ran_connections_total`)
-- `ran_tracked_entries{map}`: entries in the bounded tracking maps (`map`: `scan`, `probe`, `cooldown`)
+- `ran_connections_rejected_total{reason}`: TCP connections closed at accept time before a session existed; `reason` is `shun` (`RAN_SHUN`), the only value
+- `ran_shun_active_sources`: sources currently inside a shun window
+- `ran_tracked_entries{map}`: entries in the bounded tracking maps (`map`: `scan`, `probe`, `cooldown`, `offender`)
 - `ran_tracked_evictions_total{map}`: live entries evicted because a map was full; a rising rate means `RAN_CROWDSEC_MAX_TRACKED` is too small
 - `ran_crowdsec_push_duration_seconds`: histogram of CrowdSec LAPI push request durations
 - `ran_crowdsec_push_errors_total`: failed LAPI pushes (transport errors, non-2xx answers and failed re-logins after a 401)

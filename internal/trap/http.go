@@ -159,9 +159,9 @@ func (t *HTTPTrap) Start(ctx context.Context) error {
 		t.srv.Close()
 	}()
 
-	var serveLn net.Listener = ln
+	serveLn := newShunListener(ln, t.alerter, t.proto)
 	if t.wrap != nil {
-		serveLn = t.wrap(ln)
+		serveLn = t.wrap(serveLn)
 	}
 	if err := t.srv.Serve(serveLn); err != nil && err != http.ErrServerClosed {
 		return err

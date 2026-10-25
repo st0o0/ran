@@ -139,6 +139,9 @@ func (s *tcpServer) dispatch(ctx context.Context, conn net.Conn) {
 		conn.Close()
 		return
 	}
+	if closeIfShunned(s.reporter, s.proto, conn) {
+		return
+	}
 	if !s.limiter.Acquire(host) {
 		LogRejected(s.logger, s.metrics, s.proto, alert.TransportTCP, destPort, host, "rate_limit")
 		conn.Close()

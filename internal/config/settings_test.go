@@ -57,6 +57,14 @@ var defaultExtractors = map[string]func(*config.Config) string{
 	"RAN_CROWDSEC_MAX_TRACKED":    func(c *config.Config) string { return strconv.Itoa(c.CrowdSecMaxTracked) },
 	"RAN_BAN_ON":                  func(c *config.Config) string { return strings.Join(c.BanOn, ",") },
 	"RAN_ALERT_COOLDOWN":          func(c *config.Config) string { return c.AlertCooldown.String() },
+	"RAN_SHUN":                    func(c *config.Config) string { return onOff(c.Shun) },
+	"RAN_REPEAT_AFTER":            func(c *config.Config) string { return strconv.Itoa(c.RepeatAfter) },
+	"RAN_REPEAT_COOLDOWN": func(c *config.Config) string {
+		if c.RepeatCooldown == 0 {
+			return ""
+		}
+		return c.RepeatCooldown.String()
+	},
 }
 
 // skippedDefaults cannot be compared against a Config field:
@@ -91,7 +99,7 @@ func normalizeDefault(t *testing.T, s config.Setting) string {
 			return strings.ToLower(slog.LevelInfo.String())
 		}
 	}
-	if s.Kind == config.KindDuration {
+	if s.Kind == config.KindDuration && s.Default != "" {
 		d, err := time.ParseDuration(s.Default)
 		if err != nil {
 			t.Fatalf("%s: default %q is not a duration: %v", s.Name, s.Default, err)

@@ -73,8 +73,22 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 		}
 	}
 
+	if cfg.Shun && !cfg.CrowdSec {
+		logger.Warn("RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert")
+	}
+
 	logProxyTrust(logger, cfg)
 
+	var offenders *alert.Offenders
+	if cfg.CrowdSec {
+		offenders = alert.NewOffenders(alert.OffenderConfig{
+			Shun:           cfg.Shun,
+			RepeatAfter:    cfg.RepeatAfter,
+			RepeatCooldown: cfg.EffectiveRepeatCooldown(),
+			MaxEntries:     cfg.CrowdSecMaxTracked,
+			Metrics:        m,
+		}, logger)
+	}
 	var sink alert.Sink
 	if cfg.CrowdSec {
 		banOn := make([]alert.Class, len(cfg.BanOn))
@@ -87,6 +101,7 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 			Password:      cfg.CrowdSecPassword,
 			BanOn:         banOn,
 			Cooldown:      cfg.AlertCooldown,
+			Offenders:     offenders,
 			BatchInterval: cfg.CrowdSecBatchInterval,
 			BatchSize:     cfg.CrowdSecBatchSize,
 			MaxTracked:    cfg.CrowdSecMaxTracked,
@@ -96,13 +111,15 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 		}
 		sink = cs
 		logger.Info("crowdsec alerter enabled; ran does not ban by itself, a CrowdSec profile must create the decisions",
-			"url", cfg.CrowdSecURL, "ban_on", cfg.BanOn, "alert_cooldown", cfg.AlertCooldown)
+			"url", cfg.CrowdSecURL, "ban_on", cfg.BanOn, "alert_cooldown", cfg.AlertCooldown,
+			"shun", cfg.Shun, "repeat_after", cfg.RepeatAfter, "repeat_cooldown", cfg.EffectiveRepeatCooldown())
 	}
 	alerter := alert.NewSensor(alert.SensorConfig{
 		MaxTracked:    cfg.CrowdSecMaxTracked,
 		SummaryWindow: cfg.ProbeSummaryWindow,
 		Metrics:       m,
 		IgnoreIPs:     cfg.IgnoreIPs,
+		Offenders:     offenders,
 	}, sink, logger)
 	// Runs last: traps are stopped first, so the final events still reach the
 	// sink. The sink gets the remainder of the shared shutdown deadline.

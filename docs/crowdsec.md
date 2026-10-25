@@ -14,6 +14,9 @@ Without a profile nothing is banned.
 | `RAN_CROWDSEC_PASSWORD` | | Machine password for LAPI login (required when enabled) |
 | `RAN_BAN_ON` | `attack,scan` | Classes that produce a CrowdSec alert (subset of `probe,attack,scan`). `probe` stays in logs and metrics only unless listed. If `scan` is not listed, a scan-classified session is reported as its own class instead (attack if it did something, otherwise probe, which is then filtered) |
 | `RAN_ALERT_COOLDOWN` | `1h` | At most one alert per IP and class per cooldown (`0s` = disabled) |
+| `RAN_SHUN` | `off` | With `on`, new TCP connections from a source are closed at accept time for the alert cooldown after an alert was accepted for it (see [Quiet repeat offenders](/hardening#quiet-repeat-offenders)). Needs `RAN_CROWDSEC`. Ignored sources and `probe` sessions never shun; UDP is untouched |
+| `RAN_REPEAT_AFTER` | `5` | Number of accepted alerts for a source and class after which `RAN_REPEAT_COOLDOWN` applies instead of `RAN_ALERT_COOLDOWN` (whole number, at least 1) |
+| `RAN_REPEAT_COOLDOWN` | | Cooldown (and shun window) after `RAN_REPEAT_AFTER` alerts. Unset follows `RAN_ALERT_COOLDOWN`, so nothing changes until it is set; `12h` is recommended together with `RAN_SHUN=on`. Must be greater than zero when set |
 | `RAN_PROBE_SUMMARY_WINDOW` | `60s` | Window of the aggregated probe summary log line (`0s` = one log line per probe session) |
 | `RAN_CROWDSEC_BATCH_INTERVAL` | `10s` | Batch flush interval (`0s` = immediate, one POST per alert, no batching) |
 | `RAN_CROWDSEC_BATCH_SIZE` | `50` | Max alerts per batch POST (a batch is also flushed early at about 512 KiB) |

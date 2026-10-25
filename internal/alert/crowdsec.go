@@ -105,7 +105,10 @@ type CrowdSecConfig struct {
 	// BanOn lists the classes that produce an alert; empty means attack and scan.
 	BanOn []Class
 	// Cooldown allows at most one alert per IP and class per window; 0 disables it.
-	Cooldown      time.Duration
+	Cooldown time.Duration
+	// Offenders supplies the repeat cooldown and receives accepted alerts (shun);
+	// nil disables both.
+	Offenders     *Offenders
 	BatchInterval time.Duration
 	BatchSize     int
 	MaxTracked    int
@@ -129,6 +132,7 @@ type CrowdSecAlerter struct {
 
 	banOn         map[Class]bool
 	cooldown      *cooldownFilter
+	offenders     *Offenders
 	batchInterval time.Duration
 	batchSize     int
 
@@ -204,6 +208,8 @@ func NewCrowdSec(ctx context.Context, cfg CrowdSecConfig, logger *slog.Logger, m
 	}
 
 	a.cooldown.stats = newTrackStats(m, mapCooldown)
+	a.cooldown.offenders = cfg.Offenders
+	a.offenders = cfg.Offenders
 
 	if err := a.login(ctx); err != nil {
 		return nil, fmt.Errorf("crowdsec login: %w", err)
@@ -251,7 +257,7 @@ func (a *CrowdSecAlerter) Submit(_ context.Context, ev Event) {
 		return
 	}
 
-	key, slot, ok := a.cooldown.Allow(ip, ev.Class)
+	key, slot, win, ok := a.cooldown.allow(ip, ev.Class)
 	if !ok {
 		a.logger.Debug("alert filtered", "source_ip", ip, "protocol", protocol, "class", string(ev.Class), "stage", "cooldown")
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "cooldown").Inc()
@@ -262,6 +268,7 @@ func (a *CrowdSecAlerter) Submit(_ context.Context, ev Event) {
 	select {
 	case a.ch <- msg:
 		a.metrics.CrowdSecPipeline.WithLabelValues(protocol, "queued").Inc()
+		a.offenders.Accepted(ip, ev.Class, win)
 		a.metrics.CrowdSecQueueLength.Set(float64(len(a.ch)))
 	default:
 		// Release the cooldown slot so a retry is not suppressed.

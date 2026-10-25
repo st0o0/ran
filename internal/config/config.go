@@ -161,6 +161,15 @@ type Config struct {
 	BanOn []string
 	// AlertCooldown allows at most one alert per IP and class per window (0 = off).
 	AlertCooldown time.Duration
+	// Shun closes new TCP connections from a source right after an alert was
+	// accepted for it, for the alert cooldown (RAN_SHUN).
+	Shun bool
+	// RepeatAfter is the number of accepted alerts for a source and class after
+	// which RepeatCooldown applies (RAN_REPEAT_AFTER).
+	RepeatAfter int
+	// RepeatCooldown is the raw RAN_REPEAT_COOLDOWN; 0 means unset. Use
+	// EffectiveRepeatCooldown.
+	RepeatCooldown time.Duration
 	// ProbeSummaryWindow is the probe log aggregation window (0 = per-session lines).
 	ProbeSummaryWindow time.Duration
 
@@ -380,6 +389,15 @@ func (c *Config) ResolveSessionTimeout(proto string) time.Duration {
 	return c.SessionTimeout
 }
 
+// EffectiveRepeatCooldown is the cooldown that applies after RepeatAfter alerts:
+// RAN_REPEAT_COOLDOWN, or RAN_ALERT_COOLDOWN when it is unset.
+func (c *Config) EffectiveRepeatCooldown() time.Duration {
+	if c.RepeatCooldown > 0 {
+		return c.RepeatCooldown
+	}
+	return c.AlertCooldown
+}
+
 func Load(getenv func(string) string) (*Config, error) {
 	e := &envReader{getenv: getenv}
 
@@ -410,6 +428,9 @@ func Load(getenv func(string) string) (*Config, error) {
 		CrowdSecMaxTracked:    e.intMin("RAN_CROWDSEC_MAX_TRACKED", 20000, 1),
 		BanOn:                 e.classes("RAN_BAN_ON", []string{"attack", "scan"}),
 		AlertCooldown:         e.durationMin0("RAN_ALERT_COOLDOWN", time.Hour),
+		Shun:                  e.boolean("RAN_SHUN", false),
+		RepeatAfter:           e.intMin("RAN_REPEAT_AFTER", 5, 1),
+		RepeatCooldown:        e.durationPositiveOrUnset("RAN_REPEAT_COOLDOWN"),
 		ProbeSummaryWindow:    e.durationMin0("RAN_PROBE_SUMMARY_WINDOW", 60*time.Second),
 		LogPasswords:          e.logPasswords("RAN_LOG_PASSWORDS", "off"),
 		UDPRatePerSource:      e.intMin("RAN_UDP_RATE_PER_SOURCE", 20, 1),
@@ -616,6 +637,15 @@ func (e *envReader) durationPositive(name string, def time.Duration) time.Durati
 		return def
 	}
 	return d
+}
+
+// durationPositiveOrUnset returns 0 when the variable is unset and requires a
+// value greater than zero otherwise.
+func (e *envReader) durationPositiveOrUnset(name string) time.Duration {
+	if strings.TrimSpace(e.getenv(name)) == "" {
+		return 0
+	}
+	return e.durationPositive(name, 0)
 }
 
 // classes parses a comma-separated, non-empty subset of ValidClasses.

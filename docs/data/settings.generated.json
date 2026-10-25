@@ -172,6 +172,36 @@
       ]
     },
     {
+      "name": "RAN_REPEAT_AFTER",
+      "kind": "int",
+      "default": "5",
+      "group": "crowdsec",
+      "summary": "Number of alerts for a source and class after which RAN_REPEAT_COOLDOWN applies.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_REPEAT_COOLDOWN",
+      "kind": "duration",
+      "default": "",
+      "group": "crowdsec",
+      "summary": "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_SHUN",
+      "kind": "bool",
+      "default": "off",
+      "group": "crowdsec",
+      "summary": "Close new TCP connections from a source right after an alert for it, for the alert cooldown.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
       "name": "RAN_FINGERPRINT",
       "kind": "enum",
       "default": "seeded",
