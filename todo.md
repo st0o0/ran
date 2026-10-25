@@ -4,31 +4,24 @@ Roadmap for `ran`, derived from a comparison with Cowrie, OpenCanary, qeeqbox/ho
 
 Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. All 13 changes below are written and validated; the order is the order of implementation. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
 
-## Now (build first)
-
-| # | Change | Why | Effort | Source |
-|---|---|---|---|---|
-| 1 | `http-request-capture` | `GET` scanners are invisible: no path, no user agent, class stays `probe`, never reported | M | audit, T-Pot (Log4Pot) |
-| 2 | `tls-traps` | No TLS anywhere; SNI, JA3 and JA4 lost; most scans hit 443 | M | qeeqbox, T-Pot, audit |
-| 3 | `ssh-identity-capture` | Key-only bots rejected silently; no client version or HASSH | S-M | Cowrie, audit |
-| 4 | `ignore-list` | Own scanners and monitors get classified and banned | S | OpenCanary |
-
-Docs: the README comparison, positioning section and collapsible reference sections are done. Re-check the competitor facts (Cowrie licence, OpenCanary protocol list, T-Pot container count) against the repos before the next README update.
-
-## Next
-
-| # | Change | Content | Effort | Source |
-|---|---|---|---|---|
-| 5 | `new-scan-targets` | Traps for Docker API 2375, Kubernetes 6443 and 10250, MongoDB 27017; `telnet` default also on 2323. One task per trap (registry, ports and README must change together) | S-M each | audit, T-Pot |
-| 6 | `classification-depth` | Modbus read versus write, ADB continue after AUTH, telnet IAC handling, more than one attempt for mysql, postgres and rdp, scan detection by distinct ports | S-M | audit |
-
-## Later
+## Now (build next)
 
 | # | Change | Content | Effort | Source |
 |---|---|---|---|---|
 | 11 | `fingerprint-realism` | Vary SSH banner, MySQL and Elasticsearch versions; per-trap class meta for vnc and single-request traps | S | audit |
 | 12 | `ics-and-printer-traps` | S7comm 102, EtherNet/IP 44818, JetDirect/PJL 9100, IPP 631 (TCP only; BACnet and IPMI are UDP and would log only) | M | T-Pot (Conpot), qeeqbox |
 | 13 | `webhook-sink` | One generic webhook, rate limited, no passwords. **Deferred by decision**: the change is written, do not implement it yet | S | OpenCanary, Beelzebub |
+
+## Docs site (evaluate after `fingerprint-realism` and `ics-and-printer-traps`)
+
+The README is about 1000 lines and used as reference documentation. Evaluate a VitePress site: what it would cost (Node toolchain in CI, GitHub Pages deploy workflow, a pinned VitePress version managed by renovate), what it buys (sidebar and search, one page per topic, versioned config and metric reference), and what stays in the README (pitch, comparison, quick start, trap list, link to the site). Open questions:
+
+- `docs/` is gitignored ("local only design docs"); either rename the site folder (for example `site/`) or change the ignore rule and move the local design docs.
+- Several README facts are checked by contract tests (`RAN_*` variables, trap names); decide whether the tests keep reading the README or read the new pages, so the guarantee does not silently lapse.
+- Generate what can be generated instead of copying: the trap table and config reference from `config.DefaultPorts` and the contract test lists, so the site cannot drift.
+- Competitor facts (Cowrie licence, OpenCanary protocol list, T-Pot container count) need re-checking before they move into the site.
+
+Outcome of the evaluation is a go or no-go with a rough size, then an OpenSpec change (`docs-site`) if go.
 
 ## To discuss next (all other changes are written)
 
