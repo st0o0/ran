@@ -4,7 +4,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
 
-Single-binary honeypot written in Go. Emulates 33 network services (SSH, RDP,
+Single-binary honeypot written in Go. Emulates 37 network services (SSH, RDP,
 Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
 pushes classified alerts to CrowdSec, whose profiles decide the bans. No external
 dependencies, ~8 MB scratch image.
@@ -138,7 +138,7 @@ which keeps the attack surface of the honeypot minimal.
 | `httpproxy` | `:8080` | `CONNECT host:port` and absolute-URI requests (`METHOD URL`, without userinfo, query and fragment) as commands, plus Basic `Proxy-Authorization` credentials. Requests with neither get `400` and stay a probe |
 | `elasticsearch` | `:9200` | API requests with fake cluster responses (version, cluster and node name come from the [banner profile](#banner-profiles)). Classification: `GET`/`HEAD` without a body, and any `GET` to `/` or `/_cluster/health`, are probes. `POST`, `PUT`, `DELETE`, or `GET`/`HEAD` with a body on other paths are commands, recorded as `METHOD /path` only (no query string, no body; the body is read up to 4096 bytes). Other methods get `405` and are not recorded |
 
-`http`, `https`, `docker`, `kubernetes` and `mcp` start a session per connection; `httpproxy` and `elasticsearch` start one per request.
+`http`, `https`, `docker`, `kubernetes`, `mcp` and `ipp` start a session per connection; `httpproxy` and `elasticsearch` start one per request.
 
 ### Containers & orchestration
 
@@ -148,7 +148,7 @@ which keeps the attack surface of the honeypot minimal.
 | `kubernetes` | `:6443` | Stub of the Kubernetes API server and the kubelet API (plain HTTP, no TLS; set `RAN_KUBERNETES_ADDR=:6443,:10250` for the kubelet port). `GET /version`, `/api`, `/healthz`, `/livez` and `/readyz` get plausible answers and stay a `probe`; kubelet `/pods` and `/runningpods` answer `401`, every other path `403` as `system:anonymous`. `/run/`, `/exec/` and `/attach/` requests are commands (method, path and the `cmd`/`command` values of the query or form body, 256 bytes) and are refused. An `Authorization: Bearer` token is an auth attempt: only the first 8 hex characters of its SHA-256 are logged and sent as alert meta `token_hash`; the token itself is never stored. A token that is presented gets `401` instead of `403` |
 | `mcp` | `:8000` | Static decoy of a Model Context Protocol server: JSON-RPC 2.0 over plain HTTP on `POST /mcp` and `POST /`. `initialize` (the `protocolVersion` is echoed only from a fixed list of three, anything else gets `2025-06-18`), `ping`, `notifications/initialized` (`202`, no body), `tools/list` (four inert bait tools: `read_file`, `list_directory`, `run_command`, `get_secrets`), `resources/list` and `prompts/list` (empty) stay a `probe`. `tools/call` is a command (`tools/call <tool> key=value ...`: tool name 64 bytes, at most 8 argument keys in sorted order, 128 bytes per string value, nested values not descended into, values of keys such as `password`, `token` or `secret` replaced by `***`) and an `attack`; it is answered with an `isError` result and nothing is executed. Alert meta: `tool` and `command`. Malformed JSON gets `-32700`, an invalid request `-32600`, an unknown method `-32601`; a batch of more than 16 messages (or an empty one) is rejected as a whole with `-32600`. `GET /sse` returns a finished event stream, `GET`/`DELETE` on `/mcp` and `/` get `405`. A request id is echoed only when it is an integer of at most 15 digits or a string of at most 64 characters from `A-Za-z0-9._:-`, else `null`. An `Authorization` or `X-API-Key` header is an auth attempt: only the first 8 hex characters of its SHA-256 are logged and sent as alert meta `token_hash`. `Mcp-Session-Id` is neither logged nor used. Exploit paths and JNDI strings are commands as in `http` |
 
-`docker`, `kubernetes` and `mcp` reuse the request handling of `http` (sessions per connection, 16 KiB header and body limit, `claimed_client_ip` logging only, `Cookie` and `Authorization` never logged). The alert IP is always the socket peer.
+`docker`, `kubernetes`, `mcp` and `ipp` reuse the request handling of `http` (sessions per connection, 16 KiB header and body limit, `claimed_client_ip` logging only, `Cookie` and `Authorization` never logged). The alert IP is always the socket peer.
 
 ### Databases
 
@@ -183,10 +183,19 @@ which keeps the attack surface of the honeypot minimal.
 
 | Name | Port | Captures |
 |---|---|---|
+| `s7comm` | `:102` | S7comm over ISO on TCP (TPKT, COTP, S7). The COTP connection request, the setup communication request and SZL reads (module and component identification) are answered with a fixed, invented Siemens-like identity and stay a `probe`, as do read variable requests (answered with an S7 error). Write variable (`write`), block download and upload, PLC control and stop (`control`) and any other function (`unknown`) are payload with an S7 error answer and make the session an `attack`. Alert meta: `kind` and, when an S7 job function was decoded, `function_code`. A TPKT length above 1024 bytes ends the session (`too_long`) before it is read; at most 64 packets per session |
+| `enip` | `:44818` | EtherNet/IP encapsulation over TCP. `ListIdentity`, `ListServices`, `ListInterfaces` and `RegisterSession` (fixed session handle) are answered with a fixed, invented identity and stay a `probe`; `NOP` is ignored and `UnRegisterSession` ends the session. `SendRRData` and `SendUnitData` (`send_data`, with the CIP service code) and any unknown command (`unknown`) are payload, answered with an unsupported-command status, and make the session an `attack`. Alert meta: `kind`, `command_code` and, for `send_data`, `cip_service`. Data above 1024 bytes ends the session (`too_long`); at most 64 packets per session |
 | `mqtt` | `:1883` | Credentials (CONNECT client ID + user/pass). Alert meta adds `kind=connect` |
 | `modbus` | `:502` | Function codes with start address and quantity (capped at the Modbus maximum). Reads (1 to 4) and device identification (43) are fingerprinting and stay a `probe`; writes (5, 6, 15, 16, 22, 23) and unknown function codes are payload and make the session an `attack`. Alert meta adds `kind` (`write` or `unknown_function`) |
 | `adb` | `:5555` | ADB CNXN system identity (AUTH token challenge). After the token the trap reads up to 8 more packets: an AUTH signature or public key is an auth attempt (only a SHA-256 is kept: `key_hash` for a public key, `signature_hash` for a signature), and OPEN with a `shell:` or `exec:` destination is a command (256 bytes) answered with CLSE. A first packet that is not CNXN is logged as an `adb_unknown` payload. Alert meta adds `kind` (`connect`, `auth` or `shell_command`) |
 | `minecraft` | `:25565` | Handshake metadata + player names from login attempts. A server-list ping (status request) is a probe; only a login with a player name counts as payload. Alert meta adds `kind` (`status`, `login` or `handshake`) |
+
+### Printers
+
+| Name | Port | Captures |
+|---|---|---|
+| `pjl` | `:9100` | JetDirect raw printing with PJL. `@PJL INFO ID\|STATUS\|CONFIG\|VARIABLES\|USTATUS`, `@PJL USTATUS` and `@PJL ECHO` get fixed answers with an invented printer identity (the echo never repeats the request) and stay a `probe`, as do job framing commands (`JOB`, `EOJ`, `ENTER`, `COMMENT`, `INQUIRE`) and UEL sequences. Filesystem commands (`FSDIR`, `FSUPLOAD`, `FSDOWNLOAD`, `FSDELETE`, `FSMKDIR`, ...) are commands (`fs_command`) answered with `FILEERROR=3`; `SET`, `DEFAULT`, `INITIALIZE`, `RESET`, `OPMSG` and similar are commands (`set`) answered with `?`; any other `@PJL` verb is a command (`other`). Everything that is not a PJL line (PCL, PostScript, binary) is print data: it is counted as payload bytes and only its length, a SHA-256 prefix (16 hex characters) and a printable prefix of at most 64 bytes (secret-like `key=value` pairs hidden) are logged; the data itself is never stored. Alert meta: `kind` and `command` (scrubbed) for commands, `kind`, `data_bytes` and `data_hash` for print data |
+| `ipp` | `:631` | IPP over HTTP (CUPS style, plain HTTP). `Get-Printer-Attributes`, `CUPS-Get-Printers` and `CUPS-Get-Default` get a valid IPP answer with fixed attributes (nothing from the request, not even the `Host` header, is reflected), `Get-Jobs` and `Validate-Job` get a successful answer without attributes, and they stay a `probe`. `Print-Job`, `Create-Job`, `Send-Document` and `Send-URI` (`print_job`, refused with `client-error-not-authorized`) and every other operation (`other`, refused with `server-error-operation-not-supported`) are commands recorded with the operation name, the job name (64 bytes, scrubbed) and the document size only; document bytes are never stored. A `GET`/`HEAD`/`OPTIONS` request gets a static page and stays a `probe`; any other method, or a `POST` that is not IPP, is a command (`other`). Alert meta: `path`, `method`, `user_agent`, `command`, `kind`, `operation`, `document_bytes` and, with a job name, `job_name` |
 
 ### Catch-all & banner
 
@@ -476,6 +485,10 @@ Input limits (fixed, not configurable):
 | `https` (ClientHello) | first TLS record only (at most 16 KiB captured); 256 cipher suites, 128 extensions, 64 groups, 16 point formats, 128 signature algorithms, 32 versions and 16 ALPN entries; SNI 256 bytes |
 | `adb` | 4096 bytes of identity data and 4096 bytes per later packet (a longer declared length ends the session), 8 packets after the token, command meta 256 bytes |
 | `rdp` | 1024 bytes per TPKT packet |
+| `s7comm` | 1024 bytes per TPKT packet (a longer declared length ends the session before it is read), 64 packets per session |
+| `enip` | 24 byte header and at most 1024 bytes of data per packet (a longer declared length ends the session), 64 packets per session |
+| `pjl` | 1024 bytes per read unit (a line or a block of binary data), 64 KiB per session, 64 PJL commands per session; print data is summarized (length, 16 hex characters of SHA-256, 64 printable bytes), never stored |
+| `ipp` | 16 KiB for the request body and for the headers; at most 64 attributes inspected per request, attribute names 255 bytes, job name 64 bytes; the document is only counted (`document_bytes` is the declared size), never stored |
 | `catchall` | one read of at most 256 bytes, within a 3 second window (cut to the session timeout); nothing else is read |
 | `banner` | 512 byte lines, at most 100 lines per connection; banners are at most 256 bytes and there are at most 10 services |
 | UDP traps | 4096 bytes per packet (the rest is cut off) |
@@ -609,7 +622,14 @@ that says what was seen (a closed vocabulary per trap, never client data), so
 CrowdSec profiles can tell them apart with `Alert.Events[0].GetMeta("kind")`:
 `vnc` `auth_response`; `rdp` `connection_request`; `oracle` and `mqtt` `connect`;
 `modbus` `write` or `unknown_function`; `minecraft` `status`, `login` or
-`handshake`; `adb` `connect`, `auth` or `shell_command`. The meta is bounded:
+`handshake`; `adb` `connect`, `auth` or `shell_command`; `s7comm` `write`,
+`control` or `unknown`; `enip` `send_data` or `unknown`; `pjl` `fs_command`,
+`set`, `other` or `print_data`; `ipp` `print_job` or `other`. The same field
+appears in the log lines of probe requests with the probe vocabulary (`s7comm`
+`connect`, `setup`, `identify`; `enip` `list_identity`, `list_services`,
+`list_interfaces`, `register_session`, `unregister_session`, `nop`; `pjl` `info`,
+`job`; `ipp` `attributes`). The new ICS and printer traps use fixed, static
+identities (no seeded variation). The meta is bounded:
 
 - keys named `password`, `pass`, `passwd`, `secret`, `token` or `authorization`
   (case-insensitive) are dropped, so passwords never leave the host;
@@ -623,7 +643,7 @@ Sessions are classified from the counters when they end, so a trap that logs a
 command, payload or auth attempt ends as `attack` even if it did not alert
 mid-session (redis, memcached, imap and irc alert on the first command with only
 the command name as meta). Pure fingerprinting stays a `probe`: Elasticsearch
-plain GET requests without a body, HTTP `GET`/`HEAD` requests that match no exploit path or JNDI string, Minecraft server-list pings, and Modbus read requests (function codes 1 to 4) and device identification (43). An ADB CNXN still counts as payload.
+plain GET requests without a body, HTTP `GET`/`HEAD` requests that match no exploit path or JNDI string, Minecraft server-list pings, Modbus read requests (function codes 1 to 4) and device identification (43), S7comm setup and SZL reads, EtherNet/IP identity and session commands, PJL information queries and IPP `Get-Printer-Attributes`, `Get-Jobs` and `Validate-Job`. An ADB CNXN still counts as payload.
 
 </details>
 
@@ -907,6 +927,8 @@ Behavior changes in the release after 0.4.0 (existing deployments):
   keep one port) and strips IAC option bytes from the captured credentials.
 - `http` requests for known exploit and recon paths or with a JNDI string are
   now commands and classify as `attack`.
+- New traps `s7comm`, `enip`, `pjl` and `ipp` are available (see the trap
+  table; add them to `RAN_TRAPS` to enable them). `ipp` is HTTP based.
 - New traps `docker`, `kubernetes` and `mongodb` are available (see the trap
   table; add them to `RAN_TRAPS` to enable them).
 

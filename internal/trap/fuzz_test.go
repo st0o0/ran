@@ -382,3 +382,136 @@ func FuzzParseJSONRPC(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseS7(f *testing.F) {
+	f.Add(s7CR())
+	f.Add(s7SetupReq())
+	f.Add(s7SZLReq(0x001C))
+	f.Add(s7JobReq(1, []byte{s7FuncWriteVar, 0, 0}, []byte("data")))
+	f.Add([]byte{3, 0, 0xFF, 0xFF})
+	f.Add([]byte{3, 0, 0, 7, 2, 0xF0, 0x80})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, payload, err := readTPKT(bytes.NewReader(data))
+		if err == nil {
+			boundedPayload(t, data, payload)
+			if len(payload) > s7MaxTPKT {
+				t.Fatalf("payload of %d bytes above the cap", len(payload))
+			}
+		}
+		// The parser takes any bytes, not only a framed payload.
+		for _, in := range [][]byte{payload, data} {
+			req := parseS7(in)
+			if resp := s7Response(req); len(resp) > 512 {
+				t.Fatalf("response of %d bytes", len(resp))
+			}
+			switch req.kind {
+			case "", s7KindSetup, s7KindIdentify, s7KindWrite, s7KindControl, s7KindUnknown:
+			default:
+				t.Fatalf("kind %q outside the vocabulary", req.kind)
+			}
+		}
+	})
+}
+
+func FuzzParseENIP(f *testing.F) {
+	f.Add(enipReq(enipListIdentity, 0, nil))
+	f.Add(enipReq(enipRegisterSession, 0, []byte{1, 0, 0, 0}))
+	f.Add(enipReq(enipSendRRData, enipSessionHandle, []byte{0, 0, 0, 0, 10, 0, 2, 0, 0, 0, 0, 0, 0xB2, 0, 4, 0, 0x4C, 0, 0, 0}))
+	f.Add(make([]byte, enipHdrSize))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		p, err := readENIP(bytes.NewReader(data))
+		if err == nil {
+			boundedPayload(t, data, p.data)
+			if len(p.data) > enipMaxData {
+				t.Fatalf("data of %d bytes above the cap", len(p.data))
+			}
+		}
+		if svc := enipCIPService(p.command, p.data); svc < -1 || svc > 255 {
+			t.Fatalf("service %d", svc)
+		}
+		// The CIP parser also takes bytes that were never framed.
+		if svc := enipCIPService(enipSendRRData, data); svc < -1 || svc > 255 {
+			t.Fatalf("service %d", svc)
+		}
+		if resp := enipResponse(p); len(resp) > 256 {
+			t.Fatalf("response of %d bytes", len(resp))
+		}
+	})
+}
+
+func FuzzParseIPP(f *testing.F) {
+	f.Add(ippBody(ippOpGetPrinterAttrs, 1, "", nil))
+	f.Add(ippBody(ippOpPrintJob, 2, "job", []byte("doc")))
+	f.Add([]byte{2, 0, 0, 2, 0, 0, 0, 1, 1, 0x47, 0xFF, 0xFF})
+	f.Add([]byte{1, 1, 0, 0xB, 0, 0, 0, 1, 1, 0x42, 0, 0, 0, 0, 3})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		req, err := parseIPP(data)
+		if len(req.jobName) > ippMaxJobName || !utf8.ValidString(req.jobName) {
+			t.Fatalf("job name of %d bytes (valid utf8: %v)", len(req.jobName), utf8.ValidString(req.jobName))
+		}
+		if req.docOffset < -1 || req.docOffset > len(data) {
+			t.Fatalf("document offset %d for %d bytes", req.docOffset, len(data))
+		}
+		if err != nil {
+			return
+		}
+		kind, _ := ippKindOf(req.operation)
+		switch kind {
+		case ippKindAttributes, ippKindPrintJob, ippKindOther:
+		default:
+			t.Fatalf("kind %q outside the vocabulary", kind)
+		}
+		if name := ippOpName(req.operation); len(name) > 32 {
+			t.Fatalf("operation name %q", name)
+		}
+		resp := ippResponse(req, ippStatusOK, true)
+		if limit := len(ippOpAttrsBytes) + len(ippPrinterAttrsBytes) + 9; len(resp) != limit {
+			t.Fatalf("response of %d bytes, want the fixed %d", len(resp), limit)
+		}
+	})
+}
+
+func FuzzReadPJL(f *testing.F) {
+	f.Add([]byte("@PJL INFO ID\r\n"))
+	f.Add([]byte("\x1b%-12345X@PJL FSDIR NAME=\"0:\\\"\r\n\x1b%-12345X"))
+	f.Add([]byte("%!PS-Adobe-3.0\r\n"))
+	f.Add(bytes.Repeat([]byte{0xFF}, 3000))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		r := bufio.NewReaderSize(bytes.NewReader(data), pjlMaxChunk)
+		total := 0
+		var run pjlDataRun
+		for {
+			chunk, err := readPJLChunk(r)
+			if len(chunk) > pjlMaxChunk {
+				t.Fatalf("chunk of %d bytes", len(chunk))
+			}
+			total += len(chunk)
+			stripped, _ := stripUEL(chunk)
+			line := strings.TrimSpace(string(stripped))
+			if cmd, ok := classifyPJL(line); ok {
+				switch cmd.kind {
+				case pjlKindInfo, pjlKindFS, pjlKindSet, pjlKindJob, pjlKindOther:
+				default:
+					t.Fatalf("kind %q outside the vocabulary", cmd.kind)
+				}
+				if resp := pjlResponse(cmd); len(resp) > 512 || strings.ContainsAny(resp, "\x00\x1b") {
+					t.Fatalf("response of %d bytes", len(resp))
+				}
+			} else if len(stripped) > 0 {
+				run.add(stripped)
+			}
+			if err != nil {
+				break
+			}
+		}
+		if total > len(data) {
+			t.Fatalf("read %d bytes from %d", total, len(data))
+		}
+		if len(run.sample) > pjlSampleBytes || run.n > len(data) {
+			t.Fatalf("sample %d bytes, run %d bytes for %d input bytes", len(run.sample), run.n, len(data))
+		}
+		if s := printableSample(run.sample, pjlSampleBytes); len(s) > pjlSampleBytes {
+			t.Fatalf("printable sample of %d bytes", len(s))
+		}
+	})
+}

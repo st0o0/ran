@@ -8,7 +8,6 @@ Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marke
 
 | # | Change | Content | Effort | Source |
 |---|---|---|---|---|
-| 12 | `ics-and-printer-traps` | S7comm 102, EtherNet/IP 44818, JetDirect/PJL 9100, IPP 631 (TCP only; BACnet and IPMI are UDP and would log only) | M | T-Pot (Conpot), qeeqbox |
 | 13 | `webhook-sink` | One generic webhook, rate limited, no passwords. **Deferred by decision**: the change is written, do not implement it yet | S | OpenCanary, Beelzebub |
 
 ## Docs site (evaluate after `fingerprint-realism` and `ics-and-printer-traps`)

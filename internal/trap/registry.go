@@ -119,6 +119,18 @@ var Registry = map[string]Factory{
 	"mongodb": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
 		return NewMongoDB(cfg, logger, m, limiter, alerter), nil
 	},
+	"s7comm": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewS7Comm(cfg, logger, m, limiter, alerter), nil
+	},
+	"enip": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewENIP(cfg, logger, m, limiter, alerter), nil
+	},
+	"pjl": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewPJL(cfg, logger, m, limiter, alerter), nil
+	},
+	"ipp": func(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) (Trap, error) {
+		return NewIPP(cfg, logger, m, limiter, alerter), nil
+	},
 }
 
 func CreateTraps(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, limiter *Limiter, alerter Reporter) ([]Trap, error) {

