@@ -6,9 +6,6 @@
 *_cov.out
 coverage/
 
-# Design docs (local only)
-docs/
-
 # Claude Code
 .claude/
 
@@ -32,3 +29,8 @@ tests/tmp/
 
 # Secrets
 .secrets/
+
+# Docs site
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

@@ -1,7 +1,9 @@
 package config_test
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -39,14 +41,47 @@ func knownEnvVars(t *testing.T) []string {
 	return out
 }
 
-var envRef = regexp.MustCompile(`RAN_[A-Z][A-Z0-9_]*[A-Z0-9]`)
-
-func TestREADMEMatchesConfig(t *testing.T) {
+// documentation returns the README and every Markdown page under docs/ (the
+// VitePress site), concatenated. node_modules and .vitepress are skipped.
+func documentation(t *testing.T) string {
+	t.Helper()
 	raw, err := os.ReadFile("../../README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	readme := string(raw)
+	var b strings.Builder
+	b.Write(raw)
+	err = filepath.WalkDir("../../docs", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "node_modules" || d.Name() == ".vitepress" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".md" {
+			return nil
+		}
+		page, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		b.WriteByte('\n')
+		b.Write(page)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+var envRef = regexp.MustCompile(`RAN_[A-Z][A-Z0-9_]*[A-Z0-9]`)
+
+func TestREADMEMatchesConfig(t *testing.T) {
+	readme := documentation(t)
 
 	known := map[string]bool{}
 	for _, v := range knownEnvVars(t) {
@@ -84,7 +119,7 @@ func TestREADMEMatchesConfig(t *testing.T) {
 		if suffix, ok := trapPrefix(ref); ok && known[ref] || ok && perProto[suffix] {
 			continue
 		}
-		t.Errorf("README mentions %s, which is neither a config variable nor a removed one", ref)
+		t.Errorf("README or docs mention %s, which is neither a config variable nor a removed one", ref)
 	}
 
 	for name := range known {
@@ -94,7 +129,7 @@ func TestREADMEMatchesConfig(t *testing.T) {
 		if suffix, ok := trapPrefix(name); ok && perProto[suffix] {
 			continue
 		}
-		t.Errorf("config variable %s is not documented in README", name)
+		t.Errorf("config variable %s is not documented in README or docs", name)
 	}
 }
 
@@ -111,11 +146,7 @@ func TestMaxTrackedDefaultIsConsistent(t *testing.T) {
 	if cfg.CrowdSecMaxTracked != 20000 || alert.DefaultMaxTracked != 20000 {
 		t.Errorf("max tracked defaults: config=%d alert=%d, want 20000", cfg.CrowdSecMaxTracked, alert.DefaultMaxTracked)
 	}
-	raw, err := os.ReadFile("../../README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "`RAN_CROWDSEC_MAX_TRACKED` | `20000`") {
+	if !strings.Contains(documentation(t), "`RAN_CROWDSEC_MAX_TRACKED` | `20000`") {
 		t.Error("README must document the RAN_CROWDSEC_MAX_TRACKED default as 20000")
 	}
 }

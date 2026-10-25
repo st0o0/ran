@@ -28,3 +28,12 @@ jobs:
       contents: read
       packages: write
       id-token: write
+
+  docs:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: st0o0/github-workflows/.github/workflows/docs.yml@main
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
