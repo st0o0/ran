@@ -331,6 +331,22 @@ func TestHTTPFixturesDoNotOverridePOSTLogin(t *testing.T) {
 	}
 }
 
+// Matching is exact: case differences and a trailing slash miss the fixture and
+// get the login page.
+func TestHTTPFixtureMatchIsExact(t *testing.T) {
+	t.Parallel()
+	addr, _ := startFixtureTrap(t, "http", nil)
+	if got := fxDo(t, false, addr, "GET", "/robots.txt", nil, ""); strings.Contains(got.body, "<form") {
+		t.Fatalf("/robots.txt did not get the fixture: %q", got.body)
+	}
+	for _, p := range []string{"/ROBOTS.txt", "/robots.txt/"} {
+		got := fxDo(t, false, addr, "GET", p, nil, "")
+		if !strings.Contains(got.body, "<form") {
+			t.Errorf("%s did not get the login page: %q", p, got.body)
+		}
+	}
+}
+
 func TestHTTPFixtureClassification(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

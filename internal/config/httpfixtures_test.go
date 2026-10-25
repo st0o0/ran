@@ -46,6 +46,13 @@ func TestParseHTTPFixtures(t *testing.T) {
 		{name: "path non ascii", raw: fixturesJSON(`{"path":"/ä"}`), errPart: "printable ASCII"},
 		{name: "path query", raw: fixturesJSON(`{"path":"/a?b=1"}`), errPart: "must not contain ?"},
 		{name: "path too long", raw: fixturesJSON(`{"path":"/` + strings.Repeat("a", 256) + `"}`), errPart: "limit is 256"},
+		{name: "path percent", raw: fixturesJSON(`{"path":"/a%2fb"}`), errPart: `entry 1 (path "/a%2fb"): path must not contain %`},
+		{name: "duplicate top-level key", raw: `{"fixtures":[{"path":"/a"}],"fixtures":[{"path":"/b"}]}`, errPart: `duplicate key "fixtures" in the top-level object`},
+		{name: "duplicate entry key", raw: fixturesJSON(`{"path":"/a"}`, `{"path":"/b","path":"/c"}`), errPart: `entry 2: duplicate key "path"`},
+		{name: "duplicate entry body", raw: fixturesJSON(`{"path":"/a","body":"x","body":"y"}`), errPart: `entry 1: duplicate key "body"`},
+		{name: "duplicate header", raw: fixturesJSON(`{"path":"/a","headers":{"Server":"a","Server":"b"}}`), errPart: `entry 1: duplicate header "Server"`},
+		{name: "duplicate header in later entry", raw: fixturesJSON(`{"path":"/a"}`, `{"path":"/b","headers":{"Server":"a","Server":"b"}}`), errPart: `entry 2: duplicate header "Server"`},
+		{name: "same key in different entries", raw: fixturesJSON(`{"path":"/a","headers":{"Server":"a"}}`, `{"path":"/b","headers":{"Server":"b"}}`), count: 2},
 		{name: "bad status", raw: fixturesJSON(`{"path":"/s","status":302}`), errPart: "status 302 is not allowed"},
 		{name: "zero status", raw: fixturesJSON(`{"path":"/s","status":0}`), errPart: "status 0 is not allowed"},
 		{name: "204 with body", raw: fixturesJSON(`{"path":"/s","status":204,"body":"x"}`), errPart: "204 must have an empty body"},
@@ -157,6 +164,7 @@ func FuzzParseHTTPFixtures(f *testing.F) {
 	f.Add([]byte(`{"fixtures":[{"path":"/a"},{"path":"/a"}]}`))
 	f.Add([]byte(`{"fixtures":[{"path":"/s","status":204,"body":"x"}]}`))
 	f.Add([]byte(`{"fixtures":[{"path":"/\u0000","headers":{"Server":"a\r\nb"}}]}`))
+	f.Add([]byte(`{"fixtures":[{"path":"/a","path":"/b","headers":{"Server":"a","Server":"b"}}],"fixtures":[]}`))
 	f.Add([]byte(`[]`))
 	f.Add([]byte(``))
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -180,7 +188,7 @@ func FuzzParseHTTPFixtures(f *testing.F) {
 				t.Fatalf("bad path %q", fx.Path)
 			}
 			for i := 0; i < len(fx.Path); i++ {
-				if c := fx.Path[i]; c <= 0x20 || c >= 0x7f || c == '?' || c == '#' {
+				if c := fx.Path[i]; c <= 0x20 || c >= 0x7f || c == '?' || c == '#' || c == '%' {
 					t.Fatalf("path %q has byte %#x", fx.Path, c)
 				}
 			}

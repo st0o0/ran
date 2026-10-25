@@ -28,7 +28,7 @@ The `http` and `https` traps SHALL answer `GET` and `HEAD` requests whose exact 
 - **THEN** that trap answers as before and no fixture is served
 
 ### Requirement: Operator fixtures
-`RAN_HTTP_FIXTURES` SHALL name a JSON file `{"fixtures":[{"path","status","headers","body"}]}` with at most 64 entries, bodies of at most 8 KiB, a file size of at most 1 MiB, unique paths that start with `/`, statuses from `200 204 400 401 403 404 500 503` and headers from a fixed allow-list. Unknown fields SHALL be rejected. The file SHALL be read once at startup when `http` or `https` is enabled, and an invalid file SHALL make the configuration invalid with the offending entry named. Operator fixtures SHALL take precedence over built-in fixtures with the same path and SHALL NOT apply to methods other than `GET` and `HEAD`.
+`RAN_HTTP_FIXTURES` SHALL name a JSON file `{"fixtures":[{"path","status","headers","body"}]}` with at least 1 and at most 64 entries, bodies of at most 8 KiB, a file size of at most 1 MiB, unique paths that start with `/` and contain no `%`, statuses from `200 204 400 401 403 404 500 503` and headers from a fixed allow-list. Unknown fields and duplicate JSON keys SHALL be rejected. The file SHALL be read once at startup when `http` or `https` is enabled, and an invalid file SHALL make the configuration invalid with the offending entry named. Operator fixtures SHALL take precedence over built-in fixtures with the same path and SHALL NOT apply to methods other than `GET` and `HEAD`.
 
 #### Scenario: Valid file
 - **WHEN** the file defines `/status` with status 200 and a body
@@ -39,7 +39,7 @@ The `http` and `https` traps SHALL answer `GET` and `HEAD` requests whose exact 
 - **THEN** `ran check-config` exits 1 and names the entry
 
 #### Scenario: Invalid entry
-- **WHEN** the file has more than 64 entries, a duplicate path, a path without a leading `/`, a status outside the allowed set, a header outside the allow-list, an unknown field, invalid JSON or a size over 1 MiB, or cannot be read
+- **WHEN** the file has no entries (an empty `fixtures` list), more than 64 entries, a duplicate path, a path without a leading `/` or with a `%`, a duplicate JSON key, a status outside the allowed set, a header outside the allow-list, an unknown field, invalid JSON or a size over 1 MiB, or cannot be read
 - **THEN** `ran check-config` exits 1 and the error names `RAN_HTTP_FIXTURES` and, for entry errors, the entry
 
 #### Scenario: Operator overrides built-in

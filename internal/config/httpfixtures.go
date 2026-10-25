@@ -91,6 +91,9 @@ func ParseHTTPFixtures(name string, data []byte) ([]HTTPFixture, error) {
 	if len(data) > MaxHTTPFixtureFile {
 		return nil, fmt.Errorf("%s: fixture file is larger than %d bytes; reduce it", name, MaxHTTPFixtureFile)
 	}
+	if err := checkDuplicateKeys(data); err != nil {
+		return nil, fmt.Errorf("%s: invalid JSON: %v", name, err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var raw rawHTTPFixtures
@@ -121,6 +124,112 @@ func ParseHTTPFixtures(name string, data []byte) ([]HTTPFixture, error) {
 		out = append(out, fx)
 	}
 	return out, nil
+}
+
+// scanFrame is one open JSON object or array of checkDuplicateKeys.
+type scanFrame struct {
+	obj       bool
+	expectKey bool
+	curKey    string
+	keys      map[string]struct{}
+	kind      string // top, fixtures, entry, headers or other
+	n         int    // array: values seen so far
+	entry     int    // 1-based fixture entry, 0 outside entries
+}
+
+// checkDuplicateKeys reports a repeated key of identical spelling in the top-level
+// object, in a fixture entry or in a headers map. encoding/json silently keeps the
+// last value, so it is detected with a token walk. Syntax errors are left to the
+// real decoder, which reports them.
+func checkDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var stack []*scanFrame
+	valueDone := func() {
+		if len(stack) == 0 {
+			return
+		}
+		f := stack[len(stack)-1]
+		if f.obj {
+			f.expectKey = true
+		} else {
+			f.n++
+		}
+	}
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		var top *scanFrame
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		if top != nil && top.obj && top.expectKey {
+			if d, ok := tok.(json.Delim); ok && d == '}' {
+				stack = stack[:len(stack)-1]
+				if len(stack) == 0 {
+					return nil
+				}
+				valueDone()
+				continue
+			}
+			key, ok := tok.(string)
+			if !ok {
+				return nil
+			}
+			if _, dup := top.keys[key]; dup {
+				q := strconv.Quote(truncate(key, 64))
+				switch top.kind {
+				case "top":
+					return fmt.Errorf("duplicate key %s in the top-level object", q)
+				case "headers":
+					return fmt.Errorf("entry %d: duplicate header %s", top.entry, q)
+				case "entry":
+					return fmt.Errorf("entry %d: duplicate key %s", top.entry, q)
+				}
+				return fmt.Errorf("duplicate key %s", q)
+			}
+			top.keys[key] = struct{}{}
+			top.curKey = key
+			top.expectKey = false
+			continue
+		}
+		d, isDelim := tok.(json.Delim)
+		if !isDelim {
+			if top == nil {
+				return nil
+			}
+			valueDone()
+			continue
+		}
+		switch d {
+		case '{', '[':
+			f := &scanFrame{obj: d == '{', kind: "other"}
+			if f.obj {
+				f.keys = make(map[string]struct{})
+				f.expectKey = true
+			}
+			switch {
+			case top == nil && f.obj:
+				f.kind = "top"
+			case top == nil:
+				return nil
+			case top.kind == "top" && top.curKey == "fixtures" && !f.obj:
+				f.kind = "fixtures"
+			case top.kind == "fixtures" && f.obj:
+				f.kind, f.entry = "entry", top.n+1
+			case top.kind == "entry" && top.curKey == "headers" && f.obj:
+				f.kind, f.entry = "headers", top.entry
+			}
+			stack = append(stack, f)
+		default:
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return nil
+			}
+			valueDone()
+		}
+	}
 }
 
 func fixtureLabel(n int, path string) string {
@@ -192,6 +301,9 @@ func validateFixturePath(p string) error {
 		}
 		if c == '?' || c == '#' {
 			return errors.New("path must not contain ? or # (the query is never matched)")
+		}
+		if c == '%' {
+			return errors.New("path must not contain % (requests are matched on the decoded path, so an encoded path never matches; write the decoded character)")
 		}
 	}
 	return nil
