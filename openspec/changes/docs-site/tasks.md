@@ -21,4 +21,4 @@
 
 - [ ] 4.1 `go test ./...`, 386 build, lint, `openspec validate --all`
 - [ ] 4.2 Owner enables GitHub Pages (Actions source); check the live site
-- [ ] 4.3 Shrink the README to pitch, quick start, trap list and links
+- [x] 4.3 Shrink the README to pitch, quick start, trap list and links
