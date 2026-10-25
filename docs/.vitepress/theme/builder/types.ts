@@ -13,6 +13,9 @@ export interface SettingDef {
   /** Per-trap family: name is a template such as RAN_<PROTO>_ADDR. */
   family?: string
   traps?: string[]
+  /** Inclusive bounds of an int setting, as Load enforces them (omitted when unset). */
+  min?: number
+  max?: number
 }
 
 export interface TrapDef {

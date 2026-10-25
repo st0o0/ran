@@ -148,6 +148,78 @@
       },
       "expect": "error",
       "message_contains": "RAN_CROWDSEC_URL"
+    },
+    {
+      "id": "ok-repeat-cooldown-above-alert",
+      "env": {
+        "RAN_REPEAT_COOLDOWN": "12h",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "ok-shun-with-cooldown",
+      "env": {
+        "RAN_SHUN": "on",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "warning-shun-without-alert-cooldown",
+      "env": {
+        "RAN_ALERT_COOLDOWN": "0s",
+        "RAN_SHUN": "on",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "warning",
+      "message_contains": "RAN_SHUN has no effect"
+    },
+    {
+      "id": "warning-repeat-cooldown-without-alert-cooldown",
+      "env": {
+        "RAN_ALERT_COOLDOWN": "0s",
+        "RAN_REPEAT_COOLDOWN": "12h",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "warning",
+      "message_contains": "RAN_REPEAT_COOLDOWN has no effect"
+    },
+    {
+      "id": "warning-repeat-cooldown-below-alert-cooldown",
+      "env": {
+        "RAN_REPEAT_COOLDOWN": "30m",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "warning",
+      "message_contains": "smaller than RAN_ALERT_COOLDOWN"
+    },
+    {
+      "id": "error-repeat-after-zero",
+      "env": {
+        "RAN_REPEAT_AFTER": "0",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "error",
+      "message_contains": "RAN_REPEAT_AFTER"
+    },
+    {
+      "id": "error-max-sessions-zero",
+      "env": {
+        "RAN_MAX_SESSIONS": "0",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "error",
+      "message_contains": "RAN_MAX_SESSIONS"
+    },
+    {
+      "id": "error-repeat-cooldown-zero",
+      "env": {
+        "RAN_REPEAT_COOLDOWN": "0s",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "error",
+      "message_contains": "RAN_REPEAT_COOLDOWN"
     }
   ]
 }

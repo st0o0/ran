@@ -3,7 +3,7 @@ import settingsJson from '../../../data/settings.generated.json'
 import casesJson from '../../../data/builder-cases.json'
 import type { BuilderCase, BuilderState, Register } from './types'
 import { cloneState, defaultState, effectiveEnv, sameState, setProxied, setTrap, setValue } from './state'
-import { checkCase, evaluate, evaluateEnv, hints, outcomeOf } from './rules'
+import { checkCase, durationMs, evaluate, evaluateEnv, hints, outcomeOf } from './rules'
 import { exportEnv, importEnv, portMappings, serialize, shellQuote, toCompose, toDockerRun, toEnvFile } from './serializer'
 import { base64UrlToBytes, bytesToBase64Url, decodeState, encodeState } from './hash'
 import { applyScenario, scenarioHints } from './scenarios'
@@ -255,5 +255,52 @@ describe('scenarios', () => {
     expect(exportEnv(reg, state(['ssh'])).notes).toEqual([])
     expect(outcomeOf(evaluate(reg, s))).toBe('ok')
     expect(scenarioHints(reg, s).length).toBeGreaterThan(0)
+  })
+})
+
+describe('value rules follow the register and Go', () => {
+  const messages = (env: Record<string, string>) =>
+    evaluateEnv(reg, { RAN_TRAPS: 'ssh', ...env }).map((i) => i.message)
+
+  it('enforces the int minimum from the register', () => {
+    expect(messages({ RAN_MAX_SESSIONS: '0' })).toContain('RAN_MAX_SESSIONS must be a whole number >= 1, got "0".')
+    expect(messages({ RAN_REPEAT_AFTER: '0' })).toContain('RAN_REPEAT_AFTER must be a whole number >= 1, got "0".')
+    expect(messages({ RAN_MAX_AUTH_RETRIES: '0' })).toEqual([])
+    expect(messages({ RAN_MAX_AUTH_RETRIES: '-1' })).toContain('RAN_MAX_AUTH_RETRIES must be a whole number >= 0, got "-1".')
+    expect(messages({ RAN_SSH_MAX_AUTH_RETRIES: '-1' })).toHaveLength(1)
+    expect(messages({ RAN_MAX_SESSIONS: '1' })).toEqual([])
+  })
+
+  it('every int setting declares a min', () => {
+    for (const s of reg.settings.filter((x) => x.kind === 'int')) expect(s.min, s.name).toBeTypeOf('number')
+  })
+
+  it('accepts durations like time.ParseDuration', () => {
+    for (const v of ['0', '30s', '1h30m', '1.5h', '.5s', '10us', '10' + String.fromCharCode(0xb5) + 's', '10' + String.fromCharCode(0x3bc) + 's', '5ns', '+5s']) {
+      expect(durationMs(v), v).not.toBeNull()
+      expect(messages({ RAN_AUTH_DELAY: v }), v).toEqual([])
+    }
+    for (const v of ['-5s', '5', 's', '5x', '1h 30m', '1,5s']) {
+      expect(durationMs(v), v).toBeNull()
+      expect(messages({ RAN_AUTH_DELAY: v }), v).toHaveLength(1)
+    }
+    expect(durationMs('1h30m')).toBe(5400000)
+  })
+
+  it('requires positive durations where Load does', () => {
+    expect(messages({ RAN_REPEAT_COOLDOWN: '0s' })).toContain('RAN_REPEAT_COOLDOWN must be greater than zero, got "0s".')
+    expect(messages({ RAN_SESSION_TIMEOUT: '0' })).toHaveLength(1)
+    expect(messages({ RAN_SSH_SESSION_TIMEOUT: '0s' })).toHaveLength(1)
+    expect(messages({ RAN_AUTH_DELAY: '0s' })).toEqual([])
+  })
+
+  it('warns about cooldown settings that do nothing', () => {
+    const ids = (env: Record<string, string>) =>
+      evaluateEnv(reg, { RAN_TRAPS: 'ssh', ...env }).map((i) => i.id)
+    expect(ids({ RAN_SHUN: 'on', RAN_ALERT_COOLDOWN: '0s' })).toEqual(['shun-without-cooldown'])
+    expect(ids({ RAN_REPEAT_COOLDOWN: '12h', RAN_ALERT_COOLDOWN: '0' })).toEqual(['repeat-without-cooldown'])
+    expect(ids({ RAN_REPEAT_COOLDOWN: '30m' })).toEqual(['repeat-below-cooldown'])
+    expect(ids({ RAN_REPEAT_COOLDOWN: '1h' })).toEqual([])
+    expect(ids({ RAN_SHUN: 'on' })).toEqual([])
   })
 })

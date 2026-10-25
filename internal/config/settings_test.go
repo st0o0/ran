@@ -335,5 +335,53 @@ func startupWarnings(c *config.Config) []string {
 	if c.ProxyTrustedUnused() {
 		out = append(out, "RAN_PROXY_TRUSTED has no effect while RAN_PROXY_PROTOCOL is off")
 	}
+	out = append(out, c.CooldownWarnings()...)
 	return out
+}
+
+// TestSettingsIntBoundsMatchLoad fails when the Min of an int setting differs
+// from what Load enforces: Min-1 must be rejected and Min accepted. Every int
+// setting must declare a Min, so a new one cannot skip the check.
+func TestSettingsIntBoundsMatchLoad(t *testing.T) {
+	for _, s := range config.Settings {
+		if s.Kind != config.KindInt {
+			if s.Min != nil || s.Max != nil {
+				t.Errorf("%s: only int settings may declare Min or Max", s.Name)
+			}
+			continue
+		}
+		if s.Min == nil {
+			t.Errorf("%s: int setting without Min; set it to what Load enforces", s.Name)
+			continue
+		}
+		name := s.Name
+		if s.Family != "" {
+			name = "RAN_SSH_" + s.Family
+		}
+		load := func(v int) error {
+			env := map[string]string{"RAN_TRAPS": "ssh", name: strconv.Itoa(v)}
+			if name == "RAN_UDP_RATE_BURST" {
+				// The burst may not be below the per-source rate (default 20).
+				env["RAN_UDP_RATE_PER_SOURCE"] = "1"
+			}
+			_, err := config.Load(func(k string) string { return env[k] })
+			return err
+		}
+		if err := load(*s.Min - 1); err == nil {
+			t.Errorf("%s: Load accepts %d, below the register Min %d", name, *s.Min-1, *s.Min)
+		} else if !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: error for %d does not name the variable: %v", name, *s.Min-1, err)
+		}
+		if err := load(*s.Min); err != nil {
+			t.Errorf("%s: Load rejects the register Min %d: %v", name, *s.Min, err)
+		}
+		if s.Max != nil {
+			if err := load(*s.Max); err != nil {
+				t.Errorf("%s: Load rejects the register Max %d: %v", name, *s.Max, err)
+			}
+			if err := load(*s.Max + 1); err == nil {
+				t.Errorf("%s: Load accepts %d, above the register Max %d", name, *s.Max+1, *s.Max)
+			}
+		}
+	}
 }

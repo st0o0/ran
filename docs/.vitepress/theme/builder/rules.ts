@@ -49,7 +49,38 @@ export function trapAddrs(reg: Register, env: Record<string, string>, trap: stri
   return parseAddrList(env[def.addr_var] ?? def.default_addr).addrs
 }
 
-const DURATION = /^(\d+(\.\d+)?(ns|us|ms|s|m|h))+$/
+/**
+ * Duration syntax, aligned with Go's time.ParseDuration for the forms an operator
+ * would write: an optional "+", one or more number+unit pairs (ns, us, the micro
+ * sign or Greek mu followed by s, ms, s, m, h; fractions such as 1.5h are fine)
+ * or a bare 0. Negative values are rejected on purpose: every duration variable
+ * rejects them. Go also accepts "-0", which is exotic and not matched here.
+ */
+const MICRO = String.fromCharCode(0xb5) // micro sign
+const MU = String.fromCharCode(0x3bc) // Greek small letter mu
+const UNIT = `(?:ns|us|${MICRO}s|${MU}s|ms|s|m|h)`
+const NUM = String.raw`(?:\d+\.?\d*|\.\d+)`
+const DURATION = new RegExp(String.raw`^\+?(?:${NUM}${UNIT})+$`)
+const DURATION_PART = new RegExp(`(${NUM})(${UNIT})`, 'g')
+
+const UNIT_MS: Record<string, number> = { ns: 1e-6, us: 1e-3, ms: 1, s: 1000, m: 60000, h: 3600000 }
+UNIT_MS[`${MICRO}s`] = 1e-3
+UNIT_MS[`${MU}s`] = 1e-3
+
+/** Milliseconds of a valid duration (see DURATION), or null when it is not valid. */
+export function durationMs(raw: string): number | null {
+  const v = raw.trim()
+  if (/^\+?0$/.test(v)) return 0
+  if (!DURATION.test(v)) return null
+  let total = 0
+  for (const m of v.matchAll(DURATION_PART)) total += Number(m[1]) * UNIT_MS[m[2]]
+  return total
+}
+
+/** Durations that Load requires to be greater than zero (durationPositive). */
+function mustBePositive(def: { name: string; family?: string }): boolean {
+  return def.name === 'RAN_SESSION_TIMEOUT' || def.name === 'RAN_REPEAT_COOLDOWN' || def.family === 'SESSION_TIMEOUT'
+}
 
 function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): void {
   for (const [key, value] of Object.entries(env)) {
@@ -58,10 +89,21 @@ function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): 
     const { def } = hit
     const v = value.trim()
     if (v === '') continue
-    if (def.kind === 'int' && !/^\d+$/.test(v)) {
-      out.push({ id: `bad-int-${key}`, level: 'error', message: `${key} must be a whole number >= 0, got "${v}".` })
-    } else if (def.kind === 'duration' && v !== '0' && !DURATION.test(v)) {
-      out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be a duration such as 30s or 1h, got "${v}".` })
+    if (def.kind === 'int') {
+      const min = def.min ?? 0
+      const n = Number(v)
+      if (!/^[+-]?\d+$/.test(v) || n < min) {
+        out.push({ id: `bad-int-${key}`, level: 'error', message: `${key} must be a whole number >= ${min}, got "${v}".` })
+      } else if (def.max !== undefined && n > def.max) {
+        out.push({ id: `bad-int-${key}`, level: 'error', message: `${key} must be a whole number <= ${def.max}, got "${v}".` })
+      }
+    } else if (def.kind === 'duration') {
+      const ms = durationMs(v)
+      if (ms === null) {
+        out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be a duration such as 30s or 1h, got "${v}".` })
+      } else if (ms <= 0 && mustBePositive(def)) {
+        out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be greater than zero, got "${v}".` })
+      }
     } else if (def.kind === 'enum' && def.enum && !def.enum.includes(v.toLowerCase())) {
       out.push({ id: `bad-enum-${key}`, level: 'error', message: `${key} must be one of ${def.enum.join(', ')}, got "${v}".` })
     } else if (def.kind === 'addr') {
@@ -109,6 +151,20 @@ export function evaluateEnv(reg: Register, env: Record<string, string>): Issue[]
   }
   if (!proxyActive && trusted !== '') {
     out.push({ id: 'trusted-without-proxy', level: 'warning', message: 'RAN_PROXY_TRUSTED is set but no trap uses PROXY protocol, so it has no effect.' })
+  }
+
+  // Cooldowns (same wording as config.CooldownWarnings)
+  const alertMs = durationMs(get('RAN_ALERT_COOLDOWN'))
+  const repeatMs = durationMs(get('RAN_REPEAT_COOLDOWN'))
+  if (alertMs !== null && alertMs <= 0) {
+    if (isTruthy(get('RAN_SHUN'))) {
+      out.push({ id: 'shun-without-cooldown', level: 'warning', message: 'RAN_SHUN has no effect while RAN_ALERT_COOLDOWN is 0s; a shun window lasts for the alert cooldown.' })
+    }
+    if (repeatMs !== null && repeatMs > 0) {
+      out.push({ id: 'repeat-without-cooldown', level: 'warning', message: 'RAN_REPEAT_COOLDOWN has no effect while RAN_ALERT_COOLDOWN is 0s, because the cooldown is disabled.' })
+    }
+  } else if (alertMs !== null && repeatMs !== null && repeatMs > 0 && repeatMs < alertMs) {
+    out.push({ id: 'repeat-below-cooldown', level: 'warning', message: 'RAN_REPEAT_COOLDOWN is smaller than RAN_ALERT_COOLDOWN; the repeat cooldown is meant to be longer than the base cooldown.' })
   }
 
   // UDP rate

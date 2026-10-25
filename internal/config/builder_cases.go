@@ -35,5 +35,13 @@ func BuilderCases() []BuilderCase {
 		{ID: "error-no-trap", Env: map[string]string{}, Expect: "error", MessageContains: "at least one trap"},
 		{ID: "error-catchall-without-addr", Env: map[string]string{"RAN_TRAPS": "catchall"}, Expect: "error", MessageContains: "RAN_CATCHALL_ADDR"},
 		{ID: "error-crowdsec-without-url", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_CROWDSEC": "on"}, Expect: "error", MessageContains: "RAN_CROWDSEC_URL"},
+		{ID: "ok-repeat-cooldown-above-alert", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_REPEAT_COOLDOWN": "12h"}, Expect: "ok"},
+		{ID: "ok-shun-with-cooldown", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_SHUN": "on"}, Expect: "ok"},
+		{ID: "warning-shun-without-alert-cooldown", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_SHUN": "on", "RAN_ALERT_COOLDOWN": "0s"}, Expect: "warning", MessageContains: "RAN_SHUN has no effect"},
+		{ID: "warning-repeat-cooldown-without-alert-cooldown", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_REPEAT_COOLDOWN": "12h", "RAN_ALERT_COOLDOWN": "0s"}, Expect: "warning", MessageContains: "RAN_REPEAT_COOLDOWN has no effect"},
+		{ID: "warning-repeat-cooldown-below-alert-cooldown", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_REPEAT_COOLDOWN": "30m"}, Expect: "warning", MessageContains: "smaller than RAN_ALERT_COOLDOWN"},
+		{ID: "error-repeat-after-zero", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_REPEAT_AFTER": "0"}, Expect: "error", MessageContains: "RAN_REPEAT_AFTER"},
+		{ID: "error-max-sessions-zero", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_MAX_SESSIONS": "0"}, Expect: "error", MessageContains: "RAN_MAX_SESSIONS"},
+		{ID: "error-repeat-cooldown-zero", Env: map[string]string{"RAN_TRAPS": "ssh", "RAN_REPEAT_COOLDOWN": "0s"}, Expect: "error", MessageContains: "RAN_REPEAT_COOLDOWN"},
 	}
 }

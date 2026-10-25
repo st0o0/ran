@@ -166,6 +166,13 @@ The table behind this is bounded by `RAN_CROWDSEC_MAX_TRACKED` with oldest-first
 eviction (`ran_tracked_entries{map="offender"}`); eviction loses a shun, never
 causes a ban.
 
+**Limits.** Shun and the repeat counters key on the exact source address. An IPv6
+source that rotates addresses inside one /64 is not grouped: each address gets its
+own counter and its own window. When the offender table is full, the oldest entry
+is dropped even if its shun window is still active, and that source is served
+again (watch `ran_tracked_evictions_total{map="offender"}` and raise
+`RAN_CROWDSEC_MAX_TRACKED` if it rises).
+
 **Relation to firewall bouncers.** A firewall bouncer (nftables or iptables)
 enforces a CrowdSec decision before the traffic reaches ran and remains the
 better tool when you can run one. Shun is the same loop enforced inside ran, for
