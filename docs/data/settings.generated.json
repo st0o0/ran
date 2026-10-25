@@ -1,0 +1,775 @@
+{
+  "settings": [
+    {
+      "name": "RAN_<PROTO>_ADDR",
+      "kind": "addr",
+      "default": "",
+      "group": "core",
+      "summary": "Listen addresses of one trap, comma separated; each trap has its own default port (see the trap table). Required for catchall.",
+      "family": "ADDR",
+      "traps": [
+        "adb",
+        "catchall",
+        "dns",
+        "docker",
+        "elasticsearch",
+        "enip",
+        "ftp",
+        "http",
+        "httpproxy",
+        "https",
+        "imap",
+        "ipp",
+        "irc",
+        "kubernetes",
+        "ldap",
+        "mcp",
+        "memcached",
+        "minecraft",
+        "modbus",
+        "mongodb",
+        "mqtt",
+        "mssql",
+        "mysql",
+        "ntp",
+        "oracle",
+        "pjl",
+        "pop3",
+        "postgres",
+        "rdp",
+        "redis",
+        "s7comm",
+        "sip",
+        "smb",
+        "smtp",
+        "snmp",
+        "socks5",
+        "ssh",
+        "telnet",
+        "vnc"
+      ]
+    },
+    {
+      "name": "RAN_BANNER_SERVICES",
+      "kind": "string",
+      "default": "",
+      "group": "core",
+      "summary": "Services of the banner trap as port=name:banner pairs."
+    },
+    {
+      "name": "RAN_HTTPS_CERT_PATH",
+      "kind": "string",
+      "default": "/data/https_cert.pem",
+      "group": "core",
+      "summary": "File that persists the self-signed HTTPS certificate."
+    },
+    {
+      "name": "RAN_METRICS_ADDR",
+      "kind": "addr",
+      "default": ":9550",
+      "group": "core",
+      "summary": "Listen address of the Prometheus metrics endpoint."
+    },
+    {
+      "name": "RAN_SSH_HOST_KEY_PATH",
+      "kind": "string",
+      "default": "/data/ssh_host_key",
+      "group": "core",
+      "summary": "File that persists the SSH host key."
+    },
+    {
+      "name": "RAN_TRAPS",
+      "kind": "list",
+      "default": "",
+      "group": "core",
+      "summary": "Comma-separated list of traps to enable; at least one is required."
+    },
+    {
+      "name": "RAN_ALERT_COOLDOWN",
+      "kind": "duration",
+      "default": "1h",
+      "group": "crowdsec",
+      "summary": "At most one alert per source and class in this window; 0s disables the limit.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_BAN_ON",
+      "kind": "list",
+      "default": "attack,scan",
+      "group": "crowdsec",
+      "summary": "Session classes that produce an alert: any of probe, attack, scan.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_CROWDSEC",
+      "kind": "bool",
+      "default": "off",
+      "group": "crowdsec",
+      "summary": "Report alerts to a CrowdSec local API."
+    },
+    {
+      "name": "RAN_CROWDSEC_BATCH_INTERVAL",
+      "kind": "duration",
+      "default": "10s",
+      "group": "crowdsec",
+      "summary": "How often queued alerts are sent.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_CROWDSEC_BATCH_SIZE",
+      "kind": "int",
+      "default": "50",
+      "group": "crowdsec",
+      "summary": "Maximum alerts per batch.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_CROWDSEC_MACHINE_ID",
+      "kind": "string",
+      "default": "",
+      "group": "crowdsec",
+      "summary": "Machine ID registered with cscli machines add.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_CROWDSEC_MAX_TRACKED",
+      "kind": "int",
+      "default": "20000",
+      "group": "crowdsec",
+      "summary": "Maximum source addresses tracked for scan detection.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_CROWDSEC_PASSWORD",
+      "kind": "string",
+      "default": "",
+      "group": "crowdsec",
+      "summary": "Machine password. Secret: never put a real value into shared files.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_CROWDSEC_URL",
+      "kind": "string",
+      "default": "",
+      "group": "crowdsec",
+      "summary": "URL of the CrowdSec local API.",
+      "requires": [
+        "RAN_CROWDSEC"
+      ]
+    },
+    {
+      "name": "RAN_FINGERPRINT",
+      "kind": "enum",
+      "default": "seeded",
+      "group": "fingerprint",
+      "summary": "Banner profile: seeded picks per-instance banners from a persisted seed, fixed uses the built-in ones.",
+      "enum": [
+        "seeded",
+        "fixed"
+      ]
+    },
+    {
+      "name": "RAN_FINGERPRINT_SEED_PATH",
+      "kind": "string",
+      "default": "/data/fingerprint_seed",
+      "group": "fingerprint",
+      "summary": "File that persists the fingerprint seed.",
+      "requires": [
+        "RAN_FINGERPRINT"
+      ]
+    },
+    {
+      "name": "RAN_HTTP_FIXTURES",
+      "kind": "string",
+      "default": "",
+      "group": "http",
+      "summary": "Path of a file with operator fixtures served by the http and https traps."
+    },
+    {
+      "name": "RAN_IGNORE_IPS",
+      "kind": "list",
+      "default": "",
+      "group": "ignore",
+      "summary": "IP addresses or CIDR ranges that are served and logged but never alert."
+    },
+    {
+      "name": "RAN_<PROTO>_AUTH_DELAY",
+      "kind": "duration",
+      "default": "",
+      "group": "limits",
+      "summary": "Per-trap override of RAN_AUTH_DELAY; unset inherits the global value.",
+      "family": "AUTH_DELAY",
+      "traps": [
+        "adb",
+        "banner",
+        "catchall",
+        "dns",
+        "docker",
+        "elasticsearch",
+        "enip",
+        "ftp",
+        "http",
+        "httpproxy",
+        "https",
+        "imap",
+        "ipp",
+        "irc",
+        "kubernetes",
+        "ldap",
+        "mcp",
+        "memcached",
+        "minecraft",
+        "modbus",
+        "mongodb",
+        "mqtt",
+        "mssql",
+        "mysql",
+        "ntp",
+        "oracle",
+        "pjl",
+        "pop3",
+        "postgres",
+        "rdp",
+        "redis",
+        "s7comm",
+        "sip",
+        "smb",
+        "smtp",
+        "snmp",
+        "socks5",
+        "ssh",
+        "telnet",
+        "vnc"
+      ]
+    },
+    {
+      "name": "RAN_<PROTO>_MAX_AUTH_RETRIES",
+      "kind": "int",
+      "default": "",
+      "group": "limits",
+      "summary": "Per-trap override of RAN_MAX_AUTH_RETRIES; unset inherits the global value.",
+      "family": "MAX_AUTH_RETRIES",
+      "traps": [
+        "adb",
+        "banner",
+        "catchall",
+        "dns",
+        "docker",
+        "elasticsearch",
+        "enip",
+        "ftp",
+        "http",
+        "httpproxy",
+        "https",
+        "imap",
+        "ipp",
+        "irc",
+        "kubernetes",
+        "ldap",
+        "mcp",
+        "memcached",
+        "minecraft",
+        "modbus",
+        "mongodb",
+        "mqtt",
+        "mssql",
+        "mysql",
+        "ntp",
+        "oracle",
+        "pjl",
+        "pop3",
+        "postgres",
+        "rdp",
+        "redis",
+        "s7comm",
+        "sip",
+        "smb",
+        "smtp",
+        "snmp",
+        "socks5",
+        "ssh",
+        "telnet",
+        "vnc"
+      ]
+    },
+    {
+      "name": "RAN_<PROTO>_SESSION_TIMEOUT",
+      "kind": "duration",
+      "default": "",
+      "group": "limits",
+      "summary": "Per-trap override of RAN_SESSION_TIMEOUT; unset inherits the global value.",
+      "family": "SESSION_TIMEOUT",
+      "traps": [
+        "adb",
+        "banner",
+        "catchall",
+        "dns",
+        "docker",
+        "elasticsearch",
+        "enip",
+        "ftp",
+        "http",
+        "httpproxy",
+        "https",
+        "imap",
+        "ipp",
+        "irc",
+        "kubernetes",
+        "ldap",
+        "mcp",
+        "memcached",
+        "minecraft",
+        "modbus",
+        "mongodb",
+        "mqtt",
+        "mssql",
+        "mysql",
+        "ntp",
+        "oracle",
+        "pjl",
+        "pop3",
+        "postgres",
+        "rdp",
+        "redis",
+        "s7comm",
+        "sip",
+        "smb",
+        "smtp",
+        "snmp",
+        "socks5",
+        "ssh",
+        "telnet",
+        "vnc"
+      ]
+    },
+    {
+      "name": "RAN_AUTH_DELAY",
+      "kind": "duration",
+      "default": "0s",
+      "group": "limits",
+      "summary": "Delay before answering a login attempt."
+    },
+    {
+      "name": "RAN_MAX_AUTH_RETRIES",
+      "kind": "int",
+      "default": "3",
+      "group": "limits",
+      "summary": "Login attempts accepted per session before the connection is closed."
+    },
+    {
+      "name": "RAN_MAX_PER_IP",
+      "kind": "int",
+      "default": "10",
+      "group": "limits",
+      "summary": "Maximum concurrent sessions per source address."
+    },
+    {
+      "name": "RAN_MAX_SESSIONS",
+      "kind": "int",
+      "default": "500",
+      "group": "limits",
+      "summary": "Maximum concurrent sessions."
+    },
+    {
+      "name": "RAN_SESSION_TIMEOUT",
+      "kind": "duration",
+      "default": "30s",
+      "group": "limits",
+      "summary": "Default session deadline."
+    },
+    {
+      "name": "RAN_LOG_FORMAT",
+      "kind": "enum",
+      "default": "json",
+      "group": "logging",
+      "summary": "Log output format.",
+      "enum": [
+        "json",
+        "text"
+      ]
+    },
+    {
+      "name": "RAN_LOG_LEVEL",
+      "kind": "enum",
+      "default": "info",
+      "group": "logging",
+      "summary": "Log level.",
+      "enum": [
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ]
+    },
+    {
+      "name": "RAN_LOG_PASSWORDS",
+      "kind": "enum",
+      "default": "off",
+      "group": "logging",
+      "summary": "Whether captured passwords are logged: off, masked or in clear text.",
+      "enum": [
+        "off",
+        "mask",
+        "on"
+      ]
+    },
+    {
+      "name": "RAN_PROBE_SUMMARY_WINDOW",
+      "kind": "duration",
+      "default": "60s",
+      "group": "logging",
+      "summary": "Aggregation window of probe log lines; 0s logs every probe session."
+    },
+    {
+      "name": "RAN_PROXY_PROTOCOL",
+      "kind": "string",
+      "default": "off",
+      "group": "proxy",
+      "summary": "PROXY protocol: on (all TCP traps), off, or a comma-separated list of TCP traps. UDP traps cannot use it."
+    },
+    {
+      "name": "RAN_PROXY_TRUSTED",
+      "kind": "list",
+      "default": "",
+      "group": "proxy",
+      "summary": "IP addresses or CIDR ranges of the proxies allowed to send PROXY headers, or any. Required when PROXY protocol is used.",
+      "requires": [
+        "RAN_PROXY_PROTOCOL"
+      ]
+    },
+    {
+      "name": "RAN_SSH_TARPIT",
+      "kind": "bool",
+      "default": "off",
+      "group": "ssh",
+      "summary": "Slow down SSH sessions that fail authentication."
+    },
+    {
+      "name": "RAN_SSH_TARPIT_DURATION",
+      "kind": "duration",
+      "default": "30s",
+      "group": "ssh",
+      "summary": "How long the SSH tarpit holds a session.",
+      "requires": [
+        "RAN_SSH_TARPIT"
+      ]
+    },
+    {
+      "name": "RAN_UDP_RATE_BURST",
+      "kind": "int",
+      "default": "40",
+      "group": "udp",
+      "summary": "UDP burst size per source; must not be smaller than the per-source rate."
+    },
+    {
+      "name": "RAN_UDP_RATE_GLOBAL",
+      "kind": "int",
+      "default": "2000",
+      "group": "udp",
+      "summary": "Packets per second accepted across all UDP sources."
+    },
+    {
+      "name": "RAN_UDP_RATE_PER_SOURCE",
+      "kind": "int",
+      "default": "20",
+      "group": "udp",
+      "summary": "Packets per second accepted per UDP source."
+    }
+  ],
+  "traps": [
+    {
+      "name": "adb",
+      "transport": "TCP",
+      "default_addr": ":5555",
+      "addr_var": "RAN_ADB_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "banner",
+      "transport": "TCP",
+      "default_addr": "",
+      "addr_var": "RAN_BANNER_SERVICES",
+      "addressless": true
+    },
+    {
+      "name": "catchall",
+      "transport": "TCP",
+      "default_addr": "",
+      "addr_var": "RAN_CATCHALL_ADDR",
+      "addressless": true
+    },
+    {
+      "name": "dns",
+      "transport": "UDP",
+      "default_addr": ":53",
+      "addr_var": "RAN_DNS_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "docker",
+      "transport": "TCP",
+      "default_addr": ":2375",
+      "addr_var": "RAN_DOCKER_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "elasticsearch",
+      "transport": "TCP",
+      "default_addr": ":9200",
+      "addr_var": "RAN_ELASTICSEARCH_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "enip",
+      "transport": "TCP",
+      "default_addr": ":44818",
+      "addr_var": "RAN_ENIP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "ftp",
+      "transport": "TCP",
+      "default_addr": ":21",
+      "addr_var": "RAN_FTP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "http",
+      "transport": "TCP",
+      "default_addr": ":8081",
+      "addr_var": "RAN_HTTP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "httpproxy",
+      "transport": "TCP",
+      "default_addr": ":8080",
+      "addr_var": "RAN_HTTPPROXY_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "https",
+      "transport": "TCP",
+      "default_addr": ":8443",
+      "addr_var": "RAN_HTTPS_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "imap",
+      "transport": "TCP",
+      "default_addr": ":143",
+      "addr_var": "RAN_IMAP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "ipp",
+      "transport": "TCP",
+      "default_addr": ":631",
+      "addr_var": "RAN_IPP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "irc",
+      "transport": "TCP",
+      "default_addr": ":6667",
+      "addr_var": "RAN_IRC_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "kubernetes",
+      "transport": "TCP",
+      "default_addr": ":6443",
+      "addr_var": "RAN_KUBERNETES_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "ldap",
+      "transport": "TCP",
+      "default_addr": ":389",
+      "addr_var": "RAN_LDAP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "mcp",
+      "transport": "TCP",
+      "default_addr": ":8000",
+      "addr_var": "RAN_MCP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "memcached",
+      "transport": "TCP",
+      "default_addr": ":11211",
+      "addr_var": "RAN_MEMCACHED_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "minecraft",
+      "transport": "TCP",
+      "default_addr": ":25565",
+      "addr_var": "RAN_MINECRAFT_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "modbus",
+      "transport": "TCP",
+      "default_addr": ":502",
+      "addr_var": "RAN_MODBUS_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "mongodb",
+      "transport": "TCP",
+      "default_addr": ":27017",
+      "addr_var": "RAN_MONGODB_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "mqtt",
+      "transport": "TCP",
+      "default_addr": ":1883",
+      "addr_var": "RAN_MQTT_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "mssql",
+      "transport": "TCP",
+      "default_addr": ":1433",
+      "addr_var": "RAN_MSSQL_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "mysql",
+      "transport": "TCP",
+      "default_addr": ":3307",
+      "addr_var": "RAN_MYSQL_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "ntp",
+      "transport": "UDP",
+      "default_addr": ":123",
+      "addr_var": "RAN_NTP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "oracle",
+      "transport": "TCP",
+      "default_addr": ":1521",
+      "addr_var": "RAN_ORACLE_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "pjl",
+      "transport": "TCP",
+      "default_addr": ":9100",
+      "addr_var": "RAN_PJL_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "pop3",
+      "transport": "TCP",
+      "default_addr": ":110",
+      "addr_var": "RAN_POP3_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "postgres",
+      "transport": "TCP",
+      "default_addr": ":5432",
+      "addr_var": "RAN_POSTGRES_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "rdp",
+      "transport": "TCP",
+      "default_addr": ":3389",
+      "addr_var": "RAN_RDP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "redis",
+      "transport": "TCP",
+      "default_addr": ":6379",
+      "addr_var": "RAN_REDIS_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "s7comm",
+      "transport": "TCP",
+      "default_addr": ":102",
+      "addr_var": "RAN_S7COMM_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "sip",
+      "transport": "UDP",
+      "default_addr": ":5060",
+      "addr_var": "RAN_SIP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "smb",
+      "transport": "TCP",
+      "default_addr": ":445",
+      "addr_var": "RAN_SMB_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "smtp",
+      "transport": "TCP",
+      "default_addr": ":25",
+      "addr_var": "RAN_SMTP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "snmp",
+      "transport": "UDP",
+      "default_addr": ":161",
+      "addr_var": "RAN_SNMP_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "socks5",
+      "transport": "TCP",
+      "default_addr": ":1080",
+      "addr_var": "RAN_SOCKS5_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "ssh",
+      "transport": "TCP",
+      "default_addr": ":2222",
+      "addr_var": "RAN_SSH_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "telnet",
+      "transport": "TCP",
+      "default_addr": ":23,:2323",
+      "addr_var": "RAN_TELNET_ADDR",
+      "addressless": false
+    },
+    {
+      "name": "vnc",
+      "transport": "TCP",
+      "default_addr": ":5900",
+      "addr_var": "RAN_VNC_ADDR",
+      "addressless": false
+    }
+  ]
+}

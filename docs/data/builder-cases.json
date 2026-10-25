@@ -1,0 +1,153 @@
+{
+  "cases": [
+    {
+      "id": "ok-minimal",
+      "env": {
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "ok-proxy-list-trusted",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "http",
+        "RAN_PROXY_TRUSTED": "127.0.0.1,::1",
+        "RAN_TRAPS": "ssh,http"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "ok-proxy-on-trusted-any",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "on",
+        "RAN_PROXY_TRUSTED": "any",
+        "RAN_TRAPS": "ssh,http"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "ok-udp-trap-without-proxy",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "http",
+        "RAN_PROXY_TRUSTED": "127.0.0.1",
+        "RAN_TRAPS": "dns,http"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "ok-udp-burst-equals-rate",
+      "env": {
+        "RAN_TRAPS": "dns",
+        "RAN_UDP_RATE_BURST": "20",
+        "RAN_UDP_RATE_PER_SOURCE": "20"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "ok-catchall-with-addr",
+      "env": {
+        "RAN_CATCHALL_ADDR": ":4444",
+        "RAN_TRAPS": "catchall"
+      },
+      "expect": "ok"
+    },
+    {
+      "id": "error-proxy-on-without-trusted",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "on",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "error",
+      "message_contains": "RAN_PROXY_TRUSTED"
+    },
+    {
+      "id": "error-proxy-list-without-trusted",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "http",
+        "RAN_TRAPS": "http"
+      },
+      "expect": "error",
+      "message_contains": "RAN_PROXY_TRUSTED"
+    },
+    {
+      "id": "error-udp-trap-in-proxy-list",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "dns",
+        "RAN_PROXY_TRUSTED": "127.0.0.1",
+        "RAN_TRAPS": "ssh,dns"
+      },
+      "expect": "error",
+      "message_contains": "UDP trap"
+    },
+    {
+      "id": "error-unknown-trap-in-proxy-list",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "bogus",
+        "RAN_PROXY_TRUSTED": "127.0.0.1",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "error",
+      "message_contains": "unknown trap"
+    },
+    {
+      "id": "warning-proxy-trap-not-enabled",
+      "env": {
+        "RAN_PROXY_PROTOCOL": "http",
+        "RAN_PROXY_TRUSTED": "127.0.0.1",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "warning",
+      "message_contains": "http"
+    },
+    {
+      "id": "warning-trusted-without-proxy",
+      "env": {
+        "RAN_PROXY_TRUSTED": "127.0.0.1",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "warning",
+      "message_contains": "RAN_PROXY_TRUSTED"
+    },
+    {
+      "id": "error-udp-burst-below-rate",
+      "env": {
+        "RAN_TRAPS": "dns",
+        "RAN_UDP_RATE_BURST": "10",
+        "RAN_UDP_RATE_PER_SOURCE": "20"
+      },
+      "expect": "error",
+      "message_contains": "RAN_UDP_RATE_BURST"
+    },
+    {
+      "id": "error-unknown-trap",
+      "env": {
+        "RAN_TRAPS": "ssh,bogus"
+      },
+      "expect": "error",
+      "message_contains": "unknown trap"
+    },
+    {
+      "id": "error-no-trap",
+      "env": {},
+      "expect": "error",
+      "message_contains": "at least one trap"
+    },
+    {
+      "id": "error-catchall-without-addr",
+      "env": {
+        "RAN_TRAPS": "catchall"
+      },
+      "expect": "error",
+      "message_contains": "RAN_CATCHALL_ADDR"
+    },
+    {
+      "id": "error-crowdsec-without-url",
+      "env": {
+        "RAN_CROWDSEC": "on",
+        "RAN_TRAPS": "ssh"
+      },
+      "expect": "error",
+      "message_contains": "RAN_CROWDSEC_URL"
+    }
+  ]
+}

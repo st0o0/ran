@@ -33,3 +33,34 @@ func TestRenderIsSortedAndComplete(t *testing.T) {
 		t.Error("rows not sorted")
 	}
 }
+
+func checkCurrent(t *testing.T, path, want string) {
+	t.Helper()
+	raw, err := os.ReadFile("../../../" + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.ReplaceAll(string(raw), "\r\n", "\n"); got != want {
+		t.Errorf("%s is out of date; run `go run ./internal/tools/docgen` from the repository root", path)
+	}
+}
+
+// TestGeneratedSettingsAreCurrent fails when the settings register or the
+// builder cases changed without regenerating the JSON files.
+func TestGeneratedSettingsAreCurrent(t *testing.T) {
+	checkCurrent(t, settingsOut, renderSettings())
+	checkCurrent(t, casesOut, renderCases())
+}
+
+func TestRenderSettingsIsStable(t *testing.T) {
+	out := renderSettings()
+	if out != renderSettings() || strings.Contains(out, "\r") || !strings.HasSuffix(out, "}\n") {
+		t.Error("settings JSON must be deterministic, LF only and end with a newline")
+	}
+	if strings.Index(out, `"RAN_ALERT_COOLDOWN"`) > strings.Index(out, `"RAN_CROWDSEC"`) {
+		t.Error("settings not sorted by group then name")
+	}
+	if !strings.Contains(out, `"addressless": true`) {
+		t.Error("addressless traps missing")
+	}
+}

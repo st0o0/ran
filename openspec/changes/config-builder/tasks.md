@@ -1,8 +1,8 @@
 ## 1. Register
 
-- [ ] 1.1 `config.Settings` with all variables and per-trap families; drift tests (names, defaults, generated file)
-- [ ] 1.2 `docgen` writes `docs/data/settings.generated.json` (stable order) and `docs/data/builder-cases.json`
-- [ ] 1.3 Go test replays `builder-cases.json` through `config.Load`
+- [x] 1.1 `config.Settings` with all variables and per-trap families; drift tests (names, defaults, generated file)
+- [x] 1.2 `docgen` writes `docs/data/settings.generated.json` (stable order) and `docs/data/builder-cases.json`
+- [x] 1.3 Go test replays `builder-cases.json` through `config.Load`
 
 ## 2. Builder logic (TypeScript, vitest)
 

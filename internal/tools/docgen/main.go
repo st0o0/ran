@@ -1,14 +1,19 @@
-// Command docgen writes docs/traps.generated.md, the trap overview table of
-// the documentation site, from config.DefaultPorts and config.AddresslessTraps.
+// Command docgen writes the generated files of the documentation site:
+// docs/traps.generated.md (the trap overview table, from config.DefaultPorts and
+// config.AddresslessTraps), docs/data/settings.generated.json (the settings
+// register, from config.Settings) and docs/data/builder-cases.json (the shared
+// rule vectors, from config.BuilderCases).
 //
 // Usage (from the repository root):
 //
 //	go run ./internal/tools/docgen
 //
-// An optional argument names the output file.
+// An optional argument names the trap table output file; the JSON files always
+// go to docs/data.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -17,7 +22,12 @@ import (
 	"github.com/st0o0/ran/internal/config"
 )
 
-const defaultOut = "docs/traps.generated.md"
+const (
+	defaultOut  = "docs/traps.generated.md"
+	settingsOut = "docs/data/settings.generated.json"
+	casesOut    = "docs/data/builder-cases.json"
+	dataDir     = "docs/data"
+)
 
 func transport(name string) string {
 	if config.UDPTraps[name] {
@@ -56,13 +66,82 @@ func render() string {
 	return b.String()
 }
 
+type trapInfo struct {
+	Name        string `json:"name"`
+	Transport   string `json:"transport"`
+	DefaultAddr string `json:"default_addr"`
+	AddrVar     string `json:"addr_var"`
+	Addressless bool   `json:"addressless"`
+}
+
+type settingsFile struct {
+	Settings []config.Setting `json:"settings"`
+	Traps    []trapInfo       `json:"traps"`
+}
+
+type casesFile struct {
+	Cases []config.BuilderCase `json:"cases"`
+}
+
+func marshal(v any) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false) // keep RAN_<PROTO> readable
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		panic(err)
+	}
+	return b.String() // Encode ends with a newline
+}
+
+// renderSettings returns the settings register as JSON: settings sorted by group
+// then name, traps sorted by name, 2-space indent, LF, trailing newline.
+func renderSettings() string {
+	settings := append([]config.Setting(nil), config.Settings...)
+	sort.SliceStable(settings, func(i, j int) bool {
+		if settings[i].Group != settings[j].Group {
+			return settings[i].Group < settings[j].Group
+		}
+		return settings[i].Name < settings[j].Name
+	})
+	var traps []trapInfo
+	for _, n := range config.ValidTrapNames() {
+		ti := trapInfo{Name: n, Transport: transport(n)}
+		if ports, ok := config.DefaultPorts[n]; ok {
+			ti.DefaultAddr = ports
+			ti.AddrVar = "RAN_" + strings.ToUpper(n) + "_ADDR"
+		} else {
+			ti.Addressless = true
+			ti.AddrVar = config.AddresslessTraps[n]
+		}
+		traps = append(traps, ti)
+	}
+	return marshal(settingsFile{Settings: settings, Traps: traps})
+}
+
+// renderCases returns the shared rule vectors as JSON, in definition order.
+func renderCases() string {
+	return marshal(casesFile{Cases: config.BuilderCases()})
+}
+
 func main() {
 	out := defaultOut
 	if len(os.Args) > 1 {
 		out = os.Args[1]
 	}
-	if err := os.WriteFile(out, []byte(render()), 0o644); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "docgen:", err)
 		os.Exit(1)
+	}
+	files := []struct{ path, content string }{
+		{out, render()},
+		{settingsOut, renderSettings()},
+		{casesOut, renderCases()},
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f.path, []byte(f.content), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "docgen:", err)
+			os.Exit(1)
+		}
 	}
 }
