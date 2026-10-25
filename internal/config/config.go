@@ -398,6 +398,11 @@ func (c *Config) EffectiveRepeatCooldown() time.Duration {
 	return c.AlertCooldown
 }
 
+// MaxCooldown is the upper bound of RAN_ALERT_COOLDOWN and RAN_REPEAT_COOLDOWN
+// (one year). It keeps the derived offender reset (twice the repeat cooldown)
+// far from overflowing a time.Duration.
+const MaxCooldown = 8760 * time.Hour
+
 func Load(getenv func(string) string) (*Config, error) {
 	e := &envReader{getenv: getenv}
 
@@ -427,10 +432,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		CrowdSecBatchSize:     e.intMin("RAN_CROWDSEC_BATCH_SIZE", 50, 1),
 		CrowdSecMaxTracked:    e.intMin("RAN_CROWDSEC_MAX_TRACKED", 20000, 1),
 		BanOn:                 e.classes("RAN_BAN_ON", []string{"attack", "scan"}),
-		AlertCooldown:         e.durationMin0("RAN_ALERT_COOLDOWN", time.Hour),
+		AlertCooldown:         e.durationRange("RAN_ALERT_COOLDOWN", time.Hour, MaxCooldown),
 		Shun:                  e.boolean("RAN_SHUN", false),
 		RepeatAfter:           e.intMin("RAN_REPEAT_AFTER", 5, 1),
-		RepeatCooldown:        e.durationPositiveOrUnset("RAN_REPEAT_COOLDOWN"),
+		RepeatCooldown:        e.durationPositiveOrUnsetMax("RAN_REPEAT_COOLDOWN", MaxCooldown),
 		ProbeSummaryWindow:    e.durationMin0("RAN_PROBE_SUMMARY_WINDOW", 60*time.Second),
 		LogPasswords:          e.logPasswords("RAN_LOG_PASSWORDS", "off"),
 		UDPRatePerSource:      e.intMin("RAN_UDP_RATE_PER_SOURCE", 20, 1),
@@ -639,13 +644,28 @@ func (e *envReader) durationPositive(name string, def time.Duration) time.Durati
 	return d
 }
 
-// durationPositiveOrUnset returns 0 when the variable is unset and requires a
-// value greater than zero otherwise.
-func (e *envReader) durationPositiveOrUnset(name string) time.Duration {
+// durationRange is durationMin0 with an inclusive upper bound.
+func (e *envReader) durationRange(name string, def, max time.Duration) time.Duration {
+	d := e.durationMin0(name, def)
+	if d > max {
+		e.setErr(fmt.Errorf("%s must not exceed %s, got %q; use a value up to %s", name, shortDuration(max), strings.TrimSpace(e.getenv(name)), shortDuration(max)))
+		return def
+	}
+	return d
+}
+
+// durationPositiveOrUnsetMax returns 0 when the variable is unset and requires a
+// value greater than zero and at most max otherwise.
+func (e *envReader) durationPositiveOrUnsetMax(name string, max time.Duration) time.Duration {
 	if strings.TrimSpace(e.getenv(name)) == "" {
 		return 0
 	}
-	return e.durationPositive(name, 0)
+	d := e.durationPositive(name, 0)
+	if d > max {
+		e.setErr(fmt.Errorf("%s must not exceed %s, got %q; use a value up to %s", name, shortDuration(max), strings.TrimSpace(e.getenv(name)), shortDuration(max)))
+		return 0
+	}
+	return d
 }
 
 // classes parses a comma-separated, non-empty subset of ValidClasses.
@@ -747,4 +767,13 @@ func (e *envReader) setErr(err error) {
 	if e.err == nil {
 		e.err = err
 	}
+}
+
+// shortDuration formats whole hours without the zero minutes and seconds
+// (8760h instead of 8760h0m0s).
+func shortDuration(d time.Duration) string {
+	if d%time.Hour == 0 {
+		return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
+	}
+	return d.String()
 }

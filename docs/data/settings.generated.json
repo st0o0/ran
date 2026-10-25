@@ -89,7 +89,7 @@
       "kind": "duration",
       "default": "1h",
       "group": "crowdsec",
-      "summary": "At most one alert per source and class in this window; 0s disables the limit.",
+      "summary": "At most one alert per source and class in this window; 0s disables the limit. At most 8760h (one year).",
       "requires": [
         "RAN_CROWDSEC"
       ]
@@ -189,7 +189,7 @@
       "kind": "duration",
       "default": "",
       "group": "crowdsec",
-      "summary": "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended.",
+      "summary": "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended. At most 8760h (one year).",
       "requires": [
         "RAN_CROWDSEC"
       ]

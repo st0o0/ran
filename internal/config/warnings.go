@@ -27,3 +27,16 @@ func (c *Config) CooldownWarnings() []string {
 	}
 	return out
 }
+
+// WarnShunWithoutCrowdSec is the warning for RAN_SHUN while RAN_CROWDSEC is off.
+const WarnShunWithoutCrowdSec = "RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert"
+
+// CrowdSecWarnings lists the settings that need the CrowdSec sink but are set
+// while it is off: the shun window opens after an accepted alert, and only the
+// sink accepts alerts.
+func (c *Config) CrowdSecWarnings() []string {
+	if c.Shun && !c.CrowdSec {
+		return []string{WarnShunWithoutCrowdSec}
+	}
+	return nil
+}

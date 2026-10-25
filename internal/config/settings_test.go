@@ -336,6 +336,7 @@ func startupWarnings(c *config.Config) []string {
 		out = append(out, "RAN_PROXY_TRUSTED has no effect while RAN_PROXY_PROTOCOL is off")
 	}
 	out = append(out, c.CooldownWarnings()...)
+	out = append(out, c.CrowdSecWarnings()...)
 	return out
 }
 

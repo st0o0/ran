@@ -121,8 +121,8 @@ var Settings = []Setting{
 	{Name: "RAN_CROWDSEC_BATCH_SIZE", Kind: KindInt, Default: "50", Min: bound(1), Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Maximum alerts per batch."},
 	{Name: "RAN_CROWDSEC_MAX_TRACKED", Kind: KindInt, Default: "20000", Min: bound(1), Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Maximum source addresses tracked for scan detection."},
 	{Name: "RAN_BAN_ON", Kind: KindList, Default: "attack,scan", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Session classes that produce an alert: any of probe, attack, scan."},
-	{Name: "RAN_ALERT_COOLDOWN", Kind: KindDuration, Default: "1h", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "At most one alert per source and class in this window; 0s disables the limit."},
+	{Name: "RAN_ALERT_COOLDOWN", Kind: KindDuration, Default: "1h", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "At most one alert per source and class in this window; 0s disables the limit. At most 8760h (one year)."},
 	{Name: "RAN_SHUN", Kind: KindBool, Default: "off", Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Close new TCP connections from a source right after an alert for it, for the alert cooldown."},
 	{Name: "RAN_REPEAT_AFTER", Kind: KindInt, Default: "5", Min: bound(1), Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Number of alerts for a source and class after which RAN_REPEAT_COOLDOWN applies."},
-	{Name: "RAN_REPEAT_COOLDOWN", Kind: KindDuration, Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended."},
+	{Name: "RAN_REPEAT_COOLDOWN", Kind: KindDuration, Group: "crowdsec", Requires: []string{"RAN_CROWDSEC"}, Summary: "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended. At most 8760h (one year)."},
 }
