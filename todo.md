@@ -2,7 +2,7 @@
 
 Roadmap for `ran`, derived from a comparison with Cowrie, OpenCanary, qeeqbox/honeypots, T-Pot (and its components) and Beelzebub/Galah, plus an audit of the traps in this repo (2026-10-24). Order is the planned order of work. Keep this file short and factual; update it whenever a change is created, archived or dropped.
 
-Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. Shipped locally and still to archive: crowdsec-integration, proxy-protocol-per-trap, quiet-repeat-offenders, config-builder (archive after the release). The rows below are open work. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
+Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. Shipped and archived: crowdsec-integration, proxy-protocol-per-trap, quiet-repeat-offenders, config-builder. The rows below are open work. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
 
 ## Now (build next)
 
