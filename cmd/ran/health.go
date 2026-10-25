@@ -84,6 +84,9 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 	if cfg.Shun && !cfg.CrowdSec {
 		fmt.Fprintln(stderr, "ran: warning: RAN_SHUN has no effect without RAN_CROWDSEC; shunning starts after an accepted alert")
 	}
+	for _, w := range cfg.CooldownWarnings() {
+		fmt.Fprintf(stderr, "ran: warning: %s\n", w)
+	}
 	for _, name := range cfg.ProxyNotEnabled {
 		fmt.Fprintf(stderr, "ran: warning: RAN_PROXY_PROTOCOL names %s, which is not in RAN_TRAPS; the entry has no effect\n", name)
 	}

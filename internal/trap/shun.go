@@ -11,6 +11,14 @@ type shunner interface {
 	ShunRejected(ip, protocol string)
 }
 
+// CanShun reports whether r can shun sources (it implements Shunned and
+// ShunRejected, as the Sensor does). Startup uses it to fail loudly when RAN_SHUN
+// is on but the reporter handed to the traps would silently never shun.
+func CanShun(r Reporter) bool {
+	_, ok := r.(shunner)
+	return ok
+}
+
 // closeIfShunned closes conn and reports true when its peer is in a shun window
 // (RAN_SHUN). It runs at accept time, after PROXY handling (the peer address is
 // the resolved source) and before any session, limiter slot, goroutine or log

@@ -78,6 +78,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 	}
 
 	logProxyTrust(logger, cfg)
+	for _, w := range cfg.CooldownWarnings() {
+		logger.Warn(w)
+	}
 
 	var offenders *alert.Offenders
 	if cfg.CrowdSec {
@@ -132,6 +135,12 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 		defer ccancel()
 		alerter.CloseContext(cctx)
 	}()
+
+	// The shun check lives in the reporter; a reporter without it would silently
+	// never shun, so refuse to start instead.
+	if cfg.Shun && cfg.CrowdSec && !trap.CanShun(alerter) {
+		return errors.New("RAN_SHUN is on but the alert reporter cannot shun; refusing to start without the protection that was asked for")
+	}
 
 	traps, err := trap.CreateTraps(cfg, logger, m, limiter, alerter)
 	if err != nil {

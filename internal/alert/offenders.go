@@ -191,17 +191,24 @@ func (o *Offenders) Accepted(ip string, class Class, window time.Duration) {
 		return
 	}
 	now := o.now()
+	var sums []shunSummary
 	o.mu.Lock()
-	defer o.mu.Unlock()
+	o.accepted(key, idx, class, window, now, &sums)
+	o.mu.Unlock()
+	o.logSummaries(sums)
+}
 
+// accepted is the body of Accepted. Callers hold mu; summaries of closed windows
+// are appended to sums and must be logged after mu is released.
+func (o *Offenders) accepted(key string, idx int, class Class, window time.Duration, now time.Time, sums *[]shunSummary) {
 	e := o.entries[key]
 	if e != nil && o.expired(e, now) {
-		o.remove(e, now)
+		o.remove(e, now, sums)
 		e = nil
 	}
 	if e == nil {
 		if len(o.entries) >= o.max {
-			o.makeRoom(now)
+			o.makeRoom(now, sums)
 		}
 		e = &offender{ip: key}
 		e.el = o.order.PushBack(e)
@@ -225,7 +232,7 @@ func (o *Offenders) Accepted(ip string, class Class, window time.Duration) {
 		return
 	}
 	if e.active {
-		o.endWindow(e, now)
+		o.endWindow(e, now, sums)
 	}
 	e.shunStart, e.shunUntil = now, until
 	e.active = true
@@ -250,16 +257,20 @@ func (o *Offenders) Shunned(ip string) bool {
 		return false
 	}
 	now := o.now()
+	var sums []shunSummary
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	e := o.entries[key]
 	if e == nil || !e.active {
+		o.mu.Unlock()
 		return false
 	}
 	if now.Before(e.shunUntil) {
+		o.mu.Unlock()
 		return true
 	}
-	o.endWindow(e, now)
+	o.endWindow(e, now, &sums)
+	o.mu.Unlock()
+	o.logSummaries(sums)
 	return false
 }
 
@@ -291,9 +302,32 @@ func (o *Offenders) Rejected(ip, protocol string) {
 	}
 }
 
-// endWindow closes the shun window of e and writes the summary if connections
-// were suppressed. Callers hold mu.
-func (o *Offenders) endWindow(e *offender, now time.Time) {
+// shunSummary is one pending "shun summary" log line. It is collected under mu
+// and written after mu is released, so a slow log handler never blocks the
+// accept path (Shunned).
+type shunSummary struct {
+	ip      string
+	count   int
+	protos  []string
+	seconds int
+}
+
+// logSummaries writes the collected summaries. Callers must not hold mu.
+func (o *Offenders) logSummaries(sums []shunSummary) {
+	for _, s := range sums {
+		o.logger.Info("shun summary",
+			"action", "shun_summary",
+			"source_ip", s.ip,
+			"count", s.count,
+			"protocols", s.protos,
+			"window_seconds", s.seconds,
+		)
+	}
+}
+
+// endWindow closes the shun window of e and, if connections were suppressed,
+// appends the summary to sums. Callers hold mu and log sums after releasing it.
+func (o *Offenders) endWindow(e *offender, now time.Time, sums *[]shunSummary) {
 	if e.suppressed > 0 {
 		end := e.shunUntil
 		if now.Before(end) {
@@ -304,13 +338,12 @@ func (o *Offenders) endWindow(e *offender, now time.Time) {
 			protos = append(protos, p)
 		}
 		sort.Strings(protos)
-		o.logger.Info("shun summary",
-			"action", "shun_summary",
-			"source_ip", e.ip,
-			"count", e.suppressed,
-			"protocols", protos,
-			"window_seconds", int(end.Sub(e.shunStart).Seconds()),
-		)
+		*sums = append(*sums, shunSummary{
+			ip:      e.ip,
+			count:   e.suppressed,
+			protos:  protos,
+			seconds: int(end.Sub(e.shunStart).Seconds()),
+		})
 	}
 	e.suppressed, e.protos = 0, nil
 	e.shunStart, e.shunUntil = time.Time{}, time.Time{}
@@ -326,34 +359,34 @@ func (o *Offenders) setGauge() {
 }
 
 // remove drops e from the table, writing a pending summary first. Callers hold mu.
-func (o *Offenders) remove(e *offender, now time.Time) {
+func (o *Offenders) remove(e *offender, now time.Time, sums *[]shunSummary) {
 	if e.active {
-		o.endWindow(e, now)
+		o.endWindow(e, now, sums)
 	}
 	delete(o.entries, e.ip)
 	o.order.Remove(e.el)
 	o.stats.size(len(o.entries))
 }
 
-func (o *Offenders) makeRoom(now time.Time) {
-	o.sweepFront(now)
+func (o *Offenders) makeRoom(now time.Time, sums *[]shunSummary) {
+	o.sweepFront(now, sums)
 	if len(o.entries) >= o.max {
 		if el := o.order.Front(); el != nil {
 			o.stats.evicted()
-			o.remove(el.Value.(*offender), now)
+			o.remove(el.Value.(*offender), now, sums)
 		}
 	}
 }
 
 // sweepFront removes silent entries; the list is ordered by last alert, so it
 // stops at the first live one.
-func (o *Offenders) sweepFront(now time.Time) {
+func (o *Offenders) sweepFront(now time.Time, sums *[]shunSummary) {
 	for el := o.order.Front(); el != nil; el = o.order.Front() {
 		e := el.Value.(*offender)
 		if !o.expired(e, now) {
 			return
 		}
-		o.remove(e, now)
+		o.remove(e, now, sums)
 	}
 }
 
@@ -364,14 +397,16 @@ func (o *Offenders) Sweep() {
 		return
 	}
 	now := o.now()
+	var sums []shunSummary
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	for e := range o.active {
 		if !now.Before(e.shunUntil) {
-			o.endWindow(e, now)
+			o.endWindow(e, now, &sums)
 		}
 	}
-	o.sweepFront(now)
+	o.sweepFront(now, &sums)
+	o.mu.Unlock()
+	o.logSummaries(sums)
 }
 
 // Flush writes the summary of every open window (shutdown). The windows stay
@@ -381,19 +416,21 @@ func (o *Offenders) Flush() {
 		return
 	}
 	now := o.now()
+	var sums []shunSummary
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	for e := range o.active {
 		if e.suppressed > 0 {
-			o.endWindowKeep(e, now)
+			o.endWindowKeep(e, now, &sums)
 		}
 	}
+	o.mu.Unlock()
+	o.logSummaries(sums)
 }
 
 // endWindowKeep writes the summary and resets the counters but keeps the window.
-func (o *Offenders) endWindowKeep(e *offender, now time.Time) {
+func (o *Offenders) endWindowKeep(e *offender, now time.Time, sums *[]shunSummary) {
 	until := e.shunUntil
-	o.endWindow(e, now)
+	o.endWindow(e, now, sums)
 	e.shunStart, e.shunUntil = now, until
 	e.active = true
 	o.active[e] = struct{}{}

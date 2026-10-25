@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -204,5 +205,26 @@ func TestReporterWithoutShunnerNeverShuns(t *testing.T) {
 	}
 	if closeIfShunned(nil, "ssh", a) {
 		t.Error("nil reporter shunned a connection")
+	}
+}
+
+type plainReporter struct{}
+
+func (plainReporter) Alert(context.Context, alert.SessionInfo, map[string]string) alert.Class {
+	return ""
+}
+func (plainReporter) SessionEnd(alert.SessionInfo) bool { return false }
+
+func TestCanShun(t *testing.T) {
+	t.Parallel()
+	sensor := alert.NewSensor(alert.SensorConfig{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !CanShun(sensor) {
+		t.Error("the sensor must be able to shun")
+	}
+	if CanShun(plainReporter{}) {
+		t.Error("a reporter without Shunned/ShunRejected must not be reported as able to shun")
+	}
+	if CanShun(nil) {
+		t.Error("nil reporter must not be reported as able to shun")
 	}
 }

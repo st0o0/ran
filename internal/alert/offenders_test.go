@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -423,4 +424,47 @@ func TestFilteredAlertsDoNotShun(t *testing.T) {
 	if o.Len() != 0 {
 		t.Error("invalid source reached the offender table")
 	}
+}
+
+// blockingHandler signals entered and then blocks in Handle until release is closed.
+type blockingHandler struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *blockingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *blockingHandler) Handle(context.Context, slog.Record) error {
+	h.once.Do(func() { close(h.entered) })
+	<-h.release
+	return nil
+}
+func (h *blockingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *blockingHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestSlowLogHandlerDoesNotHoldTableLock(t *testing.T) {
+	t.Parallel()
+	h := &blockingHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	clk := newFakeClock()
+	o := NewOffenders(OffenderConfig{Shun: true, Now: clk.Now}, slog.New(h))
+	const a, b = "8.8.8.8", "1.1.1.1"
+	o.Accepted(a, ClassAttack, time.Minute)
+	o.Rejected(a, "ssh")
+	o.Accepted(b, ClassAttack, 24*time.Hour)
+	clk.Advance(2 * time.Minute) // a's window has ended, b's is open
+
+	first := make(chan struct{})
+	go func() {
+		defer close(first)
+		o.Shunned(a) // closes the window and logs the summary; the handler blocks
+	}()
+	<-h.entered
+
+	second := make(chan bool)
+	go func() { second <- o.Shunned(b) }()
+	if got := <-second; !got {
+		t.Error("b should still be shunned")
+	}
+	close(h.release)
+	<-first
 }
