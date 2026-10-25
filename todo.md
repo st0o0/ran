@@ -2,7 +2,7 @@
 
 Roadmap for `ran`, derived from a comparison with Cowrie, OpenCanary, qeeqbox/honeypots, T-Pot (and its components) and Beelzebub/Galah, plus an audit of the traps in this repo (2026-10-24). Order is the planned order of work. Keep this file short and factual; update it whenever a change is created, archived or dropped.
 
-Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. All 17 changes below are written and validated; the order is the order of implementation. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
+Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marked `docs`. All 18 changes below are written and validated; the order is the order of implementation. *Now* is what to build first. Delete an item (or link the archived change) when it ships. Effort: S = a few hundred lines, M = a protocol with state, L = a subsystem. Everything must keep the checklist in `AGENTS.md` (bounded reads, no trust in client identity, UDP never alerts, passwords never to CrowdSec).
 
 ## Now (build next)
 
@@ -12,6 +12,7 @@ Rules: each item is one OpenSpec change (`openspec/changes/<name>`) unless marke
 | 15 | `crowdsec-integration` | Shipped example profile (`ran_scan`, `ran_attack`, `ran_noban`) printed by `ran crowdsec-profile`, plus a CI test against a pinned real CrowdSec LAPI (escalation, probe, allowlist) | M | operator setup 2026-10-25 |
 | 16 | `proxy-protocol-per-trap` | `RAN_PROXY_PROTOCOL` accepts a list of traps, so a proxied trap and direct traps can coexist; found on a host where the proxied HTTP trap saw only the proxy loopback address (**fix first**) | S | operator data 2026-10-25 |
 | 17 | `quiet-repeat-offenders` | Opt-in `RAN_SHUN` (close connections from a source ran just alerted for, for the cooldown window), repeat cooldown after the ladder, one summary log line per window; top 1 percent of sources made 62 percent of the log lines | M | operator data 2026-10-25 |
+| 18 | `config-builder` | Settings register generated from Go, scenario-first builder page on the docs site (env, Compose, `docker run`), warnings shared with `config.Load` through test vectors; **build before 17 and 15** so their variables land in the register | M | njord builder, operator setup 2026-10-25 |
 | 13 | `webhook-sink` | One generic webhook, rate limited, no passwords. **Deferred by decision**: the change is written, do not implement it yet | S | OpenCanary, Beelzebub |
 
 ## Docs site (evaluate after `fingerprint-realism` and `ics-and-printer-traps`)
