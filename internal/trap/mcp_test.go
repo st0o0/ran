@@ -41,6 +41,7 @@ func startMCPCustom(t *testing.T, proxy bool, ignore string) *stubHarness {
 		MaxSessions:    100,
 		MaxPerIP:       10,
 		ProxyProtocol:  proxy,
+		ProxyTrusted:   loopbackPrefixes,
 		IgnoreIPs:      prefixes,
 	}
 	h := &stubHarness{sink: &eventSink{}, logs: &syncBuffer{}}

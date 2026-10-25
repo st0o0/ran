@@ -425,6 +425,7 @@ func TestSSHNoPasswordReachesCrowdSec(t *testing.T) {
 
 	cfg := testConfig(t)
 	cfg.ProxyProtocol = true
+	cfg.ProxyTrusted = loopbackPrefixes
 	cfg.MaxAuthRetries = 6
 	tr, err := NewSSH(cfg, logger, m, NewLimiter(cfg.MaxSessions, cfg.MaxPerIP), sensor)
 	if err != nil {

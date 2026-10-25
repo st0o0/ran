@@ -524,7 +524,7 @@ func TestUDPPanicDoesNotStopTrapOrLeakSlot(t *testing.T) {
 }
 
 func TestAcceptRecoversFromMalformedProxyHeader(t *testing.T) {
-	ml, err := ListenMultiTCP(context.Background(), []string{"127.0.0.1:0"}, true, nil, nil, "test")
+	ml, err := ListenMultiTCP(context.Background(), []string{"127.0.0.1:0"}, loopbackTrust(), nil, nil, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +811,7 @@ func TestNTLMSSPReadFieldOffsets(t *testing.T) {
 
 func dialProxyListener(t *testing.T, proxyProto bool) (*MultiListener, string) {
 	t.Helper()
-	ml, err := ListenMultiTCP(context.Background(), []string{"127.0.0.1:0"}, proxyProto, nil, nil, "test")
+	ml, err := ListenMultiTCP(context.Background(), []string{"127.0.0.1:0"}, trustFor(proxyProto), nil, nil, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,6 +32,21 @@ type trapResult struct {
 	err  error
 }
 
+// logProxyTrust reports the PROXY protocol trust settings once at startup.
+func logProxyTrust(logger *slog.Logger, cfg *config.Config) {
+	switch {
+	case cfg.ProxyTrustedUnused():
+		logger.Warn("RAN_PROXY_TRUSTED is set but RAN_PROXY_PROTOCOL is off; the list is ignored")
+	case cfg.ProxyProtocol && cfg.ProxyTrustAny:
+		logger.Warn("RAN_PROXY_TRUSTED=any: every peer may send PROXY headers, so any host that reaches a port can forge the source address; list your proxies instead")
+	case cfg.ProxyProtocol:
+		logger.Info("PROXY protocol active; only listed peers may send headers", "trusted_ranges", len(cfg.ProxyTrusted))
+		for _, p := range config.WideIgnoreRanges(cfg.ProxyTrusted) {
+			logger.Warn("RAN_PROXY_TRUSTED contains a very wide range; any peer in it may forge the source address", "range", p.String())
+		}
+	}
+}
+
 // run starts the traps and, if metricsSrv is not nil, the metrics server, and
 // blocks until ctx is canceled, every trap failed, or the metrics server died.
 // Whatever ends the run, all components are shut down before it returns.
@@ -54,6 +69,8 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger, m *metric
 			logger.Warn("RAN_IGNORE_IPS contains a very wide range; sessions from it never alert", "range", p.String())
 		}
 	}
+
+	logProxyTrust(logger, cfg)
 
 	var sink alert.Sink
 	if cfg.CrowdSec {

@@ -605,6 +605,7 @@ func TestMongoDBNoPasswordReachesCrowdSec(t *testing.T) {
 		Addrs:          map[string]string{"mongodb": "127.0.0.1:0"},
 		PerProto:       make(map[string]config.ProtoConfig),
 		ProxyProtocol:  true,
+		ProxyTrusted:   loopbackPrefixes,
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       10,

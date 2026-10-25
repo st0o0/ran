@@ -327,6 +327,7 @@ func TestCatchallPortsCountForScanDetection(t *testing.T) {
 	}
 	cfg := catchallConfig(strings.Join(addrs, ","), 5*time.Second, 10)
 	cfg.ProxyProtocol = true
+	cfg.ProxyTrusted = loopbackPrefixes
 	env := startCatchall(t, 2*time.Second, cfg)
 	for _, a := range addrs {
 		c := dialTrap(t, a)
@@ -381,6 +382,7 @@ func TestCatchallIgnoredSourceNeverAlerts(t *testing.T) {
 	t.Parallel()
 	cfg := catchallConfig("127.0.0.1:0", 5*time.Second, 10)
 	cfg.ProxyProtocol = true
+	cfg.ProxyTrusted = loopbackPrefixes
 	sink := &eventSink{}
 	logs := &syncBuffer{}
 	logger := newJSONLogger(logs)

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -47,6 +48,7 @@ type proxyListener struct {
 	logger   *slog.Logger
 	metrics  *metrics.Metrics
 	protocol string
+	trust    *config.ProxyTrust
 
 	startOnce sync.Once
 	closeOnce sync.Once
@@ -61,12 +63,13 @@ type proxyListener struct {
 	pending map[net.Conn]struct{}
 }
 
-func newProxyListener(ln net.Listener, logger *slog.Logger, m *metrics.Metrics, protocol string) *proxyListener {
+func newProxyListener(ln net.Listener, logger *slog.Logger, m *metrics.Metrics, protocol string, trust *config.ProxyTrust) *proxyListener {
 	return &proxyListener{
 		Listener: ln,
 		logger:   logger,
 		metrics:  m,
 		protocol: protocol,
+		trust:    trust,
 		ready:    make(chan net.Conn),
 		done:     make(chan struct{}),
 		failed:   make(chan struct{}),
@@ -114,6 +117,12 @@ func (pl *proxyListener) acceptLoop() {
 			continue
 		}
 		backoff = acceptPanicBackoffMin
+		// Trust is decided on the socket peer before any state, goroutine or
+		// read: an untrusted peer never gets to send a header.
+		if !pl.trust.Trusts(conn.RemoteAddr()) {
+			pl.drop(conn, "untrusted_peer")
+			continue
+		}
 		select {
 		case pl.sem <- struct{}{}:
 			go pl.handshake(conn)

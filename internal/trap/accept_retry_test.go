@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/st0o0/ran/internal/config"
 )
 
 type acceptResult struct {
@@ -150,7 +152,7 @@ func TestProxyListenerSurvivesTransientAcceptErrors(t *testing.T) {
 	}()
 	emfile := errors.New("accept tcp: too many open files")
 	ln := newScriptedListener(acceptResult{err: emfile}, acceptResult{err: emfile}, acceptResult{conn: server})
-	pl := newProxyListener(ln, nil, nil, "ssh")
+	pl := newProxyListener(ln, nil, nil, "ssh", config.NewProxyTrust(nil, true))
 	defer pl.Close()
 
 	type res struct {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/st0o0/ran/internal/alert"
+	"github.com/st0o0/ran/internal/config"
 	"github.com/st0o0/ran/internal/metrics"
 )
 
@@ -471,7 +472,7 @@ func (ml *MultiListener) Addr() net.Addr {
 
 // ListenMultiTCP listens on all addrs. logger, m and protocol are used to report
 // panics recovered in the accept goroutines; logger and m may be nil.
-func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool, logger *slog.Logger, m *metrics.Metrics, protocol string) (*MultiListener, error) {
+func ListenMultiTCP(ctx context.Context, addrs []string, proxy *config.ProxyTrust, logger *slog.Logger, m *metrics.Metrics, protocol string) (*MultiListener, error) {
 	var lc net.ListenConfig
 	listeners := make([]net.Listener, 0, len(addrs))
 	for _, addr := range addrs {
@@ -482,8 +483,8 @@ func ListenMultiTCP(ctx context.Context, addrs []string, proxyProto bool, logger
 			}
 			return nil, err
 		}
-		if proxyProto {
-			ln = newProxyListener(ln, logger, m, protocol)
+		if proxy != nil {
+			ln = newProxyListener(ln, logger, m, protocol, proxy)
 		}
 		listeners = append(listeners, ln)
 	}

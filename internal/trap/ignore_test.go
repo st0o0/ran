@@ -44,6 +44,7 @@ func ignoreTelnetConfig(maxPerIP int, ignore ...string) *config.Config {
 		Addrs:          map[string]string{"telnet": "127.0.0.1:0"},
 		PerProto:       make(map[string]config.ProtoConfig),
 		ProxyProtocol:  true,
+		ProxyTrusted:   loopbackPrefixes,
 		SessionTimeout: 5 * time.Second,
 		MaxSessions:    100,
 		MaxPerIP:       maxPerIP,

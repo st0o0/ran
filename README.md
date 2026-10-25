@@ -298,7 +298,8 @@ with `status`, `version`, `uptime` and the enabled `traps`.
 | `RAN_SSH_HOST_KEY_PATH` | `/data/ssh_host_key` | SSH host key file; generated on first start and persisted if the directory is writable (the image declares `/data` as a volume). Otherwise `ran` logs a warning and uses an ephemeral key that changes on every restart; this is not fatal |
 | `RAN_HTTPS_CERT_PATH` | `/data/https_cert.pem` | Certificates and keys (one PEM file holding an ECDSA pair and an RSA pair) of the `https` trap; self-signed certificates are generated on first start and written atomically with mode `0600` if the directory is writable. Otherwise (or if the file is unusable, incomplete, expired or not yet valid) `ran` logs a warning and uses ephemeral certificates that change on every restart; this is not fatal |
 | `RAN_HTTP_FIXTURES` | | Path of a JSON file with operator fixtures for the `http` and `https` traps (see [HTTP fixtures](#http-fixtures)); read once at startup and validated by `ran check-config`. Unset: only the built-in fixtures |
-| `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)) |
+| `RAN_PROXY_PROTOCOL` | `off` | Require a PROXY v1/v2 header on every TCP connection (see [Threat model](#threat-model)); requires `RAN_PROXY_TRUSTED` |
+| `RAN_PROXY_TRUSTED` | | Peers allowed to send PROXY headers: comma-separated IPs and CIDRs (IPv4/IPv6, same format as `RAN_IGNORE_IPS`, at most 1024 entries), for example `10.0.0.0/8,2001:db8::/32`, or the single value `any`. Required (startup fails without it) when `RAN_PROXY_PROTOCOL=on`; `any` trusts every peer and logs a warning. With the protocol off the value is ignored with a warning. See [PROXY protocol trust](#proxy-protocol-trust) |
 | `RAN_<PROTO>_MAX_AUTH_RETRIES` | | Per-trap override of `RAN_MAX_AUTH_RETRIES` |
 | `RAN_<PROTO>_AUTH_DELAY` | | Per-trap override of `RAN_AUTH_DELAY` |
 | `RAN_<PROTO>_SESSION_TIMEOUT` | | Per-trap override of `RAN_SESSION_TIMEOUT` |
@@ -451,7 +452,7 @@ runtime and process collectors:
 - `ran_session_duration_seconds{protocol}`: session duration histogram (buckets 0.1 s to 120 s)
 - `ran_crowdsec_alerts_dropped_total{protocol}`: alerts dropped because the delivery queue was full
 - `ran_panics_recovered_total{protocol}`: panics recovered at connection and packet boundaries
-- `ran_proxy_protocol_dropped_total{protocol}`: connections closed by the PROXY protocol listener (no valid header, deadline, handshake limit, stalled consumer)
+- `ran_proxy_protocol_dropped_total{protocol}`: connections closed by the PROXY protocol listener (untrusted peer, no valid header, deadline, handshake limit, stalled consumer)
 - `ran_udp_rate_limited_total{protocol}`: UDP packets dropped by the packet rate limiter
 - `ran_sessions_rejected_total{protocol}`: TCP connections and UDP packets rejected by the session limiter (`RAN_MAX_SESSIONS`, `RAN_MAX_PER_IP`)
 - `ran_probe_summary_suppressed_sessions_total`: probe sessions whose per-session log lines were replaced by a summary
@@ -636,19 +637,28 @@ dropped:
 
 LAN-only deployments therefore produce no CrowdSec alerts.
 
-With `RAN_PROXY_PROTOCOL`, the PROXY v1 or v2 header is required. A connection
-must send a valid header within 3 seconds; a connection that sends other bytes,
+<a id="proxy-protocol-trust"></a>
+With `RAN_PROXY_PROTOCOL`, the PROXY v1 or v2 header is required, and only peers
+listed in `RAN_PROXY_TRUSTED` may send one. The check uses the socket peer
+address of the accepted connection (IPv4-mapped IPv6 peers match their IPv4
+entry), never header content, and happens before a header is read: a connection
+from any other peer is closed at once, counted in
+`ran_proxy_protocol_dropped_total`, and produces no session, no alert and no log
+line with a claimed address (only a debug line without addresses). The variable
+is mandatory with the protocol on; `RAN_PROXY_TRUSTED=any` trusts every peer and
+logs a warning at startup. Ranges wider than 8 bits (such as `0.0.0.0/0`) are
+accepted with a warning. A connection from a trusted peer must send a valid header within 3 seconds; a connection that sends other bytes,
 closes early or stays silent is closed and counted in
 `ran_proxy_protocol_dropped_total`, never handled as a plain connection. A
 silent peer does not block other clients. At most 1024 connections per listen
 address may be waiting for a header (or for the trap to take them) at once;
 further ones are closed immediately and counted too. The mode applies to all TCP
 traps and never to UDP. `PROXY ... UNKNOWN` (v1) and `LOCAL` (v2) headers keep
-the address of the proxy itself. Only enable this mode when ran is reachable
-solely from a trusted proxy or tunnel: a forged header lets any peer that can
-connect directly choose the source address ran reports, so any public IP can be
-reported and then banned. A source allowlist for trusted proxies is a possible
-future change.
+the address of the proxy itself. The list is read once at startup and applies
+to every listener of every TCP trap. Keep it as narrow as possible and still
+firewall the listener where you can: a peer inside a trusted range can forge
+headers, and with `any` a header lets any peer that can connect directly choose
+the source address ran reports, so any public IP can be reported and then banned.
 
 </details>
 
@@ -830,6 +840,15 @@ Behavior changes in the release after 0.4.0 (existing deployments):
 - New traps `docker`, `kubernetes` and `mongodb` are available (see the trap
   table; add them to `RAN_TRAPS` to enable them).
 
+Upgrading with `RAN_PROXY_PROTOCOL=on` (breaking): `RAN_PROXY_TRUSTED` is now
+required and `ran check-config` fails without it. Set it to the address or CIDR
+of your proxy or tunnel (for example `RAN_PROXY_TRUSTED=10.0.0.0/8`); peers
+outside the list are closed before they can send a header. To keep the old
+behavior for a while set `RAN_PROXY_TRUSTED=any`; this lets any host that can
+reach the port forge the reported source address (and get an innocent IP
+banned), and ran logs a warning at every start. With the protocol off nothing
+changes.
+
 Upgrading from 0.3.7: UDP traps (`dns`, `ntp`, `snmp`, `sip`) no longer raise
 alerts, so the `custom/ran-{dns,ntp,snmp,sip}-trap` scenarios stop appearing.
 The HTTP log field `client_ip` is now `claimed_client_ip`. The `password` log
@@ -858,9 +877,12 @@ reports who touched them; it does not protect the host it runs on.
   raise alerts; they only log and count metrics. Only TCP sessions with a
   publicly routable peer can produce a CrowdSec alert.
 - **PROXY protocol trust.** With `RAN_PROXY_PROTOCOL=on` the address in the
-  header is trusted as the peer. Any host that can reach the port directly can
-  forge it, so enable it only when rán is reachable solely from your proxy or
-  tunnel (firewall the listener accordingly).
+  header is trusted as the peer, but only when the socket peer is listed in
+  `RAN_PROXY_TRUSTED` (mandatory; checked before any header is read). Other peers
+  are dropped and counted. `RAN_PROXY_TRUSTED=any` removes this protection: any
+  host that can reach the port can then forge the address, so list your proxies
+  and firewall the listener as well. A compromised or shared proxy in the list can
+  still forge addresses.
 - **TLS fingerprints are claims.** The `https` trap records SNI, JA3 and JA4 of
   the ClientHello as alert meta. They are client controlled (any client can
   send any SNI or mimic a fingerprint), so they are context for triage, never

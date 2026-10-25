@@ -67,6 +67,17 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 	for _, p := range config.WideIgnoreRanges(cfg.IgnoreIPs) {
 		fmt.Fprintf(stderr, "ran: warning: RAN_IGNORE_IPS contains a very wide range %s; sessions from it never alert\n", p)
 	}
+	switch {
+	case cfg.ProxyTrustedUnused():
+		fmt.Fprintln(stderr, "ran: warning: RAN_PROXY_TRUSTED is set but RAN_PROXY_PROTOCOL is off; the list is ignored")
+	case cfg.ProxyProtocol && cfg.ProxyTrustAny:
+		fmt.Fprintln(stderr, "ran: warning: RAN_PROXY_TRUSTED=any lets every peer forge the source address with a PROXY header")
+	}
+	for _, p := range config.WideIgnoreRanges(cfg.ProxyTrusted) {
+		if cfg.ProxyProtocol {
+			fmt.Fprintf(stderr, "ran: warning: RAN_PROXY_TRUSTED contains a very wide range %s; any peer in it may forge the source address\n", p)
+		}
+	}
 	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
 	if len(cfg.HTTPFixtures) > 0 {
 		fmt.Fprintf(stdout, "ran: RAN_HTTP_FIXTURES ok (%d operator fixtures)\n", len(cfg.HTTPFixtures))

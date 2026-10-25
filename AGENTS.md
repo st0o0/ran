@@ -34,7 +34,7 @@ Notes for AI agents and contributors working on `ran`. Keep it short and factual
 - Traps depend on the small `trap.Reporter` interface (Alert, SessionEnd), not on the sensor lifecycle. Use `setOutcome`/`isTimeout` for I/O errors, `Session.Cred` for plain username and password capture, and `cfg.ResolveSessionTimeout(proto)` for deadlines. Sessions carry a typed `alert.Transport`.
 - HTTP sessions are keyed by the connection (`ConnContext`), never by `RemoteAddr`: under PROXY protocol the address is client controlled and can collide.
 - Passwords are never sent to CrowdSec as event meta. Logging them is controlled by `RAN_LOG_PASSWORDS` (default `off`).
-- With `RAN_PROXY_PROTOCOL` on, the PROXY header is required, handshakes are capped and time boxed. Only enable it when `ran` is reachable solely from a trusted proxy or tunnel; any direct peer can forge a header.
+- With `RAN_PROXY_PROTOCOL` on, the PROXY header is required, handshakes are capped and time boxed. Only peers in `RAN_PROXY_TRUSTED` (mandatory, or the explicit `any`) may send a header; the socket peer is checked before the header is read (`proxyListener.acceptLoop`), never header content. Prefer a narrow list plus a firewall.
 
 ## CrowdSec integration facts (verified against v1.8.1)
 
@@ -50,6 +50,5 @@ Notes for AI agents and contributors working on `ran`. Keep it short and factual
 
 The planned work, its order and the rejected ideas live in `todo.md`. Keep it in sync with `openspec/changes/`. The items below are small leftovers that are not yet in a change.
 
-- PROXY protocol: no source allowlist for who may send headers.
 - Per-trap classification: meta for vnc and the remaining single-request traps.
 - Weak-yield traps (mssql, mqtt, memcached, adb, minecraft, elasticsearch) are candidates for removal once breadth based scan detection has produced real numbers; decide with data.

@@ -119,6 +119,10 @@ type Config struct {
 	PerProto map[string]ProtoConfig
 
 	ProxyProtocol bool
+	// ProxyTrusted lists the peers allowed to send PROXY headers and
+	// ProxyTrustAny is the explicit "any" (RAN_PROXY_TRUSTED).
+	ProxyTrusted  []netip.Prefix
+	ProxyTrustAny bool
 
 	CrowdSec              bool
 	CrowdSecURL           string
@@ -396,6 +400,13 @@ func Load(getenv func(string) string) (*Config, error) {
 		return nil, err
 	}
 	c.IgnoreIPs = ignore
+	c.ProxyTrusted, c.ProxyTrustAny, err = ParseProxyTrusted(getenv("RAN_PROXY_TRUSTED"))
+	if err != nil {
+		return nil, err
+	}
+	if c.ProxyProtocol && !c.ProxyTrustAny && len(c.ProxyTrusted) == 0 {
+		return nil, errors.New("RAN_PROXY_PROTOCOL=on requires RAN_PROXY_TRUSTED, the IP addresses or CIDR ranges of the proxies allowed to send PROXY headers (for example 10.0.0.0/8); set it to \"any\" to trust every peer, which lets any host that reaches the port forge the source address")
+	}
 	for _, name := range RemovedEnvVars {
 		if strings.TrimSpace(getenv(name)) != "" {
 			c.RemovedEnvVars = append(c.RemovedEnvVars, name)

@@ -93,7 +93,7 @@ func (s *tcpServer) Start(ctx context.Context) error {
 	if addrs == nil {
 		addrs = s.cfg.TrapAddrs(s.proto)
 	}
-	ln, err := ListenMultiTCP(ctx, addrs, s.cfg.ProxyProtocol, s.logger, s.metrics, s.proto)
+	ln, err := ListenMultiTCP(ctx, addrs, s.cfg.ProxyTrust(), s.logger, s.metrics, s.proto)
 	if err != nil {
 		return fmt.Errorf("%s listen: %w", s.proto, err)
 	}

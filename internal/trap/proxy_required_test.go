@@ -54,7 +54,7 @@ func newTestProxyListener(t *testing.T) (*proxyListener, *metrics.Metrics, strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl := newProxyListener(ln, nil, m, "test")
+	pl := newProxyListener(ln, nil, m, "test", loopbackTrust())
 	t.Cleanup(func() { _ = pl.Close() })
 	return pl, m, ln.Addr().String()
 }

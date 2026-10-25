@@ -308,6 +308,7 @@ func TestBannerIgnoredSourceNeverAlerts(t *testing.T) {
 
 	cfg := bannerConfig(svc("custom", "hello\r\n"))
 	cfg.ProxyProtocol = true
+	cfg.ProxyTrusted = loopbackPrefixes
 	env := startBanner(t, cfg, "8.8.8.8")
 	c := proxyDial(t, env.addrs[0])
 	got := make([]byte, 7)
