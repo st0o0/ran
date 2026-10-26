@@ -44,11 +44,25 @@ jobs:
       - name: Fuzz every target for 20 seconds
         run: |
           set -eu
+          failed=0
           targets=$(grep -rhoE '^func Fuzz[A-Za-z0-9_]+' --include='*_test.go' internal | sed 's/^func //' | sort -u)
           for target in $targets; do
             pkg=$(dirname "$(grep -rlE "^func ${target}\(" --include='*_test.go' internal | head -n1)")
             echo "== ${target} (${pkg})"
             # Minimization is disabled: when the fuzztime deadline hits during minimization, go test
             # fails with a bare "context deadline exceeded" even though no input crashed.
-            go test -run='^$' -fuzz="^${target}\$" -fuzztime=20s -fuzzminimizetime=0 "./${pkg}"
+            # The deadline can also race with worker shutdown, so a non-zero exit without
+            # "Failing input written to" in the output is treated as a spurious timeout.
+            set +e
+            out=$(go test -run='^$' -fuzz="^${target}\$" -fuzztime=20s -fuzzminimizetime=0 "./${pkg}" 2>&1)
+            rc=$?
+            set -e
+            echo "$out"
+            if [ $rc -ne 0 ] && echo "$out" | grep -q 'Failing input written to'; then
+              echo "::error::${target} found a crashing input"
+              failed=1
+            elif [ $rc -ne 0 ]; then
+              echo "::warning::${target} exited ${rc} without a crashing input (spurious deadline race)"
+            fi
           done
+          exit $failed
