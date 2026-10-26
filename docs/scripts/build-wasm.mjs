@@ -2,7 +2,7 @@
 // internal/tools/configwasm) and copies the matching Go runtime glue next to it.
 // Needs a Go toolchain; go.mod pins the version and Go downloads it on demand.
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, existsSync } from 'node:fs'
+import { copyFileSync, chmodSync, mkdirSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,4 +22,7 @@ run(
 const goroot = run(['env', 'GOROOT'])
 const glue = [join(goroot, 'lib', 'wasm', 'wasm_exec.js'), join(goroot, 'misc', 'wasm', 'wasm_exec.js')].find(existsSync)
 if (!glue) throw new Error(`wasm_exec.js not found under ${goroot}`)
-copyFileSync(glue, join(out, 'wasm_exec.js'))
+const dest = join(out, 'wasm_exec.js')
+if (existsSync(dest)) chmodSync(dest, 0o644)
+copyFileSync(glue, dest)
+chmodSync(dest, 0o644)

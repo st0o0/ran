@@ -98,7 +98,7 @@ func ParseHTTPFixtures(name string, data []byte) ([]HTTPFixture, error) {
 	dec.DisallowUnknownFields()
 	var raw rawHTTPFixtures
 	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("%s: invalid JSON: %v; expected {\"fixtures\":[{\"path\":\"/x\",\"status\":200,\"body\":\"...\"}]}", name, err)
+		return nil, fmt.Errorf("%s: invalid JSON: %s; expected {\"fixtures\":[{\"path\":\"/x\",\"status\":200,\"body\":\"...\"}]}", name, truncate(err.Error(), 256))
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("%s: invalid JSON: unexpected data after the top-level object", name)
