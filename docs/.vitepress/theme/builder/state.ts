@@ -9,14 +9,13 @@ import {
 export const DEFAULT_TRAPS = ['ssh', 'http']
 
 export function defaultState(): BuilderState {
-  return { traps: [...DEFAULT_TRAPS], values: {}, scenario: 'direct', proxied: [] }
+  return { traps: [...DEFAULT_TRAPS], values: {}, proxied: [] }
 }
 
 export function cloneState(s: BuilderState): BuilderState {
   return {
     traps: [...s.traps],
     values: { ...s.values },
-    scenario: s.scenario,
     proxied: [...s.proxied]
   }
 }
@@ -103,7 +102,7 @@ export function setValue(
 }
 
 export function usesProxyList(s: BuilderState): boolean {
-  return (s.scenario === 'reverse-proxy' || s.scenario === 'shared-namespace') && s.proxied.length > 0
+  return s.proxied.length > 0
 }
 
 /** Variables that differ from the default, as the sensor would see them (secrets excluded). */
@@ -167,7 +166,6 @@ function canon(s: BuilderState) {
   return {
     traps: [...s.traps].sort(),
     proxied: [...s.proxied].sort(),
-    scenario: s.scenario,
     values: Object.fromEntries(Object.entries(s.values).sort(([a], [b]) => (a < b ? -1 : 1)))
   }
 }

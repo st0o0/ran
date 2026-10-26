@@ -38,15 +38,12 @@ export interface BuilderCase {
   message_contains?: string
 }
 
-export type ScenarioId = 'direct' | 'reverse-proxy' | 'shared-namespace' | 'crowdsec'
-
 export interface BuilderState {
   /** Enabled traps (becomes RAN_TRAPS). */
   traps: string[]
   /** Settings that differ from the default, keyed by variable name. */
   values: Record<string, string>
-  scenario: ScenarioId
-  /** Traps that expect a PROXY header (reverse-proxy and shared-namespace). */
+  /** Traps behind a reverse proxy (enables PROXY protocol for these). */
   proxied: string[]
 }
 

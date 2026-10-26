@@ -3,7 +3,6 @@ import settingsJson from '../../../data/settings.generated.json'
 import casesJson from '../../../data/builder-cases.json'
 import type { BuilderCase, BuilderState, Register } from './types'
 import { effectiveEnv, setProxied, setValue } from './state'
-import { applyScenario } from './scenarios'
 import { outcomeOf, toIssues } from './checker'
 import { nodeChecker } from './testing'
 
@@ -12,7 +11,7 @@ const cases = (casesJson as unknown as { cases: BuilderCase[] }).cases
 const checker = await nodeChecker()
 
 function state(traps: string[], values: Record<string, string> = {}): BuilderState {
-  return { traps, values, scenario: 'direct', proxied: [] }
+  return { traps, values, proxied: [] }
 }
 
 describe('config check (the sensor config.Load as WebAssembly)', () => {
@@ -20,8 +19,6 @@ describe('config check (the sensor config.Load as WebAssembly)', () => {
     expect(cases.length).toBeGreaterThan(10)
   })
 
-  // The Go suite replays the same vectors against config.Load directly; this
-  // proves the browser build answers identically.
   for (const c of cases) {
     it(c.id, () => {
       const issues = checker.check(c.env)
@@ -51,8 +48,9 @@ describe('config check (the sensor config.Load as WebAssembly)', () => {
 
 describe('builder states', () => {
   it('flags a UDP trap in the PROXY list', () => {
-    let s = applyScenario(reg, state(['ssh', 'dns']), 'reverse-proxy')
+    let s = state(['ssh', 'dns'])
     s = setProxied(s, 'dns', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
     const issues = checker.check(effectiveEnv(s))
     expect(outcomeOf(issues)).toBe('error')
     expect(issues.some((i) => i.message.includes('UDP trap'))).toBe(true)
@@ -63,10 +61,36 @@ describe('builder states', () => {
     expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('error')
   })
 
-  it('accepts every scenario with its defaults', () => {
-    for (const id of ['direct', 'reverse-proxy', 'shared-namespace', 'crowdsec'] as const) {
-      const s = applyScenario(reg, state(['ssh', 'http']), id)
-      expect(outcomeOf(checker.check(effectiveEnv(s))), id).toBe('ok')
-    }
+  it('accepts proxy, crowdsec and combined configurations', () => {
+    // direct
+    expect(outcomeOf(checker.check(effectiveEnv(state(['ssh', 'http']))))).toBe('ok')
+
+    // proxy
+    let rp = state(['ssh', 'http'])
+    rp = setProxied(rp, 'http', true)
+    rp = setValue(reg, rp, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
+    expect(outcomeOf(checker.check(effectiveEnv(rp)))).toBe('ok')
+
+    // shared namespace
+    let sn = state(['http'])
+    sn = setProxied(sn, 'http', true)
+    sn = setValue(reg, sn, 'RAN_PROXY_TRUSTED', '127.0.0.1,::1')
+    expect(outcomeOf(checker.check(effectiveEnv(sn)))).toBe('ok')
+
+    // crowdsec
+    let cs = state(['ssh'])
+    cs = setValue(reg, cs, 'RAN_CROWDSEC', 'on')
+    cs = setValue(reg, cs, 'RAN_CROWDSEC_URL', 'http://crowdsec:8080')
+    cs = setValue(reg, cs, 'RAN_CROWDSEC_MACHINE_ID', 'ran-honeypot')
+    expect(outcomeOf(checker.check(effectiveEnv(cs)))).toBe('ok')
+
+    // proxy + crowdsec combined
+    let combined = state(['ssh', 'http'])
+    combined = setProxied(combined, 'http', true)
+    combined = setValue(reg, combined, 'RAN_PROXY_TRUSTED', '127.0.0.1,::1')
+    combined = setValue(reg, combined, 'RAN_CROWDSEC', 'on')
+    combined = setValue(reg, combined, 'RAN_CROWDSEC_URL', 'http://crowdsec:8080')
+    combined = setValue(reg, combined, 'RAN_CROWDSEC_MACHINE_ID', 'ran-honeypot')
+    expect(outcomeOf(checker.check(effectiveEnv(combined)))).toBe('ok')
   })
 })

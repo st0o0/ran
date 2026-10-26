@@ -7,13 +7,12 @@ import { outcomeOf } from './checker'
 import { nodeChecker } from './testing'
 import { exportEnv, importEnv, portMappings, serialize, shellQuote, toCompose, toDockerRun, toEnvFile } from './serializer'
 import { base64UrlToBytes, bytesToBase64Url, decodeState, encodeState } from './hash'
-import { applyScenario, scenarioHints } from './scenarios'
 
 const reg = settingsJson as unknown as Register
 const checker = await nodeChecker()
 
 function state(traps: string[], values: Record<string, string> = {}): BuilderState {
-  return { traps, values, scenario: 'direct', proxied: [] }
+  return { traps, values, proxied: [] }
 }
 
 describe('delta export', () => {
@@ -95,19 +94,34 @@ describe('env import', () => {
     expect(r.unknown).toEqual(['FOO', 'RAN_NOPE'])
   })
 
-  it('round trips exports of every shape', () => {
+  it('round trips exports', () => {
     let a = setValue(reg, state(['ssh', 'dns']), 'RAN_SESSION_TIMEOUT', '45s')
     a = setValue(reg, a, 'RAN_SSH_SESSION_TIMEOUT', '10s')
-    let b = applyScenario(reg, defaultState(), 'reverse-proxy')
-    let c = applyScenario(reg, defaultState(), 'crowdsec')
+
+    // proxy config
+    let b = state(['ssh', 'http'])
+    b = setProxied(b, 'http', true)
+    b = setValue(reg, b, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
+
+    // crowdsec config
+    let c = state(['ssh'])
+    c = setValue(reg, c, 'RAN_CROWDSEC', 'on')
+    c = setValue(reg, c, 'RAN_CROWDSEC_URL', 'http://crowdsec:8080')
+    c = setValue(reg, c, 'RAN_CROWDSEC_MACHINE_ID', 'ran-honeypot')
+
     for (const s of [a, b, c]) {
       const text = toEnvFile(reg, s).text
       const back = importEnv(reg, text)
       expect(back.unknown).toEqual([])
       expect(toEnvFile(reg, back.state).text).toBe(text)
     }
-    b = applyScenario(reg, defaultState(), 'shared-namespace')
-    expect(importEnv(reg, toEnvFile(reg, b).text).state.scenario).toBe('shared-namespace')
+
+    // shared namespace
+    let d = state(['http'])
+    d = setProxied(d, 'http', true)
+    d = setValue(reg, d, 'RAN_PROXY_TRUSTED', '127.0.0.1,::1')
+    expect(importEnv(reg, toEnvFile(reg, d).text).state.proxied).toEqual(['http'])
+
     expect(sameState(importEnv(reg, toEnvFile(reg, c).text).state, c)).toBe(true)
   })
 
@@ -120,7 +134,9 @@ describe('env import', () => {
 
 describe('hash', () => {
   it('round trips a state', () => {
-    let s = applyScenario(reg, defaultState(), 'reverse-proxy')
+    let s = state(['ssh', 'http'])
+    s = setProxied(s, 'http', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
     s = setValue(reg, s, 'RAN_LOG_LEVEL', 'debug')
     s = setTrap(s, 'dns', true)
     expect(decodeState(encodeState(s), reg)).toEqual(s)
@@ -145,7 +161,6 @@ describe('hash', () => {
       bytesToBase64Url(new TextEncoder().encode('[1,2]')),
       bytesToBase64Url(new TextEncoder().encode('{"t":[1]}')),
       bytesToBase64Url(new TextEncoder().encode('{"t":["ssh"],"v":{"lower":"x"}}')),
-      bytesToBase64Url(new TextEncoder().encode('{"t":["ssh"],"s":"nope"}')),
       bytesToBase64Url(Uint8Array.from([0xff, 0xfe, 0xfd]))
     ]
     for (const h of bad) {
@@ -154,6 +169,12 @@ describe('hash', () => {
     for (const h of bad.filter((x) => x !== 'e30')) {
       expect(decodeState(h, reg)).toEqual(defaultState())
     }
+  })
+
+  it('gracefully ignores legacy scenario field', () => {
+    const legacy = bytesToBase64Url(new TextEncoder().encode('{"t":["ssh"],"s":"crowdsec"}'))
+    const s = decodeState(legacy, reg)
+    expect(s.traps).toEqual(['ssh'])
   })
 
   it('does not carry a password', () => {
@@ -175,29 +196,26 @@ describe('hints', () => {
   })
 })
 
-describe('scenarios', () => {
-  it('direct has no proxy settings', () => {
-    const s = applyScenario(reg, applyScenario(reg, defaultState(), 'reverse-proxy'), 'direct')
-    const env = effectiveEnv(s)
-    expect(env.RAN_PROXY_PROTOCOL).toBeUndefined()
-    expect(env.RAN_PROXY_TRUSTED).toBeUndefined()
-  })
-
-  it('reverse proxy sets the chosen traps, trusted ranges and a Caddy hint', () => {
-    const s = applyScenario(reg, state(['ssh', 'vnc']), 'reverse-proxy')
-    expect(s.traps).toContain('http')
+describe('proxy', () => {
+  it('proxy config sets the chosen traps and trusted ranges', () => {
+    let s = state(['ssh', 'http', 'vnc'])
+    s = setProxied(s, 'http', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
     const text = toEnvFile(reg, s).text
     expect(text).toContain('RAN_PROXY_PROTOCOL=http\n')
     expect(text).toContain('RAN_PROXY_TRUSTED=')
     expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
-    const h = scenarioHints(reg, s)
+    const h = hints(reg, s)
     const caddy = h.find((x) => x.id === 'caddy-http')
     expect(caddy?.code).toContain('proxy_protocol v2')
     expect(caddy?.code).toContain('reverse_proxy ran:8081')
   })
 
-  it('reverse proxy follows the picked traps', () => {
-    let s = applyScenario(reg, state(['ssh', 'http', 'https']), 'reverse-proxy')
+  it('proxy follows the picked traps', () => {
+    let s = state(['ssh', 'http', 'https'])
+    s = setProxied(s, 'http', true)
+    s = setProxied(s, 'https', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
     expect(s.proxied).toEqual(['http', 'https'])
     s = setProxied(s, 'https', false)
     expect(toEnvFile(reg, s).text).toContain('RAN_PROXY_PROTOCOL=http\n')
@@ -206,13 +224,26 @@ describe('scenarios', () => {
   })
 
   it('shared namespace trusts loopback', () => {
-    const s = applyScenario(reg, state(['http']), 'shared-namespace')
+    let s = state(['http'])
+    s = setProxied(s, 'http', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '127.0.0.1,::1')
     expect(toEnvFile(reg, s).text).toContain('RAN_PROXY_TRUSTED=127.0.0.1,::1\n')
     expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
   })
 
-  it('crowdsec writes CHANGE_ME and a visible note, never a real password', () => {
-    let s = applyScenario(reg, state(['ssh']), 'crowdsec')
+  it('no proxy has no proxy settings', () => {
+    const s = state(['ssh', 'http'])
+    const env = effectiveEnv(s)
+    expect(env.RAN_PROXY_PROTOCOL).toBeUndefined()
+  })
+})
+
+describe('crowdsec', () => {
+  it('writes CHANGE_ME and a visible note, never a real password', () => {
+    let s = state(['ssh'])
+    s = setValue(reg, s, 'RAN_CROWDSEC', 'on')
+    s = setValue(reg, s, 'RAN_CROWDSEC_URL', 'http://crowdsec:8080')
+    s = setValue(reg, s, 'RAN_CROWDSEC_MACHINE_ID', 'ran-honeypot')
     s = { ...s, values: { ...s.values, RAN_CROWDSEC_PASSWORD: 'hunter2' } }
     const env = toEnvFile(reg, s)
     expect(env.text).toContain('RAN_CROWDSEC=on\n')
@@ -225,6 +256,21 @@ describe('scenarios', () => {
     expect(toDockerRun(reg, s).text).toContain('RAN_CROWDSEC_PASSWORD=CHANGE_ME')
     expect(exportEnv(reg, state(['ssh'])).notes).toEqual([])
     expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
-    expect(scenarioHints(reg, s).length).toBeGreaterThan(0)
+    expect(hints(reg, s).some((h) => h.id.startsWith('crowdsec-'))).toBe(true)
+  })
+})
+
+describe('combined proxy + crowdsec', () => {
+  it('accepts proxy and crowdsec together', () => {
+    let s = state(['ssh', 'http'])
+    s = setProxied(s, 'http', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '127.0.0.1,::1')
+    s = setValue(reg, s, 'RAN_CROWDSEC', 'on')
+    s = setValue(reg, s, 'RAN_CROWDSEC_URL', 'http://crowdsec:8080')
+    s = setValue(reg, s, 'RAN_CROWDSEC_MACHINE_ID', 'ran-honeypot')
+    expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
+    const text = toEnvFile(reg, s).text
+    expect(text).toContain('RAN_PROXY_PROTOCOL=http\n')
+    expect(text).toContain('RAN_CROWDSEC=on\n')
   })
 })

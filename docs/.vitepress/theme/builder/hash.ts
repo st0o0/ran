@@ -1,10 +1,9 @@
-import type { BuilderState, ScenarioId } from './types'
+import type { BuilderState } from './types'
 import { SECRET_KEYS } from './types'
 import type { Register } from './types'
 import { defaultState, findTrap, resolveSetting, setValue } from './state'
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
-const SCENARIOS: ScenarioId[] = ['direct', 'reverse-proxy', 'shared-namespace', 'crowdsec']
 
 const MAX_ENTRIES = 400
 /** Longest accepted value; banner services need about 3000, fixtures are bounded by the URL anyway. */
@@ -53,6 +52,7 @@ export function base64UrlToBytes(text: string): Uint8Array | null {
 interface Compact {
   t?: string[]
   v?: Record<string, string>
+  /** Legacy scenario field from old share links; ignored on decode. */
   s?: string
   p?: string[]
 }
@@ -63,7 +63,6 @@ export function encodeState(state: BuilderState): string {
   const values = { ...state.values }
   for (const k of SECRET_KEYS) delete values[k]
   if (Object.keys(values).length > 0) c.v = values
-  if (state.scenario !== 'direct') c.s = state.scenario
   if (state.proxied.length > 0) c.p = state.proxied
   return bytesToBase64Url(new TextEncoder().encode(JSON.stringify(c)))
 }
@@ -121,7 +120,7 @@ export function decodeShare(hash: string, reg: Register): ShareResult {
       })
     const traps = [...new Set(known(rawTraps))]
     const proxied = [...new Set(known(rawProxied))].filter((n) => traps.includes(n))
-    let state: BuilderState = { traps, values: {}, scenario: 'direct', proxied }
+    let state: BuilderState = { traps, values: {}, proxied }
     if (c.v !== undefined) {
       if (typeof c.v !== 'object' || c.v === null || Array.isArray(c.v)) return fail('invalid')
       const entries = Object.entries(c.v as Record<string, unknown>)
@@ -137,9 +136,7 @@ export function decodeShare(hash: string, reg: Register): ShareResult {
         state = setValue(reg, state, k, v)
       }
     }
-    const scenario = c.s === undefined ? 'direct' : c.s
-    if (typeof scenario !== 'string' || !SCENARIOS.includes(scenario as ScenarioId)) return fail('invalid')
-    state.scenario = scenario as ScenarioId
+    // Legacy share links may carry a scenario field (s); it is silently ignored.
     return { state, problem: null, dropped }
   } catch {
     return fail('invalid')

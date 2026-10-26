@@ -4,15 +4,21 @@ import type { BuilderState, Register } from './types'
 import { defaultState, setProxied, setTrap, setValue } from './state'
 import { importEnv, portMappings, toCompose, toDockerRun, toEnvFile } from './serializer'
 import { decodeShare, decodeState, encodeState } from './hash'
-import { applyScenario } from './scenarios'
 
 const reg = settingsJson as unknown as Register
 
 function state(traps: string[], values: Record<string, string> = {}): BuilderState {
-  return { traps, values, scenario: 'direct', proxied: [] }
+  return { traps, values, proxied: [] }
 }
+
 describe('B: proxied traps are not published', () => {
-  const rp = () => applyScenario(reg, state(['ssh', 'http', 'https']), 'reverse-proxy')
+  function rp() {
+    let s = state(['ssh', 'http', 'https'])
+    s = setProxied(s, 'http', true)
+    s = setProxied(s, 'https', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '172.16.0.0/12')
+    return s
+  }
   it('omits the proxied ports and explains how the proxy reaches ran', () => {
     const s = setProxied(rp(), 'https', false)
     expect(portMappings(reg, s).map((p) => p.spec)).toEqual(['2222:2222', '8443:8443', '127.0.0.1:9550:9550'])
@@ -25,7 +31,9 @@ describe('B: proxied traps are not published', () => {
     expect(r).toMatch(/^# .*ran:8081/m)
   })
   it('shared namespace points at loopback', () => {
-    const s = applyScenario(reg, state(['http']), 'shared-namespace')
+    let s = state(['http'])
+    s = setProxied(s, 'http', true)
+    s = setValue(reg, s, 'RAN_PROXY_TRUSTED', '127.0.0.1,::1')
     const c = toCompose(reg, s).text
     expect(c).not.toContain('8081:8081')
     expect(c).toMatch(/# .*127\.0\.0\.1:8081/)
@@ -37,7 +45,11 @@ describe('B: proxied traps are not published', () => {
 })
 
 describe('C: CrowdSec comments', () => {
-  const s = applyScenario(reg, state(['ssh']), 'crowdsec')
+  let s = state(['ssh'])
+  s = setValue(reg, s, 'RAN_CROWDSEC', 'on')
+  s = setValue(reg, s, 'RAN_CROWDSEC_URL', 'http://crowdsec:8080')
+  s = setValue(reg, s, 'RAN_CROWDSEC_MACHINE_ID', 'ran-honeypot')
+
   for (const [name, text] of [['compose', toCompose(reg, s).text], ['docker run', toDockerRun(reg, s).text]]) {
     it(`${name} explains LAPI reachability`, () => {
       expect(text).toContain('http://crowdsec:8080')
@@ -74,7 +86,7 @@ describe('D: escaping', () => {
     expect(back.state.values.RAN_BANNER_SERVICES).toBe('2222=ssh:SSH-2.0-a$b c #d')
   })
   it('strips line separators and control characters', () => {
-    const v = setValue(reg, state(['banner']), 'RAN_BANNER_SERVICES', 'a b\u0085c\u0000d\te f\r\ng')
+    const v = setValue(reg, state(['banner']), 'RAN_BANNER_SERVICES', 'a b\u0085c\u0000d\te f\r\ng')
     expect(v.values.RAN_BANNER_SERVICES).toBe('a b c d e f g')
   })
 })
@@ -82,14 +94,13 @@ describe('D: escaping', () => {
 describe('E: share link', () => {
   const enc = (o: unknown) => encodeJson(o)
   function encodeJson(o: unknown): string {
-    // reuse the real encoder through a state is not possible for junk, so build the hash by hand
     const bytes = new TextEncoder().encode(JSON.stringify(o))
     let bin = ''
     for (const b of bytes) bin += String.fromCharCode(b)
     return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   }
   it('drops unknown keys and traps and sanitizes values', () => {
-    const r = decodeShare(enc({ t: ['ssh', 'nope'], v: { RAN_NOPE: '1', RAN_LOG_LEVEL: 'debug x', RAN_MAX_PER_IP: '10' }, p: ['bogus'] }), reg)
+    const r = decodeShare(enc({ t: ['ssh', 'nope'], v: { RAN_NOPE: '1', RAN_LOG_LEVEL: 'debug x', RAN_MAX_PER_IP: '10' }, p: ['bogus'] }), reg)
     expect(r.problem).toBeNull()
     expect(r.state.traps).toEqual(['ssh'])
     expect(r.state.values).toEqual({ RAN_LOG_LEVEL: 'debug x' })
@@ -125,4 +136,3 @@ describe('E: share link', () => {
     expect(decodeState(encodeState(s), reg)).toEqual(s)
   })
 })
-

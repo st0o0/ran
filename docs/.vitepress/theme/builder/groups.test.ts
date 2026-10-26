@@ -22,7 +22,8 @@ describe('groups', () => {
     expect(shown).not.toContain('RAN_CROWDSEC_PASSWORD')
     expect(shown).not.toContain('RAN_TRAPS')
     expect(shown).toContain('RAN_LOG_LEVEL')
-    expect(shown).toContain('RAN_PROXY_TRUSTED')
+    expect(shown).not.toContain('RAN_PROXY_TRUSTED')
+    expect(shown).not.toContain('RAN_CROWDSEC')
   })
 
   it('offers per-trap fields', () => {

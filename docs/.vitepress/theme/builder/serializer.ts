@@ -110,7 +110,7 @@ export function toEnvFile(reg: Register, state: BuilderState): Output {
 export function proxyComment(reg: Register, state: BuilderState): string[] {
   if (!usesProxyList(state)) return []
   const env = effectiveEnv(state)
-  const shared = state.scenario === 'shared-namespace'
+  const shared = (env.RAN_PROXY_TRUSTED ?? '') === '127.0.0.1,::1'
   const where = state.proxied
     .map((t) => {
       const ports = trapAddrs(reg, env, t).map((a) => a.port)
@@ -245,16 +245,10 @@ export function importEnv(reg: Register, text: string): ImportResult {
         state = setValue(reg, state, key, v)
       } else {
         state.proxied = v.split(',').map((x) => x.trim()).filter((x) => x !== '')
-        state.scenario = 'reverse-proxy'
       }
       continue
     }
     state = setValue(reg, state, key, value)
-  }
-  if (state.scenario === 'reverse-proxy' && state.values.RAN_PROXY_TRUSTED === '127.0.0.1,::1') {
-    state.scenario = 'shared-namespace'
-  } else if (state.scenario === 'direct' && crowdsecOn(reg, effectiveEnv(state))) {
-    state.scenario = 'crowdsec'
   }
   return { state, unknown, ignored }
 }

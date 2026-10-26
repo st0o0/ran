@@ -38,8 +38,6 @@ export interface SettingGroup {
 
 const GROUP_ORDER: Array<[string, string, boolean]> = [
   ['core', 'General', false],
-  ['proxy', 'PROXY protocol', false],
-  ['crowdsec', 'CrowdSec', false],
   ['ignore', 'Ignore list', false],
   ['http', 'HTTP', false],
   ['ssh', 'SSH', false],
@@ -49,11 +47,14 @@ const GROUP_ORDER: Array<[string, string, boolean]> = [
   ['fingerprint', 'Fingerprint', true]
 ]
 
+/** Groups handled by their own builder sections (Proxy, CrowdSec). */
+const SECTION_GROUPS = ['proxy', 'crowdsec']
+
 /** Variables handled elsewhere in the page: the trap picker, per-trap fields and secrets. */
 const HIDDEN = ['RAN_TRAPS', 'RAN_CROWDSEC_PASSWORD', 'RAN_BANNER_SERVICES']
 
 export function settingGroups(reg: Register): SettingGroup[] {
-  const plain = reg.settings.filter((s) => !s.family && !HIDDEN.includes(s.name))
+  const plain = reg.settings.filter((s) => !s.family && !HIDDEN.includes(s.name) && !SECTION_GROUPS.includes(s.group))
   const known = new Set(GROUP_ORDER.map((g) => g[0]))
   const groups: SettingGroup[] = GROUP_ORDER.map(([id, title, advanced]) => ({
     id,
