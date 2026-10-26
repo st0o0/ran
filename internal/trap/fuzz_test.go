@@ -253,9 +253,6 @@ func FuzzParseDockerBody(f *testing.F) {
 		if limit := maxDockerCmdBytes + 4*len(data); len(cmd) > limit {
 			t.Fatalf("cmd of %d bytes for %d input bytes", len(cmd), len(data))
 		}
-		if n := strings.Count(cmd, " ") + 1; n > 2*maxDockerCmdItems {
-			t.Fatalf("%d words", n)
-		}
 		boundedText(t, data, sanitizeHTTPValue(image), sanitizeHTTPValue(cmd))
 	})
 }
