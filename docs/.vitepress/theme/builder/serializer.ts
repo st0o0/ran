@@ -7,7 +7,7 @@ import {
   PASSWORD_PLACEHOLDER,
   SECRET_KEYS
 } from './types'
-import { BOOL_OFF, BOOL_ON, trapAddrs } from './rules'
+import { BOOL_OFF, BOOL_ON, trapAddrs } from './addrs'
 import {
   crowdsecOn,
   defaultState,

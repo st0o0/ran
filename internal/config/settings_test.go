@@ -1,7 +1,6 @@
 package config_test
 
 import (
-	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -309,7 +308,7 @@ func TestBuilderCasesReplay(t *testing.T) {
 				if err != nil {
 					t.Fatalf("want success, got %v", err)
 				}
-				warnings := startupWarnings(c)
+				warnings := c.Warnings()
 				if tc.Expect == "ok" && len(warnings) > 0 {
 					t.Errorf("want no warning, got %v", warnings)
 				}
@@ -322,67 +321,5 @@ func TestBuilderCasesReplay(t *testing.T) {
 				t.Fatalf("unknown expectation %q", tc.Expect)
 			}
 		})
-	}
-}
-
-// startupWarnings lists the configuration warnings Config reports after a
-// successful Load.
-func startupWarnings(c *config.Config) []string {
-	var out []string
-	for _, name := range c.ProxyNotEnabled {
-		out = append(out, fmt.Sprintf("RAN_PROXY_PROTOCOL lists %s, which is not in RAN_TRAPS", name))
-	}
-	if c.ProxyTrustedUnused() {
-		out = append(out, "RAN_PROXY_TRUSTED has no effect while RAN_PROXY_PROTOCOL is off")
-	}
-	out = append(out, c.CooldownWarnings()...)
-	out = append(out, c.CrowdSecWarnings()...)
-	return out
-}
-
-// TestSettingsIntBoundsMatchLoad fails when the Min of an int setting differs
-// from what Load enforces: Min-1 must be rejected and Min accepted. Every int
-// setting must declare a Min, so a new one cannot skip the check.
-func TestSettingsIntBoundsMatchLoad(t *testing.T) {
-	for _, s := range config.Settings {
-		if s.Kind != config.KindInt {
-			if s.Min != nil || s.Max != nil {
-				t.Errorf("%s: only int settings may declare Min or Max", s.Name)
-			}
-			continue
-		}
-		if s.Min == nil {
-			t.Errorf("%s: int setting without Min; set it to what Load enforces", s.Name)
-			continue
-		}
-		name := s.Name
-		if s.Family != "" {
-			name = "RAN_SSH_" + s.Family
-		}
-		load := func(v int) error {
-			env := map[string]string{"RAN_TRAPS": "ssh", name: strconv.Itoa(v)}
-			if name == "RAN_UDP_RATE_BURST" {
-				// The burst may not be below the per-source rate (default 20).
-				env["RAN_UDP_RATE_PER_SOURCE"] = "1"
-			}
-			_, err := config.Load(func(k string) string { return env[k] })
-			return err
-		}
-		if err := load(*s.Min - 1); err == nil {
-			t.Errorf("%s: Load accepts %d, below the register Min %d", name, *s.Min-1, *s.Min)
-		} else if !strings.Contains(err.Error(), name) {
-			t.Errorf("%s: error for %d does not name the variable: %v", name, *s.Min-1, err)
-		}
-		if err := load(*s.Min); err != nil {
-			t.Errorf("%s: Load rejects the register Min %d: %v", name, *s.Min, err)
-		}
-		if s.Max != nil {
-			if err := load(*s.Max); err != nil {
-				t.Errorf("%s: Load rejects the register Max %d: %v", name, *s.Max, err)
-			}
-			if err := load(*s.Max + 1); err == nil {
-				t.Errorf("%s: Load accepts %d, above the register Max %d", name, *s.Max+1, *s.Max)
-			}
-		}
 	}
 }

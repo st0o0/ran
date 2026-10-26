@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
 import settingsJson from '../../../data/settings.generated.json'
 import type { BuilderState, Format, Register, ScenarioId, SettingDef } from './types'
 import { defaultState, effectiveEnv, envGet, findTrap, isActive, isTruthy, setProxied, setTrap, setValue, defaultOf } from './state'
-import { evaluate, hints } from './rules'
+import { hints } from './hints'
+import { loadChecker, type Checker } from './checker'
 import { serialize, importEnv } from './serializer'
 import { SHARE_PROBLEM_TEXT, decodeShare, encodeState } from './hash'
 import { SCENARIOS, applyScenario, scenarioHints } from './scenarios'
@@ -29,7 +30,10 @@ const groups = trapGroups(reg)
 const sGroups = settingGroups(reg)
 
 const env = computed(() => effectiveEnv(state.value))
-const issues = computed(() => evaluate(reg, state.value))
+// The check is the sensor's own config.Load compiled to WebAssembly; it loads once the page is shown.
+const checker = shallowRef<Checker | null>(null)
+const checkFailed = ref('')
+const issues = computed(() => (checker.value ? checker.value.check(env.value) : []))
 const advice = computed(() => [...scenarioHints(reg, state.value), ...hints(reg, state.value)])
 const hasErrors = computed(() => issues.value.some((i) => i.level === 'error'))
 const output = computed(() => serialize(reg, state.value, format.value))
@@ -64,6 +68,10 @@ function commit(next: BuilderState) {
 }
 
 onMounted(() => {
+  loadChecker(import.meta.env.BASE_URL).then(
+    (c) => { checker.value = c },
+    (e) => { checkFailed.value = e instanceof Error ? e.message : String(e) }
+  )
   try {
     if (location.hash.length > 1) {
       const r = decodeShare(location.hash, reg)
@@ -233,7 +241,9 @@ function doImport() {
 
     <section class="cb-sec">
       <h2>4. Check</h2>
-      <p v-if="issues.length === 0" class="cb-ok">No problems found.</p>
+      <p v-if="checkFailed" class="cb-issues-note">The rule check could not be loaded ({{ checkFailed }}). Run <code>ran check-config</code> on the result instead.</p>
+      <p v-else-if="!checker" class="cb-muted">Loading the rule check...</p>
+      <p v-else-if="issues.length === 0" class="cb-ok">No problems found.</p>
       <ul class="cb-issues">
         <li v-for="i in issues" :key="i.id" :class="i.level">
           <strong>{{ i.level === 'error' ? 'Error' : 'Warning' }}:</strong> {{ i.message }}

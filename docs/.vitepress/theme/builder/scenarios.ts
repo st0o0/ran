@@ -1,6 +1,6 @@
 import type { BuilderState, Hint, Register, ScenarioId } from './types'
 import { cloneState, effectiveEnv, setTrap, setValue } from './state'
-import { trapAddrs } from './rules'
+import { trapAddrs } from './addrs'
 
 export interface Scenario {
   id: ScenarioId

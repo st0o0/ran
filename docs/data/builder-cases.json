@@ -127,6 +127,32 @@
       "message_contains": "unknown trap"
     },
     {
+      "id": "error-port-conflict",
+      "env": {
+        "RAN_HTTP_ADDR": ":2222",
+        "RAN_TRAPS": "ssh,http"
+      },
+      "expect": "error",
+      "message_contains": "both listen"
+    },
+    {
+      "id": "error-port-conflict-banner",
+      "env": {
+        "RAN_BANNER_SERVICES": "2222=custom:hello",
+        "RAN_TRAPS": "ssh,banner"
+      },
+      "expect": "error",
+      "message_contains": "both listen"
+    },
+    {
+      "id": "ok-same-port-tcp-and-udp",
+      "env": {
+        "RAN_CATCHALL_ADDR": ":53",
+        "RAN_TRAPS": "dns,catchall"
+      },
+      "expect": "ok"
+    },
+    {
       "id": "error-no-trap",
       "env": {},
       "expect": "error",

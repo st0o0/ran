@@ -4,10 +4,11 @@
   "type": "module",
   "packageManager": "pnpm@12.4.1",
   "scripts": {
-    "dev": "vitepress dev",
-    "build": "vitepress build",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "dev": "node scripts/build-wasm.mjs && vitepress dev",
+    "build": "node scripts/build-wasm.mjs && vitepress build",
     "preview": "vitepress preview",
-    "test": "vitest run"
+    "test": "node scripts/build-wasm.mjs && vitest run"
   },
   "devDependencies": {
     "vitepress": "^1.6.4",

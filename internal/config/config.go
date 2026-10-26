@@ -536,6 +536,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		}
 	}
 
+	if err := c.checkListenConflicts(); err != nil {
+		return nil, err
+	}
+
 	// Load per-protocol config overrides
 	for _, name := range c.Traps {
 		upper := strings.ToUpper(name)
@@ -776,4 +780,49 @@ func shortDuration(d time.Duration) string {
 		return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
 	}
 	return d.String()
+}
+
+// checkListenConflicts rejects two traps that listen on the same transport,
+// host and port: the second bind would fail at startup anyway, and failing in
+// Load lets check-config and the documentation builder report it. Addresses are
+// compared as written, so ":2222" and "0.0.0.0:2222" are not recognised as the
+// same socket.
+func (c *Config) checkListenConflicts() error {
+	owner := make(map[string]string)
+	claim := func(trap, host, port string) error {
+		transport := "TCP"
+		if UDPTraps[trap] {
+			transport = "UDP"
+		}
+		key := transport + " " + net.JoinHostPort(host, port)
+		if prev, ok := owner[key]; ok && prev != trap {
+			return fmt.Errorf("%s and %s both listen on %s port %s; give one of them another address in RAN_%s_ADDR", prev, trap, transport, port, strings.ToUpper(trap))
+		}
+		owner[key] = trap
+		return nil
+	}
+	for _, name := range c.Traps {
+		if name == "banner" {
+			for _, svc := range c.BannerServices {
+				if err := claim(name, "", strconv.Itoa(svc.Port)); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		for _, part := range strings.Split(c.Addrs[name], ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			host, port, err := net.SplitHostPort(part)
+			if err != nil {
+				continue // ValidateAddrList already reported it
+			}
+			if err := claim(name, host, port); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

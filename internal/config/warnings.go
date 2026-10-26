@@ -1,7 +1,8 @@
 package config
 
-// Cooldown warning texts. The documentation builder (rules.ts) uses the same
-// wording, and the shared builder cases keep the two in line.
+import "fmt"
+
+// Cooldown warning texts.
 const (
 	WarnShunWithoutCooldown   = "RAN_SHUN has no effect while RAN_ALERT_COOLDOWN is 0s; a shun window lasts for the alert cooldown."
 	WarnRepeatWithoutCooldown = "RAN_REPEAT_COOLDOWN has no effect while RAN_ALERT_COOLDOWN is 0s, because the cooldown is disabled."
@@ -39,4 +40,44 @@ func (c *Config) CrowdSecWarnings() []string {
 		return []string{WarnShunWithoutCrowdSec}
 	}
 	return nil
+}
+
+// Warnings lists every accepted-but-ineffective setting that Load can detect:
+// PROXY entries for traps that are not enabled, a trusted list without PROXY
+// protocol, the cooldown warnings and the CrowdSec warnings. `ran check-config`
+// prints them and the documentation builder (through the WebAssembly check)
+// shows the same list, so there is one source for both.
+func (c *Config) Warnings() []string {
+	var out []string
+	if c.ProxyTrustedUnused() {
+		out = append(out, "RAN_PROXY_TRUSTED is set but RAN_PROXY_PROTOCOL is off; the list is ignored")
+	}
+	for _, name := range c.ProxyNotEnabled {
+		out = append(out, fmt.Sprintf("RAN_PROXY_PROTOCOL names %s, which is not in RAN_TRAPS; the entry has no effect", name))
+	}
+	out = append(out, c.CrowdSecWarnings()...)
+	out = append(out, c.CooldownWarnings()...)
+	return out
+}
+
+// Diagnosis is the outcome of checking an environment: the first error Load
+// reports (empty when the configuration is valid) and, for a valid one, the
+// warnings.
+type Diagnosis struct {
+	Error    string   `json:"error"`
+	Warnings []string `json:"warnings"`
+}
+
+// Diagnose runs Load on getenv and reports the result without starting
+// anything. It is what the documentation builder calls through WebAssembly.
+func Diagnose(getenv func(string) string) Diagnosis {
+	c, err := Load(getenv)
+	if err != nil {
+		return Diagnosis{Error: err.Error(), Warnings: []string{}}
+	}
+	w := c.Warnings()
+	if w == nil {
+		w = []string{}
+	}
+	return Diagnosis{Warnings: w}
 }

@@ -68,10 +68,7 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 	for _, p := range config.WideIgnoreRanges(cfg.IgnoreIPs) {
 		fmt.Fprintf(stderr, "ran: warning: RAN_IGNORE_IPS contains a very wide range %s; sessions from it never alert\n", p)
 	}
-	switch {
-	case cfg.ProxyTrustedUnused():
-		fmt.Fprintln(stderr, "ran: warning: RAN_PROXY_TRUSTED is set but RAN_PROXY_PROTOCOL is off; the list is ignored")
-	case cfg.ProxyAny() && cfg.ProxyTrustAny:
+	if cfg.ProxyAny() && cfg.ProxyTrustAny {
 		fmt.Fprintln(stderr, "ran: warning: RAN_PROXY_TRUSTED=any lets every peer forge the source address with a PROXY header")
 	}
 	for _, p := range config.WideIgnoreRanges(cfg.ProxyTrusted) {
@@ -81,14 +78,8 @@ func checkConfig(getenv func(string) string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "ran: configuration ok (%d traps: %v, %d ignored ranges)\n", len(cfg.Traps), cfg.Traps, len(cfg.IgnoreIPs))
 	fmt.Fprintf(stdout, "ran: shun %s (repeat after %d alerts, repeat cooldown %s, alert cooldown %s)\n", onOff(cfg.Shun), cfg.RepeatAfter, cfg.EffectiveRepeatCooldown(), cfg.AlertCooldown)
-	for _, w := range cfg.CrowdSecWarnings() {
+	for _, w := range cfg.Warnings() {
 		fmt.Fprintf(stderr, "ran: warning: %s\n", w)
-	}
-	for _, w := range cfg.CooldownWarnings() {
-		fmt.Fprintf(stderr, "ran: warning: %s\n", w)
-	}
-	for _, name := range cfg.ProxyNotEnabled {
-		fmt.Fprintf(stderr, "ran: warning: RAN_PROXY_PROTOCOL names %s, which is not in RAN_TRAPS; the entry has no effect\n", name)
 	}
 	if cfg.ProxyAny() {
 		trusted := config.FormatPrefixes(cfg.ProxyTrusted)

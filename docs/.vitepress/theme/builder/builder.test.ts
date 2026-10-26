@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import settingsJson from '../../../data/settings.generated.json'
-import casesJson from '../../../data/builder-cases.json'
-import type { BuilderCase, BuilderState, Register } from './types'
+import type { BuilderState, Register } from './types'
 import { cloneState, defaultState, effectiveEnv, sameState, setProxied, setTrap, setValue } from './state'
-import { checkCase, durationMs, evaluate, evaluateEnv, hints, outcomeOf } from './rules'
+import { hints } from './hints'
+import { outcomeOf } from './checker'
+import { nodeChecker } from './testing'
 import { exportEnv, importEnv, portMappings, serialize, shellQuote, toCompose, toDockerRun, toEnvFile } from './serializer'
 import { base64UrlToBytes, bytesToBase64Url, decodeState, encodeState } from './hash'
 import { applyScenario, scenarioHints } from './scenarios'
 
 const reg = settingsJson as unknown as Register
-const cases = (casesJson as unknown as { cases: BuilderCase[] }).cases
+const checker = await nodeChecker()
 
 function state(traps: string[], values: Record<string, string> = {}): BuilderState {
   return { traps, values, scenario: 'direct', proxied: [] }
@@ -162,37 +163,7 @@ describe('hash', () => {
   })
 })
 
-describe('rules replay builder-cases.json', () => {
-  it('has cases', () => {
-    expect(cases.length).toBeGreaterThan(10)
-  })
-  for (const c of cases) {
-    it(c.id, () => {
-      expect(checkCase(reg, c)).toBeNull()
-    })
-  }
-})
-
-describe('rules on builder state', () => {
-  it('flags a UDP trap in the PROXY list', () => {
-    let s = applyScenario(reg, state(['ssh', 'dns']), 'reverse-proxy')
-    s = setProxied(s, 'dns', true)
-    const issues = evaluate(reg, s)
-    expect(outcomeOf(issues)).toBe('error')
-    expect(issues.some((i) => i.message.includes('UDP trap'))).toBe(true)
-  })
-
-  it('flags port conflicts', () => {
-    const s = setValue(reg, state(['ssh', 'http']), 'RAN_HTTP_ADDR', ':2222')
-    expect(outcomeOf(evaluate(reg, s))).toBe('error')
-  })
-
-  it('validates value formats', () => {
-    expect(outcomeOf(evaluateEnv(reg, { RAN_TRAPS: 'ssh', RAN_SESSION_TIMEOUT: 'soon' }))).toBe('error')
-    expect(outcomeOf(evaluateEnv(reg, { RAN_TRAPS: 'ssh', RAN_MAX_PER_IP: '-1' }))).toBe('error')
-    expect(outcomeOf(evaluateEnv(reg, { RAN_TRAPS: 'ssh', RAN_SSH_ADDR: '2222' }))).toBe('error')
-  })
-
+describe('hints', () => {
   it('hints about UDP, wide port sets and trusting any peer', () => {
     const udp = hints(reg, state(['dns']))
     expect(udp.map((h) => h.id)).toContain('udp-log-only')
@@ -218,7 +189,7 @@ describe('scenarios', () => {
     const text = toEnvFile(reg, s).text
     expect(text).toContain('RAN_PROXY_PROTOCOL=http\n')
     expect(text).toContain('RAN_PROXY_TRUSTED=')
-    expect(outcomeOf(evaluate(reg, s))).toBe('ok')
+    expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
     const h = scenarioHints(reg, s)
     const caddy = h.find((x) => x.id === 'caddy-http')
     expect(caddy?.code).toContain('proxy_protocol v2')
@@ -237,7 +208,7 @@ describe('scenarios', () => {
   it('shared namespace trusts loopback', () => {
     const s = applyScenario(reg, state(['http']), 'shared-namespace')
     expect(toEnvFile(reg, s).text).toContain('RAN_PROXY_TRUSTED=127.0.0.1,::1\n')
-    expect(outcomeOf(evaluate(reg, s))).toBe('ok')
+    expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
   })
 
   it('crowdsec writes CHANGE_ME and a visible note, never a real password', () => {
@@ -253,56 +224,7 @@ describe('scenarios', () => {
     expect(toCompose(reg, s).text).toContain('RAN_CROWDSEC_PASSWORD: "CHANGE_ME"')
     expect(toDockerRun(reg, s).text).toContain('RAN_CROWDSEC_PASSWORD=CHANGE_ME')
     expect(exportEnv(reg, state(['ssh'])).notes).toEqual([])
-    expect(outcomeOf(evaluate(reg, s))).toBe('ok')
+    expect(outcomeOf(checker.check(effectiveEnv(s)))).toBe('ok')
     expect(scenarioHints(reg, s).length).toBeGreaterThan(0)
-  })
-})
-
-describe('value rules follow the register and Go', () => {
-  const messages = (env: Record<string, string>) =>
-    evaluateEnv(reg, { RAN_TRAPS: 'ssh', ...env }).map((i) => i.message)
-
-  it('enforces the int minimum from the register', () => {
-    expect(messages({ RAN_MAX_SESSIONS: '0' })).toContain('RAN_MAX_SESSIONS must be a whole number >= 1, got "0".')
-    expect(messages({ RAN_REPEAT_AFTER: '0' })).toContain('RAN_REPEAT_AFTER must be a whole number >= 1, got "0".')
-    expect(messages({ RAN_MAX_AUTH_RETRIES: '0' })).toEqual([])
-    expect(messages({ RAN_MAX_AUTH_RETRIES: '-1' })).toContain('RAN_MAX_AUTH_RETRIES must be a whole number >= 0, got "-1".')
-    expect(messages({ RAN_SSH_MAX_AUTH_RETRIES: '-1' })).toHaveLength(1)
-    expect(messages({ RAN_MAX_SESSIONS: '1' })).toEqual([])
-  })
-
-  it('every int setting declares a min', () => {
-    for (const s of reg.settings.filter((x) => x.kind === 'int')) expect(s.min, s.name).toBeTypeOf('number')
-  })
-
-  it('accepts durations like time.ParseDuration', () => {
-    for (const v of ['0', '30s', '1h30m', '1.5h', '.5s', '10us', '10' + String.fromCharCode(0xb5) + 's', '10' + String.fromCharCode(0x3bc) + 's', '5ns', '+5s']) {
-      expect(durationMs(v), v).not.toBeNull()
-      expect(messages({ RAN_AUTH_DELAY: v }), v).toEqual([])
-    }
-    for (const v of ['-5s', '5', 's', '5x', '1h 30m', '1,5s']) {
-      expect(durationMs(v), v).toBeNull()
-      expect(messages({ RAN_AUTH_DELAY: v }), v).toHaveLength(1)
-    }
-    expect(durationMs('1h30m')).toBe(5400000)
-  })
-
-  it('requires positive durations where Load does', () => {
-    expect(messages({ RAN_REPEAT_COOLDOWN: '0s' })).toContain('RAN_REPEAT_COOLDOWN must be greater than zero, got "0s".')
-    expect(messages({ RAN_SESSION_TIMEOUT: '0' })).toHaveLength(1)
-    expect(messages({ RAN_SSH_SESSION_TIMEOUT: '0s' })).toHaveLength(1)
-    expect(messages({ RAN_AUTH_DELAY: '0s' })).toEqual([])
-  })
-
-  it('warns about cooldown settings that do nothing', () => {
-    const ids = (env: Record<string, string>) =>
-      evaluateEnv(reg, { RAN_TRAPS: 'ssh', ...env }).map((i) => i.id)
-    const cs = { RAN_CROWDSEC: 'on', RAN_CROWDSEC_URL: 'http://localhost:8080', RAN_CROWDSEC_MACHINE_ID: 'ran' }
-    expect(ids({ ...cs, RAN_SHUN: 'on', RAN_ALERT_COOLDOWN: '0s' })).toEqual(['shun-without-cooldown'])
-    expect(ids({ RAN_SHUN: 'on', RAN_ALERT_COOLDOWN: '0s' })).toEqual(['shun-without-cooldown', 'shun-without-crowdsec'])
-    expect(ids({ RAN_REPEAT_COOLDOWN: '12h', RAN_ALERT_COOLDOWN: '0' })).toEqual(['repeat-without-cooldown'])
-    expect(ids({ RAN_REPEAT_COOLDOWN: '30m' })).toEqual(['repeat-below-cooldown'])
-    expect(ids({ RAN_REPEAT_COOLDOWN: '1h' })).toEqual([])
-    expect(ids({ ...cs, RAN_SHUN: 'on' })).toEqual([])
   })
 })
