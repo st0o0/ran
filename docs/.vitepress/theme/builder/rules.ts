@@ -12,6 +12,9 @@ import { MAX_IGNORE_ENTRIES, parseIgnoreList } from './netaddr'
 export const BOOL_ON = ['on', 'true', 'yes', '1']
 export const BOOL_OFF = ['off', 'false', 'no', '0']
 export const CLASSES = ['probe', 'attack', 'scan']
+/** config.MaxCooldown: upper bound of RAN_ALERT_COOLDOWN and RAN_REPEAT_COOLDOWN. */
+export const MAX_COOLDOWN = '8760h'
+const MAX_COOLDOWN_NS = BigInt(8760) * BigInt(3600) * BigInt(1000000000)
 const INT64_MAX = BigInt('9223372036854775807')
 const INT64_MIN = BigInt('-9223372036854775808')
 
@@ -111,14 +114,23 @@ export function durationNs(raw: string): bigint | null {
   return total
 }
 
+/** Durations that Load requires to be greater than zero (durationPositive). */
+function mustBePositive(def: { name: string; family?: string }): boolean {
+  return def.name === 'RAN_SESSION_TIMEOUT' || def.name === 'RAN_REPEAT_COOLDOWN' || def.family === 'SESSION_TIMEOUT'
+}
+
+function hasCooldownCap(def: { name: string }): boolean {
+  return def.name === 'RAN_ALERT_COOLDOWN' || def.name === 'RAN_REPEAT_COOLDOWN'
+}
+
 const IGNORE_HELP = 'use IP addresses or CIDR ranges such as 8.8.8.8,1.1.1.0/24,2606:4700:4700::/48'
 
-/** IP and CIDR lists (RAN_IGNORE_IPS, RAN_PROXY_TRUSTED); allowAny also accepts a lone "any". */
-function checkPrefixList(key: string, raw: string, allowAny: boolean, out: Issue[]): void {
-  if (allowAny && raw.trim() === 'any') return
+/** RAN_IGNORE_IPS and RAN_PROXY_TRUSTED (the latter also takes a lone "any"). */
+function checkPrefixList(key: string, raw: string, out: Issue[]): void {
+  if (key === 'RAN_PROXY_TRUSTED' && raw.trim() === 'any') return
   const r = parseIgnoreList(raw)
   if ('count' in r) return
-  const tail = allowAny ? ` (or the single value "any" to trust every peer)` : ''
+  const tail = key === 'RAN_PROXY_TRUSTED' ? ` (or the single value "any" to trust every peer)` : ''
   const message = r.bad === undefined
     ? `${key} has more than ${MAX_IGNORE_ENTRIES} distinct entries; shorten the list or use wider CIDR ranges${tail}.`
     : `${key} has an invalid entry "${r.bad}" (${r.error}); ${IGNORE_HELP}${tail}.`
@@ -149,9 +161,9 @@ function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): 
     const { def } = hit
     const v = value.trim()
     if (v === '') continue
-    if (def.format === 'cidrs' || def.format === 'cidrs-or-any') {
-      checkPrefixList(key, v, def.format === 'cidrs-or-any', out)
-    } else if (def.format === 'classes') {
+    if (key === 'RAN_IGNORE_IPS' || key === 'RAN_PROXY_TRUSTED') {
+      checkPrefixList(key, v, out)
+    } else if (key === 'RAN_BAN_ON') {
       checkClasses(key, v, out)
     } else if (def.kind === 'bool') {
       const l = v.toLowerCase()
@@ -173,10 +185,10 @@ function checkValues(reg: Register, env: Record<string, string>, out: Issue[]): 
       const ms = durationMs(v)
       if (ms === null) {
         out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be a duration such as 30s or 1h, got "${v}".` })
-      } else if (ms <= 0 && def.positive) {
+      } else if (ms <= 0 && mustBePositive(def)) {
         out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must be greater than zero, got "${v}".` })
-      } else if (def.max_duration && (durationNs(v) ?? BigInt(0)) > (durationNs(def.max_duration) ?? BigInt(0))) {
-        out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must not exceed ${def.max_duration}, got "${v}"; use a value up to ${def.max_duration}.` })
+      } else if (hasCooldownCap(def) && (durationNs(v) ?? BigInt(0)) > MAX_COOLDOWN_NS) {
+        out.push({ id: `bad-duration-${key}`, level: 'error', message: `${key} must not exceed ${MAX_COOLDOWN}, got "${v}"; use a value up to ${MAX_COOLDOWN}.` })
       }
     } else if (def.kind === 'enum' && def.enum && !def.enum.includes(v.toLowerCase())) {
       out.push({ id: `bad-enum-${key}`, level: 'error', message: `${key} must be one of ${def.enum.join(', ')}, got "${v}".` })

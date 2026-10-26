@@ -92,8 +92,7 @@
       "summary": "At most one alert per source and class in this window; 0s disables the limit. At most 8760h (one year).",
       "requires": [
         "RAN_CROWDSEC"
-      ],
-      "max_duration": "8760h"
+      ]
     },
     {
       "name": "RAN_BAN_ON",
@@ -103,8 +102,7 @@
       "summary": "Session classes that produce an alert: any of probe, attack, scan.",
       "requires": [
         "RAN_CROWDSEC"
-      ],
-      "format": "classes"
+      ]
     },
     {
       "name": "RAN_CROWDSEC",
@@ -194,9 +192,7 @@
       "summary": "Alert cooldown (and shun window) after RAN_REPEAT_AFTER alerts; unset follows RAN_ALERT_COOLDOWN, 12h is recommended. At most 8760h (one year).",
       "requires": [
         "RAN_CROWDSEC"
-      ],
-      "positive": true,
-      "max_duration": "8760h"
+      ]
     },
     {
       "name": "RAN_SHUN",
@@ -241,8 +237,7 @@
       "kind": "list",
       "default": "",
       "group": "ignore",
-      "summary": "IP addresses or CIDR ranges that are served and logged but never alert.",
-      "format": "cidrs"
+      "summary": "IP addresses or CIDR ranges that are served and logged but never alert."
     },
     {
       "name": "RAN_<PROTO>_AUTH_DELAY",
@@ -393,8 +388,7 @@
         "ssh",
         "telnet",
         "vnc"
-      ],
-      "positive": true
+      ]
     },
     {
       "name": "RAN_AUTH_DELAY",
@@ -432,8 +426,7 @@
       "kind": "duration",
       "default": "30s",
       "group": "limits",
-      "summary": "Default session deadline.",
-      "positive": true
+      "summary": "Default session deadline."
     },
     {
       "name": "RAN_LOG_FORMAT",
@@ -493,8 +486,7 @@
       "summary": "IP addresses or CIDR ranges of the proxies allowed to send PROXY headers, or any. Required when PROXY protocol is used.",
       "requires": [
         "RAN_PROXY_PROTOCOL"
-      ],
-      "format": "cidrs-or-any"
+      ]
     },
     {
       "name": "RAN_SSH_TARPIT",

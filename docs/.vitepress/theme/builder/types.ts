@@ -16,12 +16,6 @@ export interface SettingDef {
   /** Inclusive bounds of an int setting, as Load enforces them (omitted when unset). */
   min?: number
   max?: number
-  /** Duration that must be greater than zero. */
-  positive?: boolean
-  /** Inclusive upper bound of a duration, written like the variable ("8760h"). */
-  max_duration?: string
-  /** Syntax of a list setting. */
-  format?: 'cidrs' | 'cidrs-or-any' | 'classes'
 }
 
 export interface TrapDef {
