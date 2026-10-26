@@ -5,11 +5,7 @@ export default defineConfig({
   lang: 'en',
   title: 'rán',
   description: 'Single-binary honeypot that pushes classified alerts to CrowdSec',
-  head: [
-    ['link', { rel: 'icon', href: '/ran/logo.svg' }]
-  ],
   themeConfig: {
-    logo: '/logo.svg',
     nav: [
       { text: 'Guide', link: '/getting-started' },
       { text: 'Traps', link: '/traps' },
