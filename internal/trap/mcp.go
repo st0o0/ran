@@ -220,7 +220,7 @@ func summarizeMCPArgs(args json.RawMessage) string {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		b.WriteString(sanitizeMCPText(k, maxMCPName))
+		b.WriteString(strings.ReplaceAll(sanitizeMCPText(k, maxMCPName), "=", "_"))
 		b.WriteByte('=')
 		if secretArgKey(k) {
 			b.WriteString("***")
