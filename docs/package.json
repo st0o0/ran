@@ -2,7 +2,7 @@
   "name": "ran-docs",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.4.1",
+  "packageManager": "pnpm@12.15.0",
   "scripts": {
     "build:wasm": "node scripts/build-wasm.mjs",
     "dev": "node scripts/build-wasm.mjs && vitepress dev",
