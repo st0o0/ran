@@ -1,5 +1,84 @@
 # Changelog
 
+## [0.5.0](https://github.com/st0o0/ran/compare/v0.4.0...v0.5.0) (2026-10-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* require RAN_PROXY_TRUSTED when the PROXY protocol is enabled
+
+### Features
+
+* add catchall and banner traps for ports without a named trap ([1a4fe07](https://github.com/st0o0/ran/commit/1a4fe07f8f0e2268b906cf254b904dec6414945e))
+* add docker, kubernetes and mongodb traps and listen on telnet port 2323 by default ([67ce58f](https://github.com/st0o0/ran/commit/67ce58ffb721f8736a281496810d63fe3c06cdab))
+* add https trap with self-signed certificate and JA3/JA4 ClientHello fingerprints ([b974447](https://github.com/st0o0/ran/commit/b974447685ec57f522edf3187d50953557d2a7d6))
+* add mcp decoy trap that records tool calls as attacks ([883c4b0](https://github.com/st0o0/ran/commit/883c4b0435970f2324ccdbbe1603d98a5caad4ec))
+* add opt-in shun and repeat cooldown to quiet persistent sources ([7642183](https://github.com/st0o0/ran/commit/7642183da3eb9938085df7e3998e715dcde920ce))
+* add RAN_IGNORE_IPS to keep trusted sources out of alerts, scan tracking and probe summaries ([9695654](https://github.com/st0o0/ran/commit/9695654740d5513a9512a0cfd6ae4dc26e01081a))
+* add s7comm, enip, pjl and ipp traps ([a8917bc](https://github.com/st0o0/ran/commit/a8917bcc45b8df017b52814a4998a3d6ba4dc450))
+* add scenario-based config builder page to the documentation site ([47674e1](https://github.com/st0o0/ran/commit/47674e1084cf23117d4140933f8d2569921e3d44))
+* cap alert and repeat cooldowns at one year and add shared builder cases for list and bool validation ([82dd369](https://github.com/st0o0/ran/commit/82dd369185850e6fbe462fe7c085eb45561dff8b))
+* capture SSH public-key and keyboard-interactive attempts with client version and HASSH ([8f96a89](https://github.com/st0o0/ran/commit/8f96a89fd4449eebd6552d382785273b6d770ee3))
+* classify Modbus reads and writes, capture ADB shell opens, strip Telnet IAC, retry MySQL and Postgres auth and detect port scans ([eba765f](https://github.com/st0o0/ran/commit/eba765f2b353e9b015300a48ba39fa439f2c1a20))
+* generate a settings register and builder rule cases from the configuration loader ([fa215be](https://github.com/st0o0/ran/commit/fa215beaec58bd1d5f17cbd363a4a75af88e9479))
+* log every HTTP request and classify exploit paths, JNDI strings and Basic auth ([0d6f6f3](https://github.com/st0o0/ran/commit/0d6f6f398fcd5f929393d704999bb9e4d3e719b6))
+* require RAN_PROXY_TRUSTED when the PROXY protocol is enabled ([37e11cf](https://github.com/st0o0/ran/commit/37e11cf7b24eb0eb46ecb32a5fa8d600e84b9cb2))
+* seeded banner profiles per instance and kind meta for single-request traps ([cb3690c](https://github.com/st0o0/ran/commit/cb3690c636119df385a25d80a44b9ab673dfe995))
+* select PROXY protocol per trap so proxied and direct traps can coexist ([598b06a](https://github.com/st0o0/ran/commit/598b06ae6ce5f9170de23faf7dcd88c536be17be))
+* serve static scanner fixtures on http and https with optional operator fixtures ([a4df107](https://github.com/st0o0/ran/commit/a4df107b67309876fac464f2dd67d4043bc65f84))
+* ship the example CrowdSec profile with a subcommand and a real CrowdSec integration test ([d1ab755](https://github.com/st0o0/ran/commit/d1ab755da6b7d9f9a48d0056d7f656effa193477))
+
+
+### Bug Fixes
+
+* accept legacy TLS clients, write cert atomically and align JA4 with the spec ([407d933](https://github.com/st0o0/ran/commit/407d933a83412c261744c4bf5c3a7cc97d8af835))
+* align builder and register bounds with the loader and warn about ineffective cooldown settings ([ffb3149](https://github.com/st0o0/ran/commit/ffb3149411ecdaf8084ab5d190d7d824de78f7fa))
+* **ci:** tolerate spurious fuzz deadline races in smoke job ([a70d43f](https://github.com/st0o0/ran/commit/a70d43fa0ce6fe118de2769b2034dbc95b85a312))
+* correct builder compose and env output, validate more settings and rewrite the getting-started guide ([e7eab85](https://github.com/st0o0/ran/commit/e7eab85c95f33d1a1e99e88bf29e1c1fa2221f41))
+* do not record the MySQL auth scramble as an empty-password credential ([97e82e1](https://github.com/st0o0/ran/commit/97e82e19dabd8191f737dc0643663183bfb5d4ec))
+* drop false word-count bound in FuzzParseDockerBody ([46449a8](https://github.com/st0o0/ran/commit/46449a82f6b6260b3a858aed0587e667b60a9d4f))
+* gate catchall payload logging on RAN_LOG_PASSWORDS and redact auth headers in banner lines ([2539344](https://github.com/st0o0/ran/commit/2539344225824b3a4fdcff187914305a72a84be2))
+* guard MySQL and Postgres retries against repeated passwords and old clients and end auth delays at the session deadline ([64f7a03](https://github.com/st0o0/ran/commit/64f7a031a09d1a3804f1ce4ac01f1d907e652425))
+* harden HTTP exploit path matching against bypasses and false positives ([653d790](https://github.com/st0o0/ran/commit/653d790c2007f72c224700ee68ac911cde2b67c2))
+* harden proxy and retry tests against timing flakes and document NAT trust pitfalls ([cee630d](https://github.com/st0o0/ran/commit/cee630d65aa685c8bc659b728a21a4245da5ccc3))
+* keep SASL PLAIN passwords out of MongoDB logs and alerts and treat OPTIONS as read-only ([c5f8eca](https://github.com/st0o0/ran/commit/c5f8eca3cb15fbe9da85e7eebe64a6a4b9c97103))
+* keep scanner noise a probe on s7comm and pjl, cap IPP document sizes and remove fingerprint tells ([38a6816](https://github.com/st0o0/ran/commit/38a6816af181ec84de0d285c070f89b4eb84b4f5))
+* log shun summaries outside the table lock and fail startup when shun cannot be enforced ([22f02f6](https://github.com/st0o0/ran/commit/22f02f68ccc6965123b7a2ce50cb4d093910a265))
+* make wasm_exec.js copy writable and truncate JSON decode errors in fixture parser ([b87ff46](https://github.com/st0o0/ran/commit/b87ff463580ee2d37812fb3aaa28cedeb7635ecc))
+* pin banner selection with a golden test and align SSH, MySQL and Elasticsearch banners with their profiles ([289353a](https://github.com/st0o0/ran/commit/289353a5930535eb1e50fccb866820babbc9b085))
+* record failed keyboard-interactive attempts and bound SSH log values ([3e7c850](https://github.com/st0o0/ran/commit/3e7c850269527730619b4dafecfe1021718ddc83))
+* reject percent signs and duplicate keys in operator fixtures ([22e6746](https://github.com/st0o0/ran/commit/22e6746a24aa5247dfbb38254d01c30d8e19a858))
+* revert the offender entry when an alert push fails and keep active shuns when the table evicts ([c9955da](https://github.com/st0o0/ran/commit/c9955da558dd54eadccc03b2fb799a9d9952fe3d))
+* scrub secrets from stub trap commands and bound the MCP request id ([644287c](https://github.com/st0o0/ran/commit/644287c10fe67c03b8ff10bde66edc534bbc6ee8))
+* skip peer address parsing on accept when shun is off ([20a2964](https://github.com/st0o0/ran/commit/20a2964867deab06df7ff0ce8635ad3599af8d93))
+* strip = from MCP argument key names in summary to satisfy fuzz bound ([badef98](https://github.com/st0o0/ran/commit/badef981837d66776e3b30889da1efc32a0a0311))
+* warn on very wide ignore ranges, cap the ignore list and extend its tests ([f3bcf04](https://github.com/st0o0/ran/commit/f3bcf04bf8847b2a51c3138b95eff041d92478d8))
+
+
+### Documentation
+
+* add competitor comparison and collapse reference sections in README ([d4cf80f](https://github.com/st0o0/ran/commit/d4cf80fd024ac9108e627140ade54a3906716110))
+* add config-builder openspec change ([cde6e53](https://github.com/st0o0/ran/commit/cde6e53b032d154009d9a506095d4584f39bec5d))
+* add crowdsec-integration openspec change ([f0c40d5](https://github.com/st0o0/ran/commit/f0c40d58431ce6dcb40f5775996e94bc0905efb6))
+* add docs-site openspec change and record the VitePress layout decision ([cefab82](https://github.com/st0o0/ran/commit/cefab827bbbcfc264dc133fcbaf14ae169c26705))
+* add proxy-protocol-per-trap and quiet-repeat-offenders openspec changes from operator log analysis ([4e3198c](https://github.com/st0o0/ran/commit/4e3198cced091b50bce9fae7b1bdce16125332dd))
+* add todo.md and openspec changes for the roadmap ([0d843fd](https://github.com/st0o0/ran/commit/0d843fd442b4a8148dc73e3dcc71e20e4ea350a2))
+* add VitePress documentation site with generated trap table and docs build in CI ([2f56cc5](https://github.com/st0o0/ran/commit/2f56cc5a9a9bb022a74c929d090c20ca7fca99fc))
+* defer webhook-sink in todo.md ([77b1dfd](https://github.com/st0o0/ran/commit/77b1dfd05596e6681c9942bcebb123908f75fd80))
+* mark shipped changes as archived in the roadmap ([6b990ec](https://github.com/st0o0/ran/commit/6b990ec5c3ff261395feab817e9533afa20a36d3))
+* record docs site evaluation and correct the CrowdSec plan in todo.md ([e9450ed](https://github.com/st0o0/ran/commit/e9450ed23e570c00f9f6a8f13121660ca22355a6))
+* shrink the README to pitch and quick start now that the site carries the reference ([c5cd007](https://github.com/st0o0/ran/commit/c5cd007e6964c88927a8a09d1dcd08932dc25a66))
+* update todo.md and add docs site evaluation ([174f0b0](https://github.com/st0o0/ran/commit/174f0b0d6abfc20e7e17ec194c727b8f8f35a36a))
+
+
+### Refactoring
+
+* derive the UDP trap set for the docs generator from config.UDPTraps and test it against the implementations ([c55c4a0](https://github.com/st0o0/ran/commit/c55c4a09608607b7068f24a280229e978ebb9192))
+* **docs:** replace builder scenarios with composable proxy and CrowdSec sections ([f8cc5f1](https://github.com/st0o0/ran/commit/f8cc5f1a683944cc56dfe22e5949fa9f86cb58ec))
+* drive builder duration and list rules from register flags instead of variable names ([092b16d](https://github.com/st0o0/ran/commit/092b16dfbf3eb6e6f1fbae576555767c81e559bb))
+* let the CrowdSec sink own the offender table and expose it through a shun gate ([35ad3e3](https://github.com/st0o0/ran/commit/35ad3e3f5d0419c03caecf65d57547054bb1580a))
+* run the sensor config check in the docs builder as WebAssembly and reject duplicate listen addresses in Load ([e59054f](https://github.com/st0o0/ran/commit/e59054fcee64dd8c2b5389fe111ab942f81b535f))
+
 ## [0.4.0](https://github.com/st0o0/ran/compare/v0.3.8...v0.4.0) (2026-10-24)
 
 
