@@ -1,14 +1,58 @@
-# AGENTS.md
+# Rán
 
-Notes for AI agents and contributors working on `ran`. Keep it short and factual; update it when a lesson changes.
+Single-binary honeypot sensor. Emulates 40 network services, captures credentials and payloads as structured JSON, pushes classified alerts to CrowdSec. Published as `ghcr.io/st0o0/ran`.
+
+## Architecture
+
+```
+cmd/ran/              Entry point, signal handling, subcommands (check-config, crowdsec-profile)
+internal/
+  config/             RAN_ env vars, trap selection, banner/HTTP fixture parsing, settings register
+  trap/               Protocol handlers (40 traps), shared TCP skeleton (tcpserver.go),
+                      session lifecycle, sensor (classification, ignore list, shun table),
+                      rate limiter, PROXY protocol
+  alert/              CrowdSec LAPI client, alert builder, cooldown
+  crowdsecprofile/    Shipped profiles.yaml for CrowdSec, pinned image tag for integration test
+  fingerprint/        Append-only banner tables, HMAC-based selection
+  metrics/            Prometheus /metrics endpoint (ran_ prefix), /healthz
+  tools/              docgen (generates docs/traps.generated.md, settings.json, etc.),
+                      configwasm (WebAssembly build for docs config builder)
+docs/                 VitePress documentation site (deployed to GitHub Pages)
+```
+
+## Build
+
+```bash
+go build -o ran ./cmd/ran
+go test ./...
+go vet ./...
+golangci-lint run
+```
 
 ## Conventions
 
-- Commits follow Conventional Commits (see `commitlint.config.mjs`), one line, no body. `release-please` derives the version and `CHANGELOG.md` from the commit titles. Never edit `CHANGELOG.md` or `.release-please-manifest.json` by hand.
-- Use `fix:`/`feat:` for user-visible changes and `chore:`/`docs:` for the rest. Mark breaking behavior with `!` in the title, because `release-please` reads it.
-- Specs and changes live in `openspec/` (tracked). Create changes with the `openspec` CLI, run `openspec validate --all`, sync delta specs to the main specs when archiving.
+- Go 1.26+, pure Go, no CGO
+- Conventional commits: feat/fix/perf/docs/chore/refactor/test/ci/build/deps
+- commitlint enforced, release-please for versioning
+- golangci-lint v2, hadolint for Dockerfile
+- All env vars prefixed with `RAN_`
+- Structured logging via log/slog (JSON or text)
+- Metric names prefixed with `ran_`
+- Errors wrapped with `fmt.Errorf` and `%w`
 - English only in code, comments, docs and commit messages. No em dashes (use `--`).
 - No real IP addresses or personal domains in code, tests or docs. Test addresses: use well-known public addresses (for example `8.8.8.8`, `1.1.1.1`, `2606:4700:4700::1111`). Documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) are on the alert denylist and are rejected by the CrowdSec sink (pipeline stage `invalid`), so do not use them where an alert must be accepted.
+
+## Deployment
+
+Single static binary, ~8 MB scratch image. Published as `ghcr.io/st0o0/ran`. Deployed via compose in homelab-infra. Docs site at https://ran.st0o0.net/ (VitePress, GitHub Pages).
+
+## Security-sensitive areas
+
+- `internal/trap/` -- protocol handlers, bounded reads, alert identity from socket peer
+- `internal/alert/` -- CrowdSec LAPI client, alert classification
+- `internal/trap/tcpserver.go` -- shared TCP skeleton, session lifecycle, shun check
+- `internal/config/` -- input validation, banner and HTTP fixture parsing
+- `internal/fingerprint/` -- append-only banner tables (golden selection pinned by test)
 
 ## Verification
 

@@ -1,8 +1,8 @@
 # rán
 
-[![Release](https://img.shields.io/github/v/release/st0o0/ran?sort=semver)](https://github.com/st0o0/ran/releases)
-[![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
+[![Release](https://img.shields.io/github/v/release/st0o0/ran?sort=semver&style=flat-square)](https://github.com/st0o0/ran/releases)
+[![GHCR](https://img.shields.io/badge/ghcr.io-st0o0%2Fran-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/st0o0/ran/pkgs/container/ran)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
 Single-binary honeypot written in Go. Emulates 40 network services (SSH, RDP,
 Modbus, MQTT, …), captures credentials and payloads as structured JSON, and
@@ -168,4 +168,4 @@ Architectures: `linux/amd64`, `linux/arm64`.
 
 ## License
 
-MIT, see [`LICENSE.md`](LICENSE.md).
+MIT, see [`LICENSE`](LICENSE).
