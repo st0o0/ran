@@ -57,7 +57,7 @@ What rán deliberately does not do: there is no interactive session (no shell, n
 filesystem emulation, no file capture, no LLM), most traps are stubs that handle
 one handshake, and it is not stealthy. To study what attackers do after they log
 in, use Cowrie, Beelzebub or T-Pot. See the
-[comparison](https://st0o0.github.io/ran/comparison) for a side by side table of Cowrie, OpenCanary,
+[comparison](https://ran.st0o0.net/comparison) for a side by side table of Cowrie, OpenCanary,
 qeeqbox/honeypots, T-Pot and Beelzebub (facts last checked October 2026).
 
 ## Quick start
@@ -71,11 +71,11 @@ docker run --rm --name ran -v ran-data:/data \n  -e RAN_TRAPS=ssh,http,ftp \n  -
 The `/data` volume keeps the SSH host key and the banner seed across restarts. Watch
 the logs with `docker logs -f ran`; metrics are at `127.0.0.1:9550/metrics` and
 are unauthenticated, so do not publish that port on a public interface.
-The [config builder](https://st0o0.github.io/ran/builder) turns a deployment scenario into an env file, a
+The [config builder](https://ran.st0o0.net/builder) turns a deployment scenario into an env file, a
 compose file or a `docker run` line, and `ran check-config` validates an
 environment without starting the traps. rán does not ban anything by itself: add
 the CrowdSec profile printed by `ran crowdsec-profile` (see
-[CrowdSec](https://st0o0.github.io/ran/crowdsec)).
+[CrowdSec](https://ran.st0o0.net/crowdsec)).
 
 ## How it works
 
@@ -104,7 +104,7 @@ which keeps the attack surface of the honeypot minimal.
 ## Traps
 
 40 traps; ports, transports and what each one captures are listed on the
-[traps page](https://st0o0.github.io/ran/traps), which is generated from the code.
+[traps page](https://ran.st0o0.net/traps), which is generated from the code.
 
 | Group | Traps |
 |---|---|
@@ -137,22 +137,22 @@ reports who touched them; it does not protect the host it runs on.
   hidden.
 - **Isolation.** Run it unprivileged, without capabilities and with a read-only
   filesystem, and never on a network segment with sensitive hosts. The
-  [hardening page](https://st0o0.github.io/ran/hardening) has the full threat model and a hardened compose
+  [hardening page](https://ran.st0o0.net/hardening) has the full threat model and a hardened compose
   example.
 
 ## Documentation
 
-Full reference at **https://st0o0.github.io/ran/**:
+Full reference at **https://ran.st0o0.net/**:
 
-- [Getting started](https://st0o0.github.io/ran/getting-started) and the [config builder](https://st0o0.github.io/ran/builder)
-- [Traps](https://st0o0.github.io/ran/traps)
-- [Configuration](https://st0o0.github.io/ran/configuration): trap selection, authentication behavior, HTTP fixtures, banner profiles, logging, ignore list, limits
-- [Classification and alerts](https://st0o0.github.io/ran/classification-and-alerts)
-- [CrowdSec](https://st0o0.github.io/ran/crowdsec): connecting, profiles, escalation, upgrade notes
-- [Metrics](https://st0o0.github.io/ran/metrics) and [log format](https://st0o0.github.io/ran/log-format)
-- [Hardening](https://st0o0.github.io/ran/hardening): threat model, reverse proxy and PROXY protocol, container settings
-- [Troubleshooting](https://st0o0.github.io/ran/troubleshooting)
-- [Comparison with alternatives](https://st0o0.github.io/ran/comparison)
+- [Getting started](https://ran.st0o0.net/getting-started) and the [config builder](https://ran.st0o0.net/builder)
+- [Traps](https://ran.st0o0.net/traps)
+- [Configuration](https://ran.st0o0.net/configuration): trap selection, authentication behavior, HTTP fixtures, banner profiles, logging, ignore list, limits
+- [Classification and alerts](https://ran.st0o0.net/classification-and-alerts)
+- [CrowdSec](https://ran.st0o0.net/crowdsec): connecting, profiles, escalation, upgrade notes
+- [Metrics](https://ran.st0o0.net/metrics) and [log format](https://ran.st0o0.net/log-format)
+- [Hardening](https://ran.st0o0.net/hardening): threat model, reverse proxy and PROXY protocol, container settings
+- [Troubleshooting](https://ran.st0o0.net/troubleshooting)
+- [Comparison with alternatives](https://ran.st0o0.net/comparison)
 
 ## Development
 

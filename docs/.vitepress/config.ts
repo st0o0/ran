@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  base: '/ran/',
+  base: '/',
   lang: 'en',
   title: 'rán',
   description: 'Single-binary honeypot that pushes classified alerts to CrowdSec',
