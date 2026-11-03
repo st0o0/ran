@@ -48,11 +48,11 @@ Single static binary, ~8 MB scratch image. Published as `ghcr.io/st0o0/ran`. Dep
 
 ## Security-sensitive areas
 
-- `internal/trap/` -- protocol handlers, bounded reads, alert identity from socket peer
-- `internal/alert/` -- CrowdSec LAPI client, alert classification
-- `internal/trap/tcpserver.go` -- shared TCP skeleton, session lifecycle, shun check
-- `internal/config/` -- input validation, banner and HTTP fixture parsing
-- `internal/fingerprint/` -- append-only banner tables (golden selection pinned by test)
+- `internal/trap/` - protocol handlers, bounded reads, alert identity from socket peer
+- `internal/alert/` - CrowdSec LAPI client, alert classification
+- `internal/trap/tcpserver.go` - shared TCP skeleton, session lifecycle, shun check
+- `internal/config/` - input validation, banner and HTTP fixture parsing
+- `internal/fingerprint/` - append-only banner tables (golden selection pinned by test)
 
 ## Verification
 
