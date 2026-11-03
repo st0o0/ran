@@ -1,4 +1,4 @@
-# Rán
+# rán
 
 Single-binary honeypot sensor. Emulates 40 network services, captures credentials and payloads as structured JSON, pushes classified alerts to CrowdSec. Published as `ghcr.io/st0o0/ran`.
 

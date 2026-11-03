@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in ran!
+Thanks for your interest in rán!
 
 ## Development
 
