@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/st0o0/ran/compare/v0.5.0...v0.5.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **docs:** use custom domain ran.st0o0.net instead of GitHub Pages subpath ([ab000d9](https://github.com/st0o0/ran/commit/ab000d97b1a1cf88a24112cabb4881a6ac8bee80))
+
 ## [0.5.0](https://github.com/st0o0/ran/compare/v0.4.0...v0.5.0) (2026-11-02)
 
 
