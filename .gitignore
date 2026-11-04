@@ -6,8 +6,10 @@
 *_cov.out
 coverage/
 
-# Claude Code
-.claude/
+# Claude Code (skills and commands are tracked explicitly)
+.claude/*
+!.claude/skills/
+!.claude/commands/
 
 # Worktrees
 .worktrees/
