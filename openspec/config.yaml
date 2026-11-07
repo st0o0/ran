@@ -3,7 +3,7 @@ schema: spec-driven
 context: |
   Project: rán — a multi-protocol honeypot with Prometheus metrics and CrowdSec integration
   Binary: ran (module github.com/st0o0/ran)
-  Language: Go 1.26+, stdlib + golang.org/x/crypto (SSH)
+  Language: Go 1.27+, stdlib + golang.org/x/crypto (SSH)
   Build: CGO_ENABLED=0, multi-stage Docker (scratch), ldflags version injection
   Config: environment variables with RAN_ prefix, loaded via getenv function for testability
   Metrics: prometheus/client_golang, custom registry, exposed on :9550/metrics
