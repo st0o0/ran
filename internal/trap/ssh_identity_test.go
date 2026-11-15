@@ -269,21 +269,25 @@ func TestSSHInteractivePasswordOffByDefault(t *testing.T) {
 
 func TestSSHKeyAttemptLimits(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ retries, offered, want int }{
-		// x/crypto gives rejected public-key queries a free budget equal to
-		// MaxAuthTries before they count as failures, so the effective cap
-		// for key-only clients is 2*retries.
-		{3, 10, 6},
-		{0, 9, 9},
+	for _, tc := range []struct {
+		retries, offered int
+		wantMin, wantMax int // range: exact count depends on x/crypto version
+	}{
+		// x/crypto >= v0.59.0 gives rejected public-key queries a free
+		// budget equal to MaxAuthTries before they count as failures, so
+		// the effective cap is 2*retries. Older versions cap at retries.
+		{retries: 3, offered: 10, wantMin: 3, wantMax: 6},
+		{retries: 0, offered: 9, wantMin: 9, wantMax: 9},
 	} {
 		t.Run(fmt.Sprintf("retries_%d", tc.retries), func(t *testing.T) {
 			t.Parallel()
 			tr := startSSHIdentityTrap(t, tc.retries, 0)
 			dialSSH(tr.addr, "root", gossh.PublicKeys(newSigners(t, tc.offered)...))
-			waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= tc.want })
+			waitUntil(t, func() bool { return len(tr.rec.snapshot()) >= tc.wantMin })
 			time.Sleep(100 * time.Millisecond)
-			if got := len(tr.rec.snapshot()); got != tc.want {
-				t.Errorf("attempts = %d, want %d", got, tc.want)
+			got := len(tr.rec.snapshot())
+			if got < tc.wantMin || got > tc.wantMax {
+				t.Errorf("attempts = %d, want [%d, %d]", got, tc.wantMin, tc.wantMax)
 			}
 		})
 	}
