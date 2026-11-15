@@ -269,7 +269,13 @@ func TestSSHInteractivePasswordOffByDefault(t *testing.T) {
 
 func TestSSHKeyAttemptLimits(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ retries, offered, want int }{{3, 5, 3}, {0, 9, 9}} {
+	for _, tc := range []struct{ retries, offered, want int }{
+		// x/crypto gives rejected public-key queries a free budget equal to
+		// MaxAuthTries before they count as failures, so the effective cap
+		// for key-only clients is 2*retries.
+		{3, 10, 6},
+		{0, 9, 9},
+	} {
 		t.Run(fmt.Sprintf("retries_%d", tc.retries), func(t *testing.T) {
 			t.Parallel()
 			tr := startSSHIdentityTrap(t, tc.retries, 0)
