@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.2](https://github.com/st0o0/ran/compare/v0.5.1...v0.5.2) (2026-11-21)
+
+
+### Features
+
+* **security:** add source scan on PR/push, registry scan after release ([a123830](https://github.com/st0o0/ran/commit/a1238307ebc68e1ca961a6dbd96375cc3933268d))
+
+
+### Bug Fixes
+
+* **security:** add packages:read permission for reusable workflow compatibility ([cff4f3f](https://github.com/st0o0/ran/commit/cff4f3f08bcc7d74f44da2cfb5e8d2449ddf9832))
+* **security:** wire trivy-config in security workflow ([f78723d](https://github.com/st0o0/ran/commit/f78723d53027fb3cadf404a5cedaf4550720f56e))
+* **trap:** accept x/crypto v0.58-v0.59 pubkey query budget range in key attempt test ([2c4179e](https://github.com/st0o0/ran/commit/2c4179eb46e80f8f3c280f4c426bf14742367e28))
+* **trap:** adapt SSH key attempt test to x/crypto v0.59.0 pubkey query budget ([a4d198d](https://github.com/st0o0/ran/commit/a4d198ddf574202a63930e2002c9ebbb146f27d3))
+
+
+### Refactoring
+
+* **security:** remove unused trivy.yaml placeholder ([c9cfae1](https://github.com/st0o0/ran/commit/c9cfae16b33a5c5f3fc071c3954347adee6d4ac7))
+* **security:** simplify to fs scan on PR/push and local image scan on schedule ([737f5fd](https://github.com/st0o0/ran/commit/737f5fd57d40c672ef8eadb25095cc8480749e87))
+
 ## [0.5.1](https://github.com/st0o0/ran/compare/v0.5.0...v0.5.1) (2026-11-03)
 
 
