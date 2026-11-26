@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOTELEMETRY: "off"
+
 concurrency:
   group: extra-ci-${{ github.ref }}
   cancel-in-progress: true
