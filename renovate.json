@@ -10,6 +10,32 @@
         "// renovate: datasource=docker depName=(?<depName>\\S+)\\s+const TestedImage = \"[^:\"]+:(?<currentValue>[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Same CrowdSec image in the generated docs fragment -- kept in step so TestGeneratedProfileIsCurrent passes on the update PR",
+      "customType": "regex",
+      "managerFilePatterns": ["/^docs/crowdsec-profile\\.generated\\.md$/"],
+      "matchStrings": [
+        "\\(`(?<depName>crowdsecurity/crowdsec):(?<currentValue>[^@`]+)@(?<currentDigest>sha256:[a-f0-9]+)`\\)"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Bare CrowdSec version in the generated docs fragment",
+      "customType": "regex",
+      "managerFilePatterns": ["/^docs/crowdsec-profile\\.generated\\.md$/"],
+      "matchStrings": [
+        "Tested against CrowdSec `(?<currentValue>[^`]+)` "
+      ],
+      "depNameTemplate": "crowdsecurity/crowdsec",
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The bare version in the generated fragment has no digest slot -- do not try to pin one",
+      "matchFileNames": ["docs/crowdsec-profile.generated.md"],
+      "pinDigests": false
     }
   ]
 }
