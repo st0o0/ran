@@ -23,7 +23,7 @@ concurrency:
 jobs:
   source:
     if: github.event_name != 'schedule'
-    uses: st0o0/github-workflows/.github/workflows/security.yml@main
+    uses: st0o0/github-workflows/.github/workflows/security.yml@v1.0.0
     with:
       scan-type: fs
     permissions:
@@ -32,7 +32,7 @@ jobs:
 
   image:
     if: github.event_name == 'schedule'
-    uses: st0o0/github-workflows/.github/workflows/security.yml@main
+    uses: st0o0/github-workflows/.github/workflows/security.yml@v1.0.0
     permissions:
       contents: read
       security-events: write

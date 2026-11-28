@@ -12,12 +12,12 @@ concurrency:
 
 jobs:
   go:
-    uses: st0o0/github-workflows/.github/workflows/go-ci.yml@main
+    uses: st0o0/github-workflows/.github/workflows/go-ci.yml@v1.0.0
     with:
       docker-image-name: ran
 
   commits:
-    uses: st0o0/github-workflows/.github/workflows/commitlint.yml@main
+    uses: st0o0/github-workflows/.github/workflows/commitlint.yml@v1.0.0
 
   docs:
     runs-on: ubuntu-latest
