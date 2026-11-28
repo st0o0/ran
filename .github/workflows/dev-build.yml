@@ -23,7 +23,7 @@ jobs:
 
   docker:
     needs: gate
-    uses: st0o0/github-workflows/.github/workflows/docker-dev.yml@v1.0.0
+    uses: st0o0/github-workflows/.github/workflows/docker-dev.yml@f239350bedc5c262e5e0331f07b3fea666ea2866 # v1.1.0
     with:
       image-name: ghcr.io/st0o0/ran
       image-description: "Dev build of ran"
