@@ -15,6 +15,8 @@ jobs:
     uses: st0o0/github-workflows/.github/workflows/go-ci.yml@f239350bedc5c262e5e0331f07b3fea666ea2866 # v1.1.0
     with:
       docker-image-name: ran
+      # The ci-post-build hook fuzzes every target for 20 seconds.
+      unit-timeout-minutes: 25
 
   commits:
     uses: st0o0/github-workflows/.github/workflows/commitlint.yml@f239350bedc5c262e5e0331f07b3fea666ea2866 # v1.1.0
